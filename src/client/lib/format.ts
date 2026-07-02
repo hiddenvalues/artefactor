@@ -87,6 +87,15 @@ export const FOLDER_ICON = [
   "M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.2 3.9A2 2 0 0 0 7.5 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z",
 ];
 export const BOOKMARK_ICON = ["M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"];
+// Sidebar "Home" row + the picker's "Top level" option.
+export const HOME_ICON = ["M3 10.5 12 3l9 7.5", "M5 9.5V21h14V9.5"];
+// The archive box (menu items + the sidebar Archive entry). TOAST_ICONS.archive
+// is the 2-path toast variant of the same glyph.
+export const ARCHIVE_ICON = [
+  "M2 4h20",
+  "M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9",
+  "M10 13h4",
+];
 
 const COLLECTION_HUES = ["#2563eb", "#7c3aed", "#0f766e", "#d97706", "#db2777", "#16a34a"];
 export function collectionColor(id: string): string {

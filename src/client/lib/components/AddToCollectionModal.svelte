@@ -3,7 +3,7 @@
     ArtefactSummary,
     CollectionSummary,
   } from "../../../shared/contracts";
-  import { collectionColor, FOLDER_ICON } from "../format";
+  import { collectionColor, FOLDER_ICON, HOME_ICON } from "../format";
   import Icon from "./Icon.svelte";
 
   // S25 — the add/move-to-collection modal: a nested single-select tree picker
@@ -136,7 +136,7 @@
       <div style="display:flex;align-items:center;">
         <span style="width:20px;flex-shrink:0;"></span>
         <button onclick={() => (target = null)} style={rowStyle(target === null)}>
-          <Icon paths={["M3 10.5 12 3l9 7.5", "M5 9.5V21h14V9.5"]} size={14} style="flex-shrink:0;" />
+          <Icon paths={HOME_ICON} size={14} style="flex-shrink:0;" />
           <span style="flex:1;">Top level (no collection)</span>
           {#if target === null}
             <Icon paths={["M20 6L9 17l-5-5"]} size={14} width={2.4} color="var(--primary)" style="flex-shrink:0;" />

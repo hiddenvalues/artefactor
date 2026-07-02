@@ -1,6 +1,6 @@
 <script lang="ts">
   import { overlay } from "../ui.svelte";
-  import { BOOKMARK_ICON } from "../format";
+  import { ARCHIVE_ICON, BOOKMARK_ICON, FOLDER_ICON } from "../format";
   import Icon from "./Icon.svelte";
 
   interface Props {
@@ -91,12 +91,7 @@
       {/if}
       {#if onMoveToCollection}
         <button onclick={() => run(onMoveToCollection)} style="{itemStyle}color:var(--fg);">
-          <Icon
-            paths={[
-              "M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.2 3.9A2 2 0 0 0 7.5 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z",
-            ]}
-            size={15}
-          />
+          <Icon paths={FOLDER_ICON} size={15} />
           {inCollection ? "Move to collection…" : "Add to collection…"}
         </button>
       {/if}
@@ -119,14 +114,7 @@
       </button>
       <div style="height:1px;background:var(--border);margin:5px 6px;"></div>
       <button onclick={() => run(onArchive)} style="{itemStyle}color:var(--destructive);">
-        <Icon
-          paths={[
-            "M2 4h20",
-            "M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9",
-            "M10 13h4",
-          ]}
-          size={15}
-        />Archive
+        <Icon paths={ARCHIVE_ICON} size={15} />Archive
       </button>
     </div>
   {/if}

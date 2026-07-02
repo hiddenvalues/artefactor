@@ -13,6 +13,7 @@
     VIS_ORDER,
     collectionColor,
     kindMeta,
+    ARCHIVE_ICON,
     BOOKMARK_ICON,
     FOLDER_ICON,
     type Visibility,
@@ -1085,7 +1086,7 @@
                           }}
                           style="width:100%;display:flex;align-items:center;gap:9px;padding:8px 9px;border:none;background:none;color:var(--destructive);font-size:13px;font-family:inherit;border-radius:7px;cursor:pointer;text-align:left;"
                         >
-                          <Icon paths={["M2 4h20", "M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9", "M10 13h4"]} size={15} />
+                          <Icon paths={ARCHIVE_ICON} size={15} />
                           Archive collection
                         </button>
                       </div>

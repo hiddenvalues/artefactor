@@ -6,8 +6,10 @@
   import {
     kindMeta,
     collectionColor,
+    ARCHIVE_ICON,
     BOOKMARK_ICON,
     FOLDER_ICON,
+    HOME_ICON,
   } from "../format";
   import Icon from "./Icon.svelte";
 
@@ -100,7 +102,7 @@
     <!-- Home -->
     <div>
       <button onclick={onHome} style={navRow(view === "dashboard" || view === "gallery")}>
-        <Icon paths={["M3 10.5 12 3l9 7.5", "M5 9.5V21h14V9.5"]} size={15} />
+        <Icon paths={HOME_ICON} size={15} />
         Home
       </button>
     </div>
@@ -214,7 +216,7 @@
   {#if archivedCount > 0}
     <div style="padding:10px;border-top:1px solid var(--border);">
       <button onclick={onOpenArchive} style={navRow(view === "archive")}>
-        <Icon paths={["M2 4h20", "M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9", "M10 13h4"]} size={15} />
+        <Icon paths={ARCHIVE_ICON} size={15} />
         <span style="flex:1;">Archive</span>
         <span style="font-size:11px;font-weight:600;padding:1px 7px;border-radius:999px;background:var(--muted);color:var(--muted-fg);">
           {archivedCount}
