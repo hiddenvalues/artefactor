@@ -1,5 +1,6 @@
 <script lang="ts">
   import { overlay } from "../ui.svelte";
+  import { BOOKMARK_ICON } from "../format";
   import Icon from "./Icon.svelte";
 
   interface Props {
@@ -10,9 +11,26 @@
     onCopy: () => void;
     onEdit: () => void;
     onArchive: () => void;
+    // S27 — bookmark toggle (owned artefacts only; omitted elsewhere).
+    bookmarked?: boolean;
+    onBookmark?: () => void;
+    // S25 — add/move to collection ("Move…" once it's already in one).
+    inCollection?: boolean;
+    onMoveToCollection?: () => void;
   }
-  let { id, isShared, variant = "grid", onOpen, onCopy, onEdit, onArchive }: Props =
-    $props();
+  let {
+    id,
+    isShared,
+    variant = "grid",
+    onOpen,
+    onCopy,
+    onEdit,
+    onArchive,
+    bookmarked = false,
+    onBookmark,
+    inCollection = false,
+    onMoveToCollection,
+  }: Props = $props();
 
   const key = $derived(`menu:${id}`);
   const open = $derived(overlay.isOpen(key));
@@ -54,6 +72,34 @@
           size={15}
         />Open
       </button>
+      {#if onBookmark}
+        <button onclick={() => run(onBookmark)} style="{itemStyle}color:var(--fg);">
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill={bookmarked ? "currentColor" : "none"}
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d={BOOKMARK_ICON[0]} />
+          </svg>
+          {bookmarked ? "Remove bookmark" : "Bookmark"}
+        </button>
+      {/if}
+      {#if onMoveToCollection}
+        <button onclick={() => run(onMoveToCollection)} style="{itemStyle}color:var(--fg);">
+          <Icon
+            paths={[
+              "M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.2 3.9A2 2 0 0 0 7.5 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z",
+            ]}
+            size={15}
+          />
+          {inCollection ? "Move to collection…" : "Add to collection…"}
+        </button>
+      {/if}
       {#if isShared}
         <button onclick={() => run(onCopy)} style="{itemStyle}color:var(--fg);">
           <Icon

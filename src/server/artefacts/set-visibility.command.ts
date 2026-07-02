@@ -3,11 +3,14 @@ import {
   unshareArtefact,
   type Artefact,
 } from "../../domain/artefact/artefact";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import {
+  ArtefactNotFound,
+  InvariantViolation,
+} from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { Visibility } from "../../domain/artefact/visibility";
-import { generateSlug } from "./slug";
+import { mintUniqueSlug } from "./slug";
 
 // Application command for S5 — Share / unshare. Unifies the three visibility
 // transitions (share, change tier, unshare) behind one operation. Loads the
@@ -39,6 +42,13 @@ export async function setArtefactVisibilityCommand(
   if (!existing || existing.ownerId !== input.requesterId) {
     throw new ArtefactNotFound(input.artefactId);
   }
+  // AH20/CL5 — a contained artefact's own tier is dormant and not editable;
+  // access is changed on the collection (or the artefact moved out first).
+  if (existing.collectionId !== null) {
+    throw new InvariantViolation(
+      "visibility is inherited from the collection — change it there, or move the artefact to top level",
+    );
+  }
 
   const now = (deps.now ?? (() => new Date()))();
   let updated: Artefact;
@@ -56,16 +66,4 @@ export async function setArtefactVisibilityCommand(
 
   await deps.repo.save(updated);
   return updated;
-}
-
-async function mintUniqueSlug(
-  deps: SetArtefactVisibilityDeps,
-): Promise<string> {
-  const gen = deps.generateSlug ?? generateSlug;
-  const attempts = deps.maxSlugAttempts ?? 5;
-  for (let i = 0; i < attempts; i++) {
-    const slug = gen();
-    if ((await deps.repo.findBySlug(slug)) === null) return slug; // AH6
-  }
-  throw new Error("could not mint a unique slug after several attempts");
 }

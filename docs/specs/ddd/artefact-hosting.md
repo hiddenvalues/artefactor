@@ -261,6 +261,37 @@ versions) are tenant-scoped in a superset.
 `authenticated` tier's meaning is overridable (login-wide ↔ org-wide); `private`/`selected`/`public`
 semantics and the AH8 uniformity are not. Migration adds `tenant_id` defaulting to `DEFAULT_TENANT`.
 
+## Amendment (post-v0.2) — collection membership + effective access
+
+> **Status:** DDD amendment (FDD slices **S25–S27**; context `ddd/artefact-collections.md`).
+> Adds folder organization whose access the contained artefacts inherit.
+
+**Field.** `Artefact` gains:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `collectionId` | CollectionId \| null | The collection the artefact lives in; `null` = top-level. Mutable (move), owner-only, blocked while archived (AH7). The collection must have the same `ownerId`/`tenantId` (CL1). |
+
+**AH20 — effective access.** An artefact with `collectionId = null` behaves exactly as
+specified above. An artefact inside a collection is governed by its collection **tree root's**
+`(visibility, sharedWith)` (CL4/CL5): its own `visibility`/`sharedWith` lie **dormant** —
+retained verbatim, consulted again once moved back to top level. The dormant *tier* cannot be
+changed while contained (`set visibility` rejects); the access list may still be curated at
+any tier per AH14, it is simply not consulted. The access matrix (AH8) is unchanged; read
+paths resolve the effective
+`(visibility, sharedWith)` first (`effectiveViewable`, see `artefact-collections.md`) and feed
+it to the same matrix. AH8's no-leak uniformity and AH9's owner authority hold under either
+source. "Shared with you" (S14) lists **effectively** shared artefacts.
+
+**AH21 — slug on effective share** (extends AH4/AH5). A slug is minted the first time an
+artefact's **effective** visibility leaves `private` — whether by its own share (AH4), by
+being moved into a shared tree, or by its tree root's access changing to a shared tier (CL6).
+Minting stays eager (at the transition, collision-checked, then retained per AH5), so every
+effectively-shared artefact is addressable by link.
+
+Archive/restore cascades and permanent-delete cascades from a collection apply this context's
+own transitions per artefact (AH7/AH11) — see CL7/CL8.
+
 ## Amendment (post-v0.2) — payload-size policy seam
 
 > **Status:** DDD amendment (FDD slice **S23**; EE context `ee/docs/specs/ddd/usage-quota.md`).

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { canViewArtefact } from "../../domain/artefact/access";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
+import { resolveEffectiveViewable } from "../collections/effective";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import {
   upsertDataEntry,
@@ -19,6 +21,9 @@ import type { DataRepository } from "../../domain/data/data-repository";
 // by the own-data (S11) and author-data (S12) commands.
 export interface DataAccessDeps {
   artefactRepo: ArtefactRepository;
+  // AH20 — access is decided on the *effective* tier, so resolving an artefact
+  // in a collection needs its tree root.
+  collectionRepo: CollectionRepository;
   dataRepo: DataRepository;
 }
 
@@ -42,7 +47,15 @@ export async function resolveViewableArtefact(
   const artefact =
     (await deps.artefactRepo.findBySlug(ref)) ??
     (await deps.artefactRepo.findById(ref, scope));
-  if (!artefact || !canViewArtefact(artefact, viewerId)) {
+  if (
+    !artefact ||
+    !canViewArtefact(
+      // The matrix decides on the effective tier — a contained artefact is
+      // governed by its collection tree root (AH20/CL5).
+      await resolveEffectiveViewable(artefact, deps.collectionRepo),
+      viewerId,
+    )
+  ) {
     throw new ArtefactNotFound(ref);
   }
   return artefact;

@@ -25,8 +25,18 @@ import {
   restoreArtefactCommand,
 } from "../artefacts/lifecycle.command";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
+import { moveArtefactCommand } from "../collections/move-artefact.command";
+import { setArtefactBookmark } from "../bookmarks/bookmarks.command";
+import { loadArtefactRoot } from "../collections/effective";
+import { effectiveVisibility } from "../../domain/collection/effective-access";
+import {
+  CollectionInvariantViolation,
+  CollectionNotFound,
+} from "../../domain/collection/errors";
 import { renderServedArtefact } from "../runtime/render";
 import { renderHostShell } from "../runtime/shell";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
+import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
 import type { UserDirectory } from "../data/user-directory";
@@ -37,8 +47,11 @@ import type {
   ArtefactListResponse,
   ArtefactSummary,
   GrantAccessRequest,
+  MoveArtefactRequest,
   SetVisibilityRequest,
 } from "../../shared/contracts";
+import type { Visibility } from "../../domain/artefact/visibility";
+import type { TenantScope } from "../../domain/artefact/tenant-scope";
 
 // Route-level deps: the command deps plus the data repo needed to seed the S13
 // localStorage bootstrap when serving the owner-preview HTML, and the user
@@ -46,6 +59,9 @@ import type {
 export type ArtefactRoutesDeps = CreateArtefactDeps & {
   dataRepo: DataRepository;
   viewRepo: ViewRepository;
+  // S25/S27 — effective-access resolution, move-to-collection, and bookmarks.
+  collectionRepo: CollectionRepository;
+  bookmarkRepo: BookmarkRepository;
   userDirectory: UserDirectory;
   // S22 (AH17) — resolves the request's tenant scope for the owner-scoped reads.
   resolveScope: TenantScopeResolver;
@@ -56,6 +72,29 @@ export type ArtefactRoutesDeps = CreateArtefactDeps & {
 export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   const r = new Hono<AuthEnv>();
 
+  // Resolve one owned artefact's effective tier (AH20) for a summary response.
+  const effectiveVisOf = async (a: Artefact): Promise<Visibility> =>
+    effectiveVisibility(a, await loadArtefactRoot(a, deps.collectionRepo));
+
+  // Batch variant for list responses: one collections read covers every owned
+  // artefact's tree (CL1 — an artefact only ever sits in its owner's collection).
+  const effectiveVisMap = async (
+    owner: string,
+    scope: TenantScope,
+  ): Promise<(a: Artefact) => Visibility> => {
+    const all = await deps.collectionRepo.listByOwner(owner, scope, {
+      includeArchived: true,
+    });
+    const byId = new Map(all.map((col) => [col.id, col]));
+    return (a) => {
+      if (a.collectionId === null) return a.visibility;
+      const direct = byId.get(a.collectionId);
+      const root = direct ? byId.get(direct.rootId) : undefined;
+      // Unresolvable chain fails closed (AH20), matching resolveEffectiveViewable.
+      return root?.visibility ?? "private";
+    };
+  };
+
   // S10 — "Your artefacts". The signed-in owner lists their own artefacts;
   // archived ones are hidden by default (AH7). Grouping/filtering by kind is a
   // client concern — the BFF returns the flat, most-recent-first list.
@@ -63,14 +102,16 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     // `?archived=true` returns the owner's archived artefacts (the "Your
     // artefacts" archived view, used to restore them in S7); otherwise active only.
     const archived = c.req.query("archived") === "true";
-    const owned = await deps.repo.listByOwner(ownerId(c), await deps.resolveScope(c), {
+    const scope = await deps.resolveScope(c);
+    const owned = await deps.repo.listByOwner(ownerId(c), scope, {
       includeArchived: archived,
     });
     const artefacts = archived
       ? owned.filter((a) => a.status === "archived")
       : owned;
+    const effVis = await effectiveVisMap(ownerId(c), scope);
     return c.json<ArtefactListResponse>({
-      artefacts: artefacts.map(toArtefactSummary),
+      artefacts: artefacts.map((a) => toArtefactSummary(a, effVis(a))),
     });
   });
 
@@ -84,7 +125,9 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         ownerId: ownerId(c),
         scope: await deps.resolveScope(c),
       });
-      return c.json<ArtefactSummary>(toArtefactSummary(artefact));
+      return c.json<ArtefactSummary>(
+        toArtefactSummary(artefact, await effectiveVisOf(artefact)),
+      );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       throw err;
@@ -280,7 +323,9 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
     try {
       const updated = await editArtefactCommand(input, deps);
-      return c.json<ArtefactSummary>(toArtefactSummary(updated));
+      return c.json<ArtefactSummary>(
+        toArtefactSummary(updated, await effectiveVisOf(updated)),
+      );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
@@ -299,7 +344,9 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         },
         { repo: deps.repo },
       );
-      return c.json<ArtefactSummary>(toArtefactSummary(updated));
+      return c.json<ArtefactSummary>(
+        toArtefactSummary(updated, await effectiveVisOf(updated)),
+      );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
@@ -318,7 +365,9 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         },
         { repo: deps.repo },
       );
-      return c.json<ArtefactSummary>(toArtefactSummary(updated));
+      return c.json<ArtefactSummary>(
+        toArtefactSummary(updated, await effectiveVisOf(updated)),
+      );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
@@ -341,6 +390,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           repo: deps.repo,
           dataRepo: deps.dataRepo,
           viewRepo: deps.viewRepo,
+          bookmarkRepo: deps.bookmarkRepo,
           payloadStore: deps.payloadStore,
         },
       );
@@ -348,6 +398,85 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  // S25 — Add/move to collection (or back to top level with null). Owner-only
+  // on both sides (CL1/CL9); moving into a shared tree mints the slug (CL6).
+  r.put("/:id/collection", requireAuth, async (c) => {
+    const body = await c.req
+      .json<Partial<MoveArtefactRequest>>()
+      .catch(() => ({}) as Partial<MoveArtefactRequest>);
+    if (body.collectionId !== null && typeof body.collectionId !== "string") {
+      return c.json({ error: "collectionId must be a collection id or null" }, 400);
+    }
+    try {
+      const moved = await moveArtefactCommand(
+        {
+          artefactId: c.req.param("id"),
+          requesterId: ownerId(c),
+          collectionId: body.collectionId,
+          scope: await deps.resolveScope(c),
+        },
+        { artefactRepo: deps.repo, collectionRepo: deps.collectionRepo },
+      );
+      return c.json<ArtefactSummary>(
+        toArtefactSummary(moved, await effectiveVisOf(moved)),
+      );
+    } catch (err) {
+      if (err instanceof ArtefactNotFound || err instanceof CollectionNotFound)
+        return c.json({ error: "not found" }, 404);
+      if (
+        err instanceof InvariantViolation ||
+        err instanceof CollectionInvariantViolation
+      )
+        return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  // S27 — Bookmark / unbookmark (own artefacts only, BM2). Idempotent (BM1).
+  r.put("/:id/bookmark", requireAuth, async (c) => {
+    try {
+      await setArtefactBookmark(
+        {
+          artefactId: c.req.param("id"),
+          requesterId: ownerId(c),
+          bookmarked: true,
+          scope: await deps.resolveScope(c),
+        },
+        {
+          bookmarkRepo: deps.bookmarkRepo,
+          artefactRepo: deps.repo,
+          collectionRepo: deps.collectionRepo,
+        },
+      );
+      return c.body(null, 204);
+    } catch (err) {
+      if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
+      throw err;
+    }
+  });
+
+  r.delete("/:id/bookmark", requireAuth, async (c) => {
+    try {
+      await setArtefactBookmark(
+        {
+          artefactId: c.req.param("id"),
+          requesterId: ownerId(c),
+          bookmarked: false,
+          scope: await deps.resolveScope(c),
+        },
+        {
+          bookmarkRepo: deps.bookmarkRepo,
+          artefactRepo: deps.repo,
+          collectionRepo: deps.collectionRepo,
+        },
+      );
+      return c.body(null, 204);
+    } catch (err) {
+      if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       throw err;
     }
   });
@@ -387,13 +516,21 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   return r;
 }
 
-export function toArtefactSummary(a: Artefact): ArtefactSummary {
+// `effectiveVisibility` (AH20) defaults to the artefact's own tier — correct
+// for every top-level artefact; callers pass the resolved tier for contained
+// ones (the create path is always top-level, AH1).
+export function toArtefactSummary(
+  a: Artefact,
+  effectiveVis: Visibility = a.visibility,
+): ArtefactSummary {
   return {
     id: a.id,
     ownerId: a.ownerId,
     title: a.title,
     kind: a.kind,
     visibility: a.visibility,
+    effectiveVisibility: effectiveVis,
+    collectionId: a.collectionId,
     status: a.status,
     publicSlug: a.publicSlug,
     payloadBytes: a.payloadBytes,

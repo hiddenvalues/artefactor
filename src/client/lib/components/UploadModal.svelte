@@ -248,8 +248,11 @@
       {#if !isEdit}
         <div style="display:flex;align-items:center;gap:9px;padding:11px 12px;background:var(--muted);border-radius:10px;font-size:12px;color:var(--muted-fg);">
           <Icon paths={VIS.private.icon} size={15} width={1.9} style="flex-shrink:0;" />
-          New artefacts start
-          <strong style="color:var(--fg);font-weight:600;">Private</strong> — you can share them after uploading.
+          <span>
+            New artefacts start
+            <strong style="color:var(--fg);font-weight:600;">Private</strong> — you
+            can share them or add them to a collection after uploading.
+          </span>
         </div>
       {/if}
 

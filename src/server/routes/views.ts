@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
 import { listArtefactViewers } from "../views/views.command";
 import type { UserDirectory } from "../data/user-directory";
@@ -10,6 +11,8 @@ import type { ArtefactViewersResponse } from "../../shared/contracts";
 
 export interface ViewRoutesDeps {
   artefactRepo: ArtefactRepository;
+  // AH20 — the access decision needs the effective tier (collection tree root).
+  collectionRepo: CollectionRepository;
   viewRepo: ViewRepository;
   userDirectory: UserDirectory;
   // S22 (AH17) — resolves the request's tenant scope for the id-fallback resolve.
@@ -42,6 +45,7 @@ export function createViewRoutes(deps: ViewRoutesDeps) {
         await deps.resolveScope(c),
         {
           artefactRepo: deps.artefactRepo,
+          collectionRepo: deps.collectionRepo,
           viewRepo: deps.viewRepo,
         },
       );

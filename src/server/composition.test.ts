@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { createApp } from "./app";
 import type { Adapters } from "./adapters";
 import { InMemoryArtefactRepository } from "../domain/artefact/in-memory-artefact-repository";
+import { InMemoryCollectionRepository } from "../domain/collection/in-memory-collection-repository";
+import { InMemoryBookmarkRepository } from "../domain/bookmark/in-memory-bookmark-repository";
 import { InMemoryDataRepository } from "../domain/data/in-memory-data-repository";
 import { InMemoryViewRepository } from "../domain/views/in-memory-view-repository";
 import { createArtefact, shareArtefact } from "../domain/artefact/artefact";
@@ -52,6 +54,8 @@ async function injectedAdapters(): Promise<Adapters> {
 
   return {
     artefactRepository,
+    collectionRepository: new InMemoryCollectionRepository(),
+    bookmarkRepository: new InMemoryBookmarkRepository(),
     dataRepository: new InMemoryDataRepository(),
     viewRepository: new InMemoryViewRepository(),
     payloadStore: new FakePayloadStore(PAYLOAD),

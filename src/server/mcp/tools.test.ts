@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildMcpServer, type McpToolDeps } from "./server";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
+import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 import { InMemoryDataRepository } from "../../domain/data/in-memory-data-repository";
 import { upsertDataEntry } from "../../domain/data/data-entry";
@@ -42,6 +43,7 @@ describe("MCP artefact tools (S18)", () => {
   beforeEach(() => {
     deps = {
       repo: new InMemoryArtefactRepository(),
+      collectionRepo: new InMemoryCollectionRepository(),
       payloadStore: new FakePayloadStore(),
       dataRepo: new InMemoryDataRepository(),
     };

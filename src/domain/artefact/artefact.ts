@@ -25,6 +25,10 @@ export interface Artefact {
   // only consulted while `visibility === "selected"`. Empty ⇒ owner-only.
   sharedWith: readonly string[];
   publicSlug: string | null;
+  // AH20 — the collection the artefact lives in; null = top-level. While set,
+  // the tree root's (visibility, sharedWith) governs effective access and the
+  // artefact's own lie dormant (see ddd/artefact-collections.md, CL5).
+  collectionId: string | null;
   status: Status;
   payloadRef: string;
   payloadBytes: number;
@@ -80,6 +84,7 @@ export function createArtefact(input: CreateArtefactInput): Artefact {
     visibility: "private",
     sharedWith: [],
     publicSlug: null,
+    collectionId: null, // AH20 — new artefacts always start top-level
     status: "active",
     payloadRef: input.payload.ref,
     payloadBytes: input.payload.bytes,

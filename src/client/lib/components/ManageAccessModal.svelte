@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ArtefactSummary, UserRef } from "../../../shared/contracts";
+  import type { UserRef } from "../../../shared/contracts";
   import { api, ApiError } from "../api";
   import { initials } from "../format";
   import Icon from "./Icon.svelte";
@@ -7,11 +7,27 @@
   const ALERT = ["M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20", "M12 8v4", "M12 16h.01"];
   const SEARCH = ["M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16z", "M21 21l-4.3-4.3"];
 
+  // S16/S25 — the same member picker manages an artefact's `selected`-tier list
+  // and a collection root's (whose people the whole tree inherits, CL4).
   interface Props {
-    a: ArtefactSummary;
+    target: { kind: "artefact" | "collection"; id: string; title: string };
     onClose: () => void;
   }
-  let { a, onClose }: Props = $props();
+  let { target, onClose }: Props = $props();
+
+  const calls = $derived(
+    target.kind === "artefact"
+      ? {
+          get: () => api.getAccess(target.id),
+          grant: (userId: string) => api.grantAccess(target.id, userId),
+          revoke: (userId: string) => api.revokeAccess(target.id, userId),
+        }
+      : {
+          get: () => api.getCollectionAccess(target.id),
+          grant: (userId: string) => api.grantCollectionAccess(target.id, userId),
+          revoke: (userId: string) => api.revokeCollectionAccess(target.id, userId),
+        },
+  );
 
   let members = $state<UserRef[]>([]);
   let loading = $state(true);
@@ -28,8 +44,8 @@
   // Load the current members once when the modal opens.
   $effect(() => {
     let cancelled = false;
-    api
-      .getAccess(a.id)
+    calls
+      .get()
       .then((m) => {
         if (!cancelled) members = m;
       })
@@ -69,7 +85,7 @@
     busyId = u.id;
     error = null;
     try {
-      await api.grantAccess(a.id, u.id);
+      await calls.grant(u.id);
       members = [...members, u];
       query = "";
       results = [];
@@ -84,7 +100,7 @@
     busyId = u.id;
     error = null;
     try {
-      await api.revokeAccess(a.id, u.id);
+      await calls.revoke(u.id);
       members = members.filter((m) => m.id !== u.id);
     } catch (e) {
       error = e instanceof ApiError ? e.message : "Could not remove that person.";
@@ -114,7 +130,9 @@
           Manage access
         </h2>
         <p style="margin:3px 0 0;font-size:12.5px;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-          Who can open “{a.title}”
+          {target.kind === "collection"
+            ? `Who can open “${target.title}” — everything inside inherits this list`
+            : `Who can open “${target.title}”`}
         </p>
       </div>
       <button

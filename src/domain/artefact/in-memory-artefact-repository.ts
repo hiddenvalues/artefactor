@@ -60,11 +60,33 @@ export class InMemoryArtefactRepository implements ArtefactRepository {
           a.tenantId === scope.tenantId &&
           a.status === "active" &&
           a.ownerId !== viewerId &&
+          // In a collection the own tier is dormant (AH20/CL5) — those flow in
+          // via the effectively-shared composition, not this query.
+          a.collectionId === null &&
           (a.visibility === "authenticated" ||
             a.visibility === "public" ||
             // `selected` shows only to the members it was shared with (AH8/13).
             (a.visibility === "selected" &&
               a.sharedWith.includes(viewerId))),
+      )
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+      .map((a) => ({ ...a }));
+  }
+
+  async listByCollectionIds(
+    collectionIds: readonly string[],
+    scope: TenantScope,
+    options?: ListByOwnerOptions,
+  ): Promise<Artefact[]> {
+    const includeArchived = options?.includeArchived ?? false;
+    const ids = new Set(collectionIds);
+    return [...this.store.values()]
+      .filter(
+        (a) =>
+          a.tenantId === scope.tenantId &&
+          a.collectionId !== null &&
+          ids.has(a.collectionId) &&
+          (includeArchived || a.status === "active"),
       )
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
       .map((a) => ({ ...a }));

@@ -80,6 +80,21 @@ export const VIS_ORDER: Visibility[] = [
   "public",
 ];
 
+// S25 — Collections. Folder + bookmark glyphs and a stable per-collection tint
+// (derived from the id — no stored color; the design prototype seeded colors,
+// the real app hashes so a collection keeps its hue for life).
+export const FOLDER_ICON = [
+  "M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.2 3.9A2 2 0 0 0 7.5 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z",
+];
+export const BOOKMARK_ICON = ["M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"];
+
+const COLLECTION_HUES = ["#2563eb", "#7c3aed", "#0f766e", "#d97706", "#db2777", "#16a34a"];
+export function collectionColor(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  return COLLECTION_HUES[h % COLLECTION_HUES.length] ?? "#0f766e";
+}
+
 /** "254 KB" / "1.2 MB" — matches the design's fmtBytes. */
 export function fmtBytes(b: number): string {
   return b >= 1048576

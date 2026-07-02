@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import type { db as Db } from "./client";
 import { artefact, artefactAccess } from "./schema";
 import type { Artefact } from "../../domain/artefact/artefact";
@@ -101,6 +101,9 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
           eq(artefact.tenantId, scope.tenantId),
           eq(artefact.status, "active"),
           ne(artefact.ownerId, viewerId),
+          // Top-level only — a contained artefact's own tier is dormant
+          // (AH20/CL5); those flow in via the effectively-shared composition.
+          isNull(artefact.collectionId),
           or(
             inArray(artefact.visibility, ["authenticated", "public"]),
             and(
@@ -114,6 +117,28 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
     // Recipients don't manage membership and shouldn't see co-members, so the
     // returned aggregates carry an empty `sharedWith` here (it's unused by the
     // "Shared with you" view).
+    return rows.map((r) => toAggregate(r, []));
+  }
+
+  async listByCollectionIds(
+    collectionIds: readonly string[],
+    scope: TenantScope,
+    options?: ListByOwnerOptions,
+  ): Promise<Artefact[]> {
+    if (collectionIds.length === 0) return [];
+    const base = and(
+      eq(artefact.tenantId, scope.tenantId),
+      inArray(artefact.collectionId, [...collectionIds]),
+    );
+    const where =
+      options?.includeArchived === true
+        ? base
+        : and(base, eq(artefact.status, "active"));
+    const rows = await this.db
+      .select()
+      .from(artefact)
+      .where(where)
+      .orderBy(desc(artefact.updatedAt));
     return rows.map((r) => toAggregate(r, []));
   }
 
@@ -191,6 +216,7 @@ function toRow(a: Artefact): ArtefactRow {
     kind: a.kind,
     visibility: a.visibility,
     publicSlug: a.publicSlug,
+    collectionId: a.collectionId,
     status: a.status,
     payloadRef: a.payloadRef,
     payloadBytes: a.payloadBytes,
@@ -212,6 +238,7 @@ function toAggregate(row: ArtefactRow, sharedWith: string[]): Artefact {
     visibility: row.visibility,
     sharedWith,
     publicSlug: row.publicSlug,
+    collectionId: row.collectionId,
     status: row.status,
     payloadRef: row.payloadRef,
     payloadBytes: row.payloadBytes,

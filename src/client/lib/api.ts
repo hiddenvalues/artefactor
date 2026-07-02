@@ -2,6 +2,12 @@ import type {
   AccessListResponse,
   ArtefactSummary,
   ArtefactListResponse,
+  BookmarksResponse,
+  CollectionLifecycleResponse,
+  CollectionListResponse,
+  CollectionSummary,
+  CreateCollectionRequest,
+  EditCollectionRequest,
   MeResponse,
   PublicConfigResponse,
   SharedArtefactSummary,
@@ -145,11 +151,115 @@ export const api = {
     const res = await fetch(`/api/artefacts/${id}`, { method: "DELETE" });
     if (!res.ok) await fail(res);
   },
+
+  // S25/S26 — Artefact Collections (owner-only folder tree, cascades).
+  listCollections(archived = false): Promise<CollectionSummary[]> {
+    return fetch(`/api/collections${archived ? "?archived=true" : ""}`)
+      .then(json<CollectionListResponse>)
+      .then((r) => r.collections);
+  },
+
+  createCollection(input: CreateCollectionRequest): Promise<CollectionSummary> {
+    return fetch("/api/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }).then(json<CollectionSummary>);
+  },
+
+  editCollection(
+    id: string,
+    input: EditCollectionRequest,
+  ): Promise<CollectionSummary> {
+    return fetch(`/api/collections/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }).then(json<CollectionSummary>);
+  },
+
+  getCollectionAccess(id: string): Promise<UserRef[]> {
+    return fetch(`/api/collections/${id}/access`)
+      .then(json<AccessListResponse>)
+      .then((r) => r.members);
+  },
+
+  async grantCollectionAccess(id: string, userId: string): Promise<void> {
+    const res = await fetch(`/api/collections/${id}/access`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    if (!res.ok) await fail(res);
+  },
+
+  async revokeCollectionAccess(id: string, userId: string): Promise<void> {
+    const res = await fetch(
+      `/api/collections/${id}/access/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    );
+    if (!res.ok) await fail(res);
+  },
+
+  archiveCollection(id: string): Promise<CollectionLifecycleResponse> {
+    return fetch(`/api/collections/${id}/archive`, { method: "POST" }).then(
+      json<CollectionLifecycleResponse>,
+    );
+  },
+
+  restoreCollection(id: string): Promise<CollectionLifecycleResponse> {
+    return fetch(`/api/collections/${id}/restore`, { method: "POST" }).then(
+      json<CollectionLifecycleResponse>,
+    );
+  },
+
+  async deleteCollection(id: string): Promise<void> {
+    const res = await fetch(`/api/collections/${id}`, { method: "DELETE" });
+    if (!res.ok) await fail(res);
+  },
+
+  // Move an artefact into a collection (null = back to top level).
+  moveToCollection(
+    id: string,
+    collectionId: string | null,
+  ): Promise<ArtefactSummary> {
+    return fetch(`/api/artefacts/${id}/collection`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collectionId }),
+    }).then(json<ArtefactSummary>);
+  },
+
+  // S27 — Bookmarks (per-user pins of owned items).
+  listBookmarks(): Promise<BookmarksResponse> {
+    return fetch("/api/bookmarks").then(json<BookmarksResponse>);
+  },
+
+  async setArtefactBookmark(id: string, on: boolean): Promise<void> {
+    const res = await fetch(`/api/artefacts/${id}/bookmark`, {
+      method: on ? "PUT" : "DELETE",
+    });
+    if (!res.ok) await fail(res);
+  },
+
+  async setCollectionBookmark(id: string, on: boolean): Promise<void> {
+    const res = await fetch(`/api/collections/${id}/bookmark`, {
+      method: on ? "PUT" : "DELETE",
+    });
+    if (!res.ok) await fail(res);
+  },
 };
 
 /** Absolute share URL for a shared artefact, or null while private. */
 export function shareUrl(a: ArtefactSummary): string | null {
   return a.publicSlug ? `${location.origin}/a/${a.publicSlug}` : null;
+}
+
+/** Whether the artefact is reachable by link right now — a slug exists and the
+ *  tier it is actually served under (its own, or the collection tree root's,
+ *  AH20) is not private. */
+export function isLinkShared(a: ArtefactSummary): boolean {
+  return !!a.publicSlug && a.effectiveVisibility !== "private";
 }
 
 /** Where "Open" points for an artefact you own: the hosted shell when it has a

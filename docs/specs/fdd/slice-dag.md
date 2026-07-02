@@ -637,6 +637,91 @@ superset can wire a different backend (Postgres) without forking the composition
   and the EE entry that injects them are the EE **Postgres persistence** context. Behaviour-
   preserving; also a testability win for OSS.
 
+### S25 — Collections (folder tree + inherited access)
+Nestable, owner-only collections whose access the contained artefacts inherit. (New DDD
+bounded context: `ddd/artefact-collections.md`, invariants CL1–CL10; amends
+`ddd/artefact-hosting.md` AH20/AH21 — `Artefact.collectionId`, effective access, slug on
+effective share.)
+- **Domain** — new `Collection` aggregate (`id`, `ownerId`, `tenantId`, `name`, immutable
+  `parentId`/`rootId`, `visibility` + `sharedWith` consulted on roots only, `status`,
+  timestamps) with pure transitions `createCollection` (CL1–3; `rootId` = own id or parent's),
+  `renameCollection`, `setCollectionAccess` (**roots only**, CL4; reuses the AH13/14 access-list
+  semantics), and `moveArtefactToCollection` on the Artefact side (owner/tenant match CL1,
+  archived-block). Pure helpers: `effectiveViewable(artefact, root)` (CL5) feeding the
+  **unchanged** `canViewArtefact`, and `collectSubtree(collections, id)` for cascades. A
+  `CollectionRepository` port (`save`, `delete`, `findById`, `listByOwner` (± archived),
+  `listSharedRoots`, `listByRoots` — scope-aware like S22 A2) + in-memory double.
+- **Commands** — create / rename+access / manage access-list (mirroring S16) / move-artefact
+  (mints a slug when the target tree's root is shared and the artefact has none, AH21/CL6;
+  a root access change to a shared tier likewise back-fills slugs across the subtree).
+- **Persistence** — new `collection` table (+ `collection_access` join table mirroring
+  `artefact_access`), `artefact.collection_id` FK column; Drizzle repo; migration. `rootId`
+  is denormalized (safe: immutable), so effective access resolves via plain joins, and
+  "effectively shared" needs no recursive query: `listShared` adds `collection_id IS NULL`
+  (dormancy, CL5) and the shared-composition adds artefacts in trees whose root grants the
+  viewer (`listSharedRoots` + `listByRoots` + `listByCollectionIds` on the artefact repo).
+- **BFF** — `GET/POST /api/collections`, `PATCH /api/collections/:id`,
+  `GET/POST/DELETE /api/collections/:id/access(/:userId)`,
+  `PUT /api/artefacts/:id/collection`; serve/data/view gates resolve effective access first;
+  artefact summaries expose `collectionId` + `effectiveVisibility`.
+- **Client** — sidebar shell (hamburger, collections tree with auto-expand + `+`), collection
+  page (breadcrumb, access control with inheritance note, `⋯` menu, sub-collection cards,
+  scoped sort/kind-chips/density artefact list), add/move-to-collection modal (tree picker +
+  inline create + top-level option), create/edit editor, "Inherited" read-only access control
+  + "in \<Collection\>" chip on artefact cards.
+- **Acceptance:** a private artefact moved into an `authenticated`-root tree is viewable by
+  another signed-in user (and got a slug); moved back to top level it is private again (own
+  tier resurfaces, slug retained); an artefact whose *own* tier is `public` inside a `private`
+  tree is **not** viewable by others and absent from "Shared with you"; changing a root to
+  `selected` + granting a member makes subtree artefacts viewable by that member only;
+  `setCollectionAccess` on a non-root is rejected; a child created under another owner's or an
+  archived collection is rejected; non-owner collection reads/mutations → uniform 404 (CL10);
+  all existing Hosting tests stay green (top-level artefacts behave byte-identically).
+- **Boundary:** **OSS**. Tenant scope threads through like S22 A2 (`tenantId` on the row,
+  scope-aware reads); the EE pg schema mirrors the new tables (parity check).
+
+### S26 — Collection lifecycle (cascade archive / restore / delete + Archive view)
+Deps: **S25, S15.** (CL7/CL8.)
+- **Commands** — `archiveCollectionCommand` (archive every descendant collection + active
+  artefact in the subtree; returns cascade counts for the toast), `restoreCollectionCommand`
+  (restores the subtree, including previously individually-archived artefacts — documented
+  simplification), `deleteCollectionCommand` (archived-only, CL8: per-artefact full delete —
+  payload file + data entries + view entries + bookmarks — then the collections; FK cascades
+  as backstop).
+- **BFF** — `POST /api/collections/:id/archive|restore`, `DELETE /api/collections/:id`;
+  `GET /api/collections?archived=true`.
+- **Client** — the dashboard's inline archived section is replaced by the sidebar **Archive
+  view**: archived subtree tops + individually-archived loose artefacts, each with Restore /
+  Delete permanently; archive toasts carry the cascade count + **Undo** (restore); the
+  permanent-delete confirm names the cascade (N artefacts, M sub-collections, including
+  already-archived descendants).
+- **Acceptance:** archiving a collection archives all descendant collections/artefacts
+  (archived artefacts stop serving, AH7); restore brings the subtree back at prior tiers;
+  delete of an active collection is rejected (archived-only); delete removes descendant rows,
+  payload files, data entries, view entries, bookmarks; an artefact archived individually then
+  caught in a collection archive restores with the collection.
+- **Boundary:** **OSS**.
+
+### S27 — Bookmarks (per-user pins)
+Deps: **S25** (bookmarkable collections; artefact bookmarks alone would only need S10). (BM1–4.)
+- **Domain** — a thin per-user store mirroring the S21 pattern: `Bookmark` records
+  (`userId`, artefact **or** collection target), `BookmarkRepository` port (`listByUser`,
+  `add`, `remove`, `deleteByArtefact`, `deleteByCollection`) + in-memory double. Set
+  semantics (BM1); own-items-only enforced in the command (BM2).
+- **Persistence** — `artefact_bookmark` + `collection_bookmark` join tables (`user_id`,
+  target id, `created_at`; PK on the pair; FK `ON DELETE CASCADE`).
+- **BFF** — `GET /api/bookmarks`; `PUT/DELETE /api/artefacts/:id/bookmark`;
+  `PUT/DELETE /api/collections/:id/bookmark`. Permanent deletes (S15/S26) also remove
+  bookmark rows (BM4).
+- **Client** — sidebar **Bookmarks** section (collections before artefacts, one-click
+  remove), `⋯` menu **Bookmark / Remove bookmark**, bookmark toggle on the collection page
+  header, bookmark badges on cards/rows and tree nodes. Archived targets filtered at read
+  (BM3).
+- **Acceptance:** bookmark add/remove is idempotent; bookmarking another user's artefact is
+  rejected (BM2); the list returns only the caller's bookmarks; archived targets drop out of
+  the list and return after restore; permanent delete removes the rows.
+- **Boundary:** **OSS**.
+
 ## Build order
 
 Topological: **S0 → S1 → S2 → {S3, S4, S5, S7, S10, S11}**, **S5 → {S6, S14, S16}**,
@@ -652,4 +737,7 @@ serving/access path (**S6/S10/S14**) and **S23** (EE policy seams) on the create
 (**S2/S3**) + the S12 shell; both are behaviour-preserving enablers and the sole core dependencies
 of the EE **Tenancy/Organizations** and **Usage & Quota** contexts respectively. **S24** (inject
 persistence ports) refactors the composition (**S2 onward**); behaviour-preserving and the sole core
-dependency of the EE **Postgres persistence** context.
+dependency of the EE **Postgres persistence** context. **S25** (collections) depends on the
+hosting core + sharing (**S2/S5/S6/S10/S16**); **S26** (collection lifecycle) on **S25 + S15**;
+**S27** (bookmarks) on **S25**. All three are OSS feature slices (context
+`ddd/artefact-collections.md`).

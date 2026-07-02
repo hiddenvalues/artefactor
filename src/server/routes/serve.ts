@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { canViewArtefact } from "../../domain/artefact/access";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
+import { resolveEffectiveViewable } from "../collections/effective";
 import type { PayloadStore } from "../../domain/artefact/ports";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
@@ -15,6 +17,8 @@ import {
 
 export interface ServingDeps {
   repo: ArtefactRepository;
+  // AH20 — serving decides access on the *effective* tier (collection tree root).
+  collectionRepo: CollectionRepository;
   payloadStore: PayloadStore;
   dataRepo: DataRepository;
   viewRepo: ViewRepository;
@@ -41,7 +45,15 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
     const artefact = await deps.repo.findBySlug(slug);
     const viewerId = c.get("user")?.id ?? null;
 
-    if (!artefact || !canViewArtefact(artefact, viewerId)) {
+    if (
+      !artefact ||
+      // The matrix decides on the effective tier (AH20/CL5): an artefact in a
+      // collection is served under its tree root's access.
+      !canViewArtefact(
+        await resolveEffectiveViewable(artefact, deps.collectionRepo),
+        viewerId,
+      )
+    ) {
       // An anonymous visitor who can't (yet) see it — e.g. a "Members"
       // (`authenticated`) link opened by someone in the org who hasn't created
       // their account yet — is sent to sign in and then bounced back to this
@@ -94,7 +106,13 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
     const artefact = await deps.repo.findBySlug(slug);
     const viewerId = c.get("user")?.id ?? null;
 
-    if (!artefact || !canViewArtefact(artefact, viewerId)) {
+    if (
+      !artefact ||
+      !canViewArtefact(
+        await resolveEffectiveViewable(artefact, deps.collectionRepo),
+        viewerId,
+      )
+    ) {
       return c.notFound();
     }
 

@@ -13,6 +13,9 @@ import {
   type TenantScopeResolver,
 } from "../middleware/tenant-scope";
 import { createArtefactRoutes, toArtefactSummary } from "./artefacts";
+import { createCollectionRoutes } from "./collections";
+import { createBookmarkRoutes } from "./bookmarks";
+import { listEffectivelyShared } from "../collections/shared.query";
 import { createDataRoutes } from "./data";
 import { createViewRoutes } from "./views";
 import { createUserRoutes } from "./users";
@@ -32,6 +35,8 @@ export function createApiRoutes(
 ) {
   const {
     artefactRepository,
+    collectionRepository,
+    bookmarkRepository,
     dataRepository,
     payloadStore,
     userDirectory,
@@ -82,27 +87,28 @@ export function createApiRoutes(
   });
 
   // S14 — "Shared with you". Signed-in users only (unauthenticated access is by
-  // slug link only). Lists active artefacts shared *to* the caller
-  // (`authenticated` + `public`) across *other* owners; their own artefacts
+  // slug link only). Lists active artefacts **effectively** shared *to* the
+  // caller (AH20/CL5): others' top-level shared artefacts plus others' artefacts
+  // inside collection trees whose root grants the caller. Their own artefacts
   // (in "Your artefacts") and anyone's private ones never appear (AH8). The
   // client groups/filters by kind.
   api.get("/shared", requireAuth, async (c) => {
     const scope = await resolveScope(c);
-    const artefacts = await artefactRepository.listShared(
-      c.get("user")!.id,
-      scope,
-    );
+    const shared = await listEffectivelyShared(c.get("user")!.id, scope, {
+      artefactRepo: artefactRepository,
+      collectionRepo: collectionRepository,
+    });
     // Enrich with owner display identity so the gallery can attribute each
     // artefact ("Shared by …"). The artefact ids/owner ids come from Hosting;
     // names/emails are composed from Identity via the user directory.
     const identities = await userDirectory.lookup(
-      artefacts.map((a) => a.ownerId),
+      shared.map((e) => e.artefact.ownerId),
     );
     return c.json<SharedListResponse>({
-      artefacts: artefacts.map((a) => {
+      artefacts: shared.map(({ artefact: a, effectiveVisibility }) => {
         const who = identities.get(a.ownerId);
         return {
-          ...toArtefactSummary(a),
+          ...toArtefactSummary(a, effectiveVisibility),
           owner: { name: who?.name ?? "", email: who?.email ?? "" },
         };
       }),
@@ -120,7 +126,35 @@ export function createApiRoutes(
       payloadStore,
       dataRepo: dataRepository,
       viewRepo: viewRepository,
+      collectionRepo: collectionRepository,
+      bookmarkRepo: bookmarkRepository,
       userDirectory,
+      resolveScope,
+    }),
+  );
+
+  // S25/S26 — Artefact Collections (owner-only folder tree + cascades).
+  api.route(
+    "/collections",
+    createCollectionRoutes({
+      collectionRepo: collectionRepository,
+      artefactRepo: artefactRepository,
+      bookmarkRepo: bookmarkRepository,
+      dataRepo: dataRepository,
+      viewRepo: viewRepository,
+      payloadStore,
+      userDirectory,
+      resolveScope,
+    }),
+  );
+
+  // S27 — Bookmarks: the caller's pins (toggles live on the resources).
+  api.route(
+    "/bookmarks",
+    createBookmarkRoutes({
+      bookmarkRepo: bookmarkRepository,
+      artefactRepo: artefactRepository,
+      collectionRepo: collectionRepository,
       resolveScope,
     }),
   );
@@ -131,6 +165,7 @@ export function createApiRoutes(
     "/artefacts/:ref/data",
     createDataRoutes({
       artefactRepo: artefactRepository,
+      collectionRepo: collectionRepository,
       dataRepo: dataRepository,
       userDirectory,
       resolveScope,
@@ -143,6 +178,7 @@ export function createApiRoutes(
     "/artefacts/:ref/viewers",
     createViewRoutes({
       artefactRepo: artefactRepository,
+      collectionRepo: collectionRepository,
       viewRepo: viewRepository,
       userDirectory,
       resolveScope,

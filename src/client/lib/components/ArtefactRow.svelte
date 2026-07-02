@@ -1,6 +1,16 @@
 <script lang="ts">
   import type { ArtefactSummary } from "../../../shared/contracts";
-  import { kindMeta, fmtBytes, relativeTime, STORAGE_ICON, STORAGE_LABEL, type Visibility } from "../format";
+  import {
+    kindMeta,
+    fmtBytes,
+    relativeTime,
+    collectionColor,
+    BOOKMARK_ICON,
+    FOLDER_ICON,
+    STORAGE_ICON,
+    STORAGE_LABEL,
+    type Visibility,
+  } from "../format";
   import { overlay } from "../ui.svelte";
   import Icon from "./Icon.svelte";
   import MoreMenu from "./MoreMenu.svelte";
@@ -14,11 +24,34 @@
     onArchive: () => void;
     onVisibility: (v: Visibility) => void;
     onManage: () => void;
+    // S25/S27 — collections + bookmarks.
+    collectionName?: string | null;
+    onOpenCollection?: () => void;
+    bookmarked?: boolean;
+    onBookmark?: () => void;
+    onMoveToCollection?: () => void;
+    showCollectionChip?: boolean;
   }
-  let { a, onOpen, onCopy, onEdit, onArchive, onVisibility, onManage }: Props = $props();
+  let {
+    a,
+    onOpen,
+    onCopy,
+    onEdit,
+    onArchive,
+    onVisibility,
+    onManage,
+    collectionName = null,
+    onOpenCollection,
+    bookmarked = false,
+    onBookmark,
+    onMoveToCollection,
+    showCollectionChip = true,
+  }: Props = $props();
 
   const m = $derived(kindMeta(a.kind));
-  const isShared = $derived(a.visibility !== "private" && !!a.publicSlug);
+  const inherited = $derived(a.collectionId !== null);
+  // Link reachability follows the *effective* tier (AH20).
+  const isShared = $derived(a.effectiveVisibility !== "private" && !!a.publicSlug);
   const raised = $derived(
     overlay.isOpen(`menu:${a.id}`) || overlay.isOpen(`vis:${a.id}`),
   );
@@ -44,11 +77,36 @@
       style="display:block;max-width:100%;text-align:left;background:none;border:none;padding:0;cursor:pointer;font-family:inherit;color:var(--fg);font-size:14px;font-weight:600;letter-spacing:-0.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
     >
       {a.title}
+      {#if bookmarked}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linejoin="round"
+          style="vertical-align:-1px;margin-left:5px;color:var(--primary);"
+        >
+          <path d={BOOKMARK_ICON[0]} />
+        </svg>
+      {/if}
     </button>
     <div
       style="display:flex;align-items:center;gap:7px;margin-top:3px;font-size:11.5px;color:var(--muted-fg);flex-wrap:wrap;"
     >
       <span>{m.label}</span>
+      {#if inherited && collectionName && showCollectionChip}
+        <span style="opacity:.5;">·</span>
+        <button
+          onclick={onOpenCollection}
+          title={`Open “${collectionName}”`}
+          style="display:inline-flex;align-items:center;gap:4px;max-width:150px;background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:11.5px;color:var(--muted-fg);"
+        >
+          <Icon paths={FOLDER_ICON} size={11} width={1.8} color={collectionColor(a.collectionId!)} style="flex-shrink:0;" />
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">in {collectionName}</span>
+        </button>
+      {/if}
       {#if a.usesStorage}
         <span title={STORAGE_LABEL} aria-label={STORAGE_LABEL} style="display:inline-flex;align-items:center;color:var(--muted-fg);">
           <Icon paths={STORAGE_ICON} size={12} width={1.8} />
@@ -76,6 +134,27 @@
       {/if}
     </div>
   </div>
-  <VisibilityControl id={a.id} visibility={a.visibility} variant="pill" onChoose={onVisibility} {onManage} />
-  <MoreMenu id={a.id} {isShared} variant="list" {onOpen} {onCopy} {onEdit} {onArchive} />
+  <VisibilityControl
+    id={a.id}
+    visibility={a.effectiveVisibility}
+    variant="pill"
+    onChoose={onVisibility}
+    {onManage}
+    {inherited}
+    inheritedFrom={collectionName ?? ""}
+    {onOpenCollection}
+  />
+  <MoreMenu
+    id={a.id}
+    {isShared}
+    variant="list"
+    {onOpen}
+    {onCopy}
+    {onEdit}
+    {onArchive}
+    {bookmarked}
+    {onBookmark}
+    inCollection={inherited}
+    {onMoveToCollection}
+  />
 </div>

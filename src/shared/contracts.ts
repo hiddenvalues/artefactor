@@ -36,6 +36,11 @@ export interface ArtefactSummary {
   title: string;
   kind: ArtefactKind;
   visibility: "private" | "selected" | "authenticated" | "public";
+  // S25 (AH20) — the tier the artefact is actually served under: its own when
+  // top-level, its collection tree root's when contained. The client renders
+  // the "Inherited" state from the pair (collectionId, effectiveVisibility).
+  effectiveVisibility: "private" | "selected" | "authenticated" | "public";
+  collectionId: string | null;
   status: "active" | "archived";
   publicSlug: string | null;
   payloadBytes: number;
@@ -136,4 +141,60 @@ export interface ArtefactViewerSummary {
 
 export interface ArtefactViewersResponse {
   viewers: ArtefactViewerSummary[];
+}
+
+// S25–S27 — Artefact Collections + Bookmarks (ddd/artefact-collections.md).
+// A client-facing view of a Collection aggregate. Owner-only in v1 — these
+// shapes never travel to non-owners. `visibility` is meaningful on roots only
+// (CL4); nested collections render as "Inherited" from the root.
+export interface CollectionSummary {
+  id: string;
+  ownerId: string;
+  name: string;
+  parentId: string | null;
+  rootId: string;
+  visibility: ArtefactSummary["visibility"];
+  status: "active" | "archived";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CollectionListResponse {
+  collections: CollectionSummary[];
+}
+
+export interface CreateCollectionRequest {
+  name: string;
+  parentId?: string | null;
+  visibility?: ArtefactSummary["visibility"];
+}
+
+// PATCH /api/collections/:id — rename and/or change access (roots only, CL4).
+export interface EditCollectionRequest {
+  name?: string;
+  visibility?: ArtefactSummary["visibility"];
+}
+
+// PUT /api/artefacts/:id/collection — move an artefact (null = top level).
+export interface MoveArtefactRequest {
+  collectionId: string | null;
+}
+
+// Cascade counts (CL7/CL8) — drives the toast/confirm copy ("archived with N
+// artefacts", "N artefacts and M sub-collections will be deleted").
+export interface CascadeCounts {
+  collections: number;
+  artefacts: number;
+}
+
+export interface CollectionLifecycleResponse {
+  collection: CollectionSummary;
+  cascade: CascadeCounts;
+}
+
+// GET /api/bookmarks — the caller's pins, resolved to live (non-archived)
+// targets (BM3). Collections before artefacts is a client concern.
+export interface BookmarksResponse {
+  artefacts: ArtefactSummary[];
+  collections: CollectionSummary[];
 }

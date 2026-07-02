@@ -6,6 +6,7 @@ import {
   index,
   uniqueIndex,
   primaryKey,
+  type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { DEFAULT_TENANT } from "../../domain/artefact/artefact";
 
@@ -214,6 +215,13 @@ export const artefact = sqliteTable(
       .notNull()
       .default("private"),
     publicSlug: text("public_slug"),
+    // AH20 (S25) — the collection the artefact lives in; NULL = top-level. While
+    // set, the tree root's access governs (effective access); ON DELETE CASCADE
+    // is the CL8 backstop (the delete command erases artefacts explicitly first).
+    collectionId: text("collection_id").references(
+      (): AnySQLiteColumn => collection.id,
+      { onDelete: "cascade" },
+    ),
     status: text("status", { enum: ["active", "archived"] })
       .notNull()
       .default("active"),
@@ -234,6 +242,103 @@ export const artefact = sqliteTable(
     uniqueIndex("artefact_public_slug_uq").on(t.publicSlug),
     index("artefact_owner_idx").on(t.ownerId),
     index("artefact_status_visibility_idx").on(t.status, t.visibility),
+    index("artefact_collection_idx").on(t.collectionId),
+  ],
+);
+
+// Artefact Collections context (S25, ddd/artefact-collections.md). A nestable
+// folder node; the tree root's (visibility + access list) governs the effective
+// access of everything inside (CL4/CL5). parent_id and root_id are immutable
+// (no re-parenting, CL3) — root_id is denormalized so effective access resolves
+// without recursion. Self-FKs cascade as the CL8 backstop (the delete command
+// removes children before parents anyway).
+export const collection = sqliteTable(
+  "collection",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id),
+    // As on artefact (S22/AH17) — OSS: DEFAULT_TENANT, never discriminates.
+    tenantId: text("tenant_id").notNull().default(DEFAULT_TENANT),
+    name: text("name").notNull(),
+    parentId: text("parent_id").references((): AnySQLiteColumn => collection.id, {
+      onDelete: "cascade",
+    }),
+    rootId: text("root_id").notNull(),
+    visibility: text("visibility", {
+      enum: ["private", "selected", "authenticated", "public"],
+    })
+      .notNull()
+      .default("private"),
+    status: text("status", { enum: ["active", "archived"] })
+      .notNull()
+      .default("active"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    index("collection_owner_idx").on(t.ownerId),
+    index("collection_parent_idx").on(t.parentId),
+    // The tree-expansion lookup (listByRoots) behind effectively-shared reads.
+    index("collection_root_idx").on(t.rootId),
+  ],
+);
+
+// Artefact Collections — the `selected`-tier access list on a tree root (CL4),
+// mirroring artefact_access exactly.
+export const collectionAccess = sqliteTable(
+  "collection_access",
+  {
+    collectionId: text("collection_id")
+      .notNull()
+      .references(() => collection.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    grantedAt: integer("granted_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.collectionId, t.userId] }),
+    index("collection_access_user_idx").on(t.userId),
+  ],
+);
+
+// Bookmarks context (S27, BM1–BM4). Per-user pins with set semantics — the pair
+// is the identity. Rows survive archive/restore (filtered at read, BM3) and go
+// with their target via ON DELETE CASCADE (BM4 backstop).
+export const artefactBookmark = sqliteTable(
+  "artefact_bookmark",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    artefactId: text("artefact_id")
+      .notNull()
+      .references(() => artefact.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.artefactId] }),
+    index("artefact_bookmark_artefact_idx").on(t.artefactId),
+  ],
+);
+
+export const collectionBookmark = sqliteTable(
+  "collection_bookmark",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    collectionId: text("collection_id")
+      .notNull()
+      .references(() => collection.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.collectionId] }),
+    index("collection_bookmark_collection_idx").on(t.collectionId),
   ],
 );
 

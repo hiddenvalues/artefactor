@@ -8,6 +8,7 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
+import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { PayloadStore } from "../../domain/artefact/ports";
 import { loadOwnActiveArtefact, loadOwnArtefact } from "./get-own-artefact";
 
@@ -31,6 +32,8 @@ export interface DeleteArtefactDeps {
   repo: ArtefactRepository;
   dataRepo: DataRepository;
   viewRepo: ViewRepository;
+  // S27 (BM4) — permanent delete also removes every user's bookmark of it.
+  bookmarkRepo: BookmarkRepository;
   payloadStore: PayloadStore;
 }
 
@@ -84,5 +87,6 @@ export async function deleteArtefactCommand(
   await deps.payloadStore.delete(existing.payloadRef);
   await deps.dataRepo.deleteByArtefact(existing.id);
   await deps.viewRepo.deleteByArtefact(existing.id);
+  await deps.bookmarkRepo.deleteByArtefact(existing.id); // BM4
   await deps.repo.delete(existing.id);
 }

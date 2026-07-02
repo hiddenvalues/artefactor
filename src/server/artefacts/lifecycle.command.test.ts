@@ -8,6 +8,7 @@ import { createArtefact, shareArtefact } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { InMemoryDataRepository } from "../../domain/data/in-memory-data-repository";
 import { InMemoryViewRepository } from "../../domain/views/in-memory-view-repository";
+import { InMemoryBookmarkRepository } from "../../domain/bookmark/in-memory-bookmark-repository";
 import type { PayloadStore, StoredPayload } from "../../domain/artefact/ports";
 import { SINGLETON_SCOPE as SCOPE } from "../../domain/artefact/tenant-scope";
 import { ArtefactNotFound, InvariantViolation } from "../../domain/artefact/errors";
@@ -122,7 +123,7 @@ describe("delete command (S15, AH11)", () => {
     await seedArchivedWithData();
     await deleteArtefactCommand(
       { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
-      { repo, dataRepo, viewRepo, payloadStore },
+      { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore },
     );
     expect(await repo.findById("a1", SCOPE)).toBeNull();
     expect(payloadStore.deleted).toEqual(["r"]);
@@ -136,7 +137,7 @@ describe("delete command (S15, AH11)", () => {
     await expect(
       deleteArtefactCommand(
         { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
-        { repo, dataRepo, viewRepo, payloadStore },
+        { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore },
       ),
     ).rejects.toBeInstanceOf(InvariantViolation);
     expect(await repo.findById("a1", SCOPE)).not.toBeNull();
@@ -148,7 +149,7 @@ describe("delete command (S15, AH11)", () => {
     await expect(
       deleteArtefactCommand(
         { artefactId: "a1", requesterId: "intruder", scope: SCOPE },
-        { repo, dataRepo, viewRepo, payloadStore },
+        { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore },
       ),
     ).rejects.toBeInstanceOf(ArtefactNotFound);
     expect(await repo.findById("a1", SCOPE)).not.toBeNull();

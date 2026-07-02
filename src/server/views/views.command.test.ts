@@ -12,6 +12,7 @@ import {
   type Artefact,
 } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
+import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
 import { InMemoryViewRepository } from "../../domain/views/in-memory-view-repository";
 import { SINGLETON_SCOPE as SCOPE } from "../../domain/artefact/tenant-scope";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
@@ -48,7 +49,11 @@ describe("views commands (S21)", () => {
     viewRepo = new InMemoryViewRepository();
     let n = 0;
     recordDeps = { viewRepo, newId: () => `v${++n}` };
-    listDeps = { artefactRepo, viewRepo };
+    listDeps = {
+      artefactRepo,
+      collectionRepo: new InMemoryCollectionRepository(),
+      viewRepo,
+    };
   });
 
   it("records a view and lists it for another viewer (VT1)", async () => {

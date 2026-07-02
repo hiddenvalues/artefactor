@@ -4,6 +4,9 @@ import { ARTEFACT_KINDS } from "../../domain/artefact/kind";
 import { VISIBILITIES } from "../../domain/artefact/visibility";
 import type { Artefact } from "../../domain/artefact/artefact";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
+import { loadArtefactRoot } from "../collections/effective";
+import { effectiveVisibility } from "../../domain/collection/effective-access";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { PayloadStore } from "../../domain/artefact/ports";
 import type { DataRepository } from "../../domain/data/data-repository";
@@ -31,6 +34,9 @@ import { env } from "../env";
 
 export interface McpToolDeps {
   repo: ArtefactRepository;
+  // S25 (AH20) — summaries report the *effective* tier and link reachability,
+  // which for a contained artefact comes from its collection tree root.
+  collectionRepo: CollectionRepository;
   payloadStore: PayloadStore;
   dataRepo: DataRepository;
 }
@@ -53,15 +59,22 @@ function fail(message: string) {
 }
 
 // Map an artefact to the summary the BFF returns, plus the shareable URL when it
-// is actually reachable by link (a slug exists and the tier is not private —
-// the slug is retained but 404s while private).
-function summarize(a: Artefact) {
-  const summary = toArtefactSummary(a);
-  const url =
-    a.publicSlug && a.visibility !== "private"
-      ? `${env.BETTER_AUTH_URL}/a/${a.publicSlug}`
-      : null;
-  return { ...summary, url };
+// is actually reachable by link (a slug exists and the **effective** tier is not
+// private — a contained artefact is served under its collection tree root's
+// access, AH20, and the slug 404s while effectively private).
+function makeSummarize(deps: McpToolDeps) {
+  return async function summarize(a: Artefact) {
+    const effVis = effectiveVisibility(
+      a,
+      await loadArtefactRoot(a, deps.collectionRepo),
+    );
+    const summary = toArtefactSummary(a, effVis);
+    const url =
+      a.publicSlug && effVis !== "private"
+        ? `${env.BETTER_AUTH_URL}/a/${a.publicSlug}`
+        : null;
+    return { ...summary, url };
+  };
 }
 
 // Run a tool body, translating known domain errors into `isError` results.
@@ -83,6 +96,7 @@ export function registerArtefactTools(
   scope: TenantScope,
 ): void {
   const { repo, payloadStore, dataRepo } = deps;
+  const summarize = makeSummarize(deps);
 
   // Artefacts accumulate per-user data blobs (what the running artefact reads /
   // writes via localStorage). The backend treats those blobs as opaque, so it
@@ -91,7 +105,7 @@ export function registerArtefactTools(
   // so the model can warn and suggest bumping the storage-key version or
   // publishing a new artefact (v2) on a breaking change. See the authoring skill.
   const withDataCount = async (a: Artefact) => ({
-    ...summarize(a),
+    ...(await summarize(a)),
     dataAuthorCount: (await dataRepo.listAuthorsByArtefact(a.id)).length,
   });
 
@@ -198,7 +212,7 @@ export function registerArtefactTools(
         const owned = await repo.listByOwner(userId, scope, {
           includeArchived: include_archived ?? false,
         });
-        return { artefacts: owned.map(summarize) };
+        return { artefacts: await Promise.all(owned.map(summarize)) };
       }),
   );
 

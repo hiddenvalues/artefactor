@@ -4,7 +4,7 @@
   import Icon from "./Icon.svelte";
 
   interface Props {
-    view: "dashboard" | "gallery";
+    view: "dashboard" | "gallery" | "collection" | "archive";
     query: string;
     searchPlaceholder: string;
     user: { name: string; email: string };
@@ -13,6 +13,8 @@
     onGoGallery: () => void;
     onOpenUpload: () => void;
     onSignOut: () => void;
+    // S25 — toggles the collections/bookmarks sidebar (closed by default).
+    onToggleSidebar: () => void;
   }
   let {
     view,
@@ -24,6 +26,7 @@
     onGoGallery,
     onOpenUpload,
     onSignOut,
+    onToggleSidebar,
   }: Props = $props();
 
   const accountOpen = $derived(overlay.isOpen("account"));
@@ -41,6 +44,14 @@
   style="position:sticky;top:0;z-index:20;background:color-mix(in srgb, var(--bg) 86%, transparent);backdrop-filter:saturate(160%) blur(10px);border-bottom:1px solid var(--border);"
 >
   <div style="display:flex;align-items:center;gap:14px;padding:11px 24px;">
+    <button
+      onclick={onToggleSidebar}
+      title="Toggle sidebar"
+      aria-label="Toggle sidebar"
+      style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;border:none;background:none;color:var(--muted-fg);border-radius:8px;cursor:pointer;flex-shrink:0;"
+    >
+      <Icon paths={["M4 6h16", "M4 12h16", "M4 18h16"]} size={17} />
+    </button>
     <div style="display:flex;align-items:center;gap:10px;margin-right:4px;">
       <div style="width:28px;height:28px;border-radius:7px;background:var(--primary);display:flex;align-items:center;justify-content:center;">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none">

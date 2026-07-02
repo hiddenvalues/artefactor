@@ -52,6 +52,7 @@ export function createApp(
     "/a",
     createArtefactServingRoutes({
       repo: adapters.artefactRepository,
+      collectionRepo: adapters.collectionRepository,
       payloadStore: adapters.payloadStore,
       dataRepo: adapters.dataRepository,
       viewRepo: adapters.viewRepository,
@@ -68,6 +69,7 @@ export function createApp(
     createMcpRoutes(
       {
         repo: adapters.artefactRepository,
+        collectionRepo: adapters.collectionRepository,
         payloadStore: adapters.payloadStore,
         dataRepo: adapters.dataRepository,
       },

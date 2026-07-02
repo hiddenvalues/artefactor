@@ -50,6 +50,13 @@
       "when": 1782856440316,
       "tag": "0006_dusty_susan_delgado",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1783020410130,
+      "tag": "0007_boring_nextwave",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,16 @@
 <script lang="ts">
   import type { ArtefactSummary } from "../../../shared/contracts";
-  import { kindMeta, fmtBytes, relativeTime, STORAGE_ICON, STORAGE_LABEL, type Visibility } from "../format";
+  import {
+    kindMeta,
+    fmtBytes,
+    relativeTime,
+    collectionColor,
+    BOOKMARK_ICON,
+    FOLDER_ICON,
+    STORAGE_ICON,
+    STORAGE_LABEL,
+    type Visibility,
+  } from "../format";
   import { overlay } from "../ui.svelte";
   import Icon from "./Icon.svelte";
   import MoreMenu from "./MoreMenu.svelte";
@@ -14,11 +24,36 @@
     onArchive: () => void;
     onVisibility: (v: Visibility) => void;
     onManage: () => void;
+    // S25/S27 — collections + bookmarks.
+    collectionName?: string | null;
+    onOpenCollection?: () => void;
+    bookmarked?: boolean;
+    onBookmark?: () => void;
+    onMoveToCollection?: () => void;
+    // Hide the "in <Collection>" chip when the card already sits on that
+    // collection's page.
+    showCollectionChip?: boolean;
   }
-  let { a, onOpen, onCopy, onEdit, onArchive, onVisibility, onManage }: Props = $props();
+  let {
+    a,
+    onOpen,
+    onCopy,
+    onEdit,
+    onArchive,
+    onVisibility,
+    onManage,
+    collectionName = null,
+    onOpenCollection,
+    bookmarked = false,
+    onBookmark,
+    onMoveToCollection,
+    showCollectionChip = true,
+  }: Props = $props();
 
   const m = $derived(kindMeta(a.kind));
-  const isShared = $derived(a.visibility !== "private" && !!a.publicSlug);
+  const inherited = $derived(a.collectionId !== null);
+  // Link reachability follows the *effective* tier (AH20).
+  const isShared = $derived(a.effectiveVisibility !== "private" && !!a.publicSlug);
   const raised = $derived(
     overlay.isOpen(`menu:${a.id}`) || overlay.isOpen(`vis:${a.id}`),
   );
@@ -46,15 +81,28 @@
         {m.label}
       </span>
     </span>
-    {#if a.usesStorage}
-      <span
-        title={STORAGE_LABEL}
-        aria-label={STORAGE_LABEL}
-        style="position:absolute;top:9px;right:9px;display:inline-flex;align-items:center;justify-content:center;padding:4px;border-radius:7px;background:var(--card);color:var(--muted-fg);box-shadow:var(--shadow);"
-      >
-        <Icon paths={STORAGE_ICON} size={13} width={1.8} />
-      </span>
-    {/if}
+    <span style="position:absolute;top:9px;right:9px;display:inline-flex;gap:5px;">
+      {#if bookmarked}
+        <span
+          title="Bookmarked"
+          aria-label="Bookmarked"
+          style="display:inline-flex;align-items:center;justify-content:center;padding:4px;border-radius:7px;background:var(--card);color:var(--primary);box-shadow:var(--shadow);"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+            <path d={BOOKMARK_ICON[0]} />
+          </svg>
+        </span>
+      {/if}
+      {#if a.usesStorage}
+        <span
+          title={STORAGE_LABEL}
+          aria-label={STORAGE_LABEL}
+          style="display:inline-flex;align-items:center;justify-content:center;padding:4px;border-radius:7px;background:var(--card);color:var(--muted-fg);box-shadow:var(--shadow);"
+        >
+          <Icon paths={STORAGE_ICON} size={13} width={1.8} />
+        </span>
+      {/if}
+    </span>
   </button>
 
   <!-- body -->
@@ -74,13 +122,37 @@
         {onCopy}
         {onEdit}
         {onArchive}
+        {bookmarked}
+        {onBookmark}
+        inCollection={inherited}
+        {onMoveToCollection}
       />
     </div>
 
-    <VisibilityControl id={a.id} visibility={a.visibility} variant="block" onChoose={onVisibility} {onManage} />
+    <VisibilityControl
+      id={a.id}
+      visibility={a.effectiveVisibility}
+      variant="block"
+      onChoose={onVisibility}
+      {onManage}
+      {inherited}
+      inheritedFrom={collectionName ?? ""}
+      {onOpenCollection}
+    />
 
     <!-- footer meta -->
-    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted-fg);">
+    <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--muted-fg);flex-wrap:wrap;">
+      {#if inherited && collectionName && showCollectionChip}
+        <button
+          onclick={onOpenCollection}
+          title={`Open “${collectionName}”`}
+          style="display:inline-flex;align-items:center;gap:4px;max-width:130px;background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:11.5px;color:var(--muted-fg);"
+        >
+          <Icon paths={FOLDER_ICON} size={11} width={1.8} color={collectionColor(a.collectionId!)} style="flex-shrink:0;" />
+          <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">in {collectionName}</span>
+        </button>
+        <span style="opacity:.5;">·</span>
+      {/if}
       <span>Updated {relativeTime(a.updatedAt)}</span>
       <span style="opacity:.5;">·</span>
       <span style="font-family:'Geist Mono',monospace;">{fmtBytes(a.payloadBytes)}</span>

@@ -42,5 +42,15 @@ export interface ArtefactRepository {
   // *others'* artefacts, so the viewer's own are excluded (they live in "Your
   // artefacts"). Private never appears (AH8). Scoping to the active org makes
   // "Shared with you" org-scoped in a superset (ET3); OSS passes the singleton.
+  // **Top-level artefacts only** (`collectionId = null`): an artefact inside a
+  // collection has its own tier dormant (AH20/CL5) — the effectively-shared
+  // composition adds those via `listByCollectionIds` + the shared roots.
   listShared(viewerId: string, scope: TenantScope): Promise<Artefact[]>;
+  // Artefacts whose `collectionId` is in the given set, within the tenant scope.
+  // Active-only by default; the cascade commands pass `includeArchived` (CL7/8).
+  listByCollectionIds(
+    collectionIds: readonly string[],
+    scope: TenantScope,
+    options?: ListByOwnerOptions,
+  ): Promise<Artefact[]>;
 }

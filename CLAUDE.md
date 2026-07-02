@@ -10,7 +10,12 @@ UI are complete. **Post-v0.2 the DAG also defines *enabler seams*: behaviour-pre
 points that let a closed superset extend the core without forking it** (each ships an OSS default
 that keeps OSS behaviour byte-identical). **S24** (inject persistence ports into the composition)
 is **done**; **S19** (payload-retention seam), **S22** (tenant scope + access-policy), and **S23**
-(quota / payload-size / branding policies) are **specced but not yet implemented**. New work
+(quota / payload-size / branding policies) are **specced but not yet implemented**. **S25–S27**
+(**Collections & Bookmarks**) are **done**: an owner-only nestable folder tree whose **root's**
+access (all four tiers incl. `selected`) the contained artefacts **inherit at read time**
+(AH20/AH21 — own tier dormant, slug minted on effective share), archive/restore/permanent-delete
+**cascades**, per-user bookmarks, and the sidebar/collection-page/archive-view client UI. Context:
+`docs/specs/ddd/artefact-collections.md`. New work
 either implements a pending enabler seam or adds a new slice (with its governing DDD invariant)
 before coding, per the spec-driven process below.
 

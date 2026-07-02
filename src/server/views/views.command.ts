@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { canViewArtefact } from "../../domain/artefact/access";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
+import { resolveEffectiveViewable } from "../collections/effective";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import { recordView } from "../../domain/views/view-entry";
 import type {
@@ -45,6 +47,8 @@ export async function recordArtefactView(
 
 export interface ListViewersDeps {
   artefactRepo: ArtefactRepository;
+  // AH20 — the access decision needs the effective tier (collection tree root).
+  collectionRepo: CollectionRepository;
   viewRepo: ViewRepository;
 }
 
@@ -53,15 +57,23 @@ export interface ListViewersDeps {
 // not-viewable all → not-found (mirrors `resolveViewableArtefact` in the data
 // commands; kept local so Views does not depend on the Data module).
 async function resolveViewableArtefact(
-  repo: ArtefactRepository,
+  deps: ListViewersDeps,
   ref: string,
   viewerId: string | null,
   scope: TenantScope,
 ) {
   // Slug = global capability (AH6); id fallback is tenant-scoped (S22/T2).
   const artefact =
-    (await repo.findBySlug(ref)) ?? (await repo.findById(ref, scope));
-  if (!artefact || !canViewArtefact(artefact, viewerId)) {
+    (await deps.artefactRepo.findBySlug(ref)) ??
+    (await deps.artefactRepo.findById(ref, scope));
+  if (
+    !artefact ||
+    // The matrix decides on the effective tier (AH20/CL5).
+    !canViewArtefact(
+      await resolveEffectiveViewable(artefact, deps.collectionRepo),
+      viewerId,
+    )
+  ) {
     throw new ArtefactNotFound(ref);
   }
   return artefact;
@@ -76,12 +88,7 @@ export async function listArtefactViewers(
   scope: TenantScope,
   deps: ListViewersDeps,
 ): Promise<ViewerRef[]> {
-  const artefact = await resolveViewableArtefact(
-    deps.artefactRepo,
-    ref,
-    viewerId,
-    scope,
-  );
+  const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope);
   const viewers = await deps.viewRepo.listViewersByArtefact(artefact.id);
   return viewers.filter((v) => v.viewerId !== viewerId);
 }

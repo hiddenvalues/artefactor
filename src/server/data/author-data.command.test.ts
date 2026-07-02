@@ -8,6 +8,7 @@ import {
   type Artefact,
 } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
+import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
 import { InMemoryDataRepository } from "../../domain/data/in-memory-data-repository";
 import { SINGLETON_SCOPE as SCOPE } from "../../domain/artefact/tenant-scope";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
@@ -43,7 +44,12 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     artefactRepo = new InMemoryArtefactRepository();
     dataRepo = new InMemoryDataRepository();
     let n = 0;
-    deps = { artefactRepo, dataRepo, newId: () => `d${++n}` };
+    deps = {
+      artefactRepo,
+      collectionRepo: new InMemoryCollectionRepository(),
+      dataRepo,
+      newId: () => `d${++n}`,
+    };
   });
 
   it("lists every author who has an entry, with freshness (AD4)", async () => {

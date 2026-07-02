@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import { BlobTooLarge, InvalidBlob } from "../../domain/data/errors";
 import type { DataRepository } from "../../domain/data/data-repository";
 import {
@@ -23,6 +24,8 @@ import type {
 
 export interface DataRoutesDeps {
   artefactRepo: ArtefactRepository;
+  // AH20 — the access decision needs the effective tier (collection tree root).
+  collectionRepo: CollectionRepository;
   dataRepo: DataRepository;
   userDirectory: UserDirectory;
   // S22 (AH17) — resolves the request's tenant scope for the id-fallback resolve.
@@ -40,6 +43,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
   const r = new Hono<AuthEnv>();
   const commandDeps: OwnDataDeps = {
     artefactRepo: deps.artefactRepo,
+    collectionRepo: deps.collectionRepo,
     dataRepo: deps.dataRepo,
   };
 
