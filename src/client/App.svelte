@@ -468,6 +468,13 @@
     overlay.close();
     window.open(ownOpenUrl(a), "_blank", "noopener");
   }
+  // A bookmarked artefact may be someone else's (BM2) — those open via their
+  // slug link; the owner-preview path is owner-only.
+  function openBookmarked(a: ArtefactSummary) {
+    overlay.close();
+    const own = a.ownerId === $session.data?.user.id;
+    window.open(own ? ownOpenUrl(a) : `/a/${a.publicSlug}`, "_blank", "noopener");
+  }
   function openShared(g: SharedArtefactSummary) {
     window.open(`/a/${g.publicSlug}`, "_blank", "noopener");
   }
@@ -854,7 +861,7 @@
         onOpenArchive={openArchive}
         onNewCollection={() => openNewCollection(null)}
         onToggleExpand={(id) => (expanded = { ...expanded, [id]: !expanded[id] })}
-        onOpenArtefact={openItem}
+        onOpenArtefact={openBookmarked}
         onRemoveBookmark={removeBookmark}
       />
     {/if}
@@ -1299,13 +1306,23 @@
           {:else if view === "gallery" && density === "grid"}
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:16px;">
               {#each visibleShared as g (g.id)}
-                <GalleryCard {g} onOpen={() => openShared(g)} />
+                <GalleryCard
+                  {g}
+                  onOpen={() => openShared(g)}
+                  bookmarked={bookmarkedArtefactIds.has(g.id)}
+                  onBookmark={() => toggleArtefactBookmark(g)}
+                />
               {/each}
             </div>
           {:else}
             <div style="display:flex;flex-direction:column;gap:10px;">
               {#each visibleShared as g (g.id)}
-                <GalleryRow {g} onOpen={() => openShared(g)} />
+                <GalleryRow
+                  {g}
+                  onOpen={() => openShared(g)}
+                  bookmarked={bookmarkedArtefactIds.has(g.id)}
+                  onBookmark={() => toggleArtefactBookmark(g)}
+                />
               {/each}
             </div>
           {/if}

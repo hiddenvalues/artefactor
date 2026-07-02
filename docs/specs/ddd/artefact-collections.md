@@ -88,12 +88,16 @@ Artefact Hosting amendment (AH20/AH21). `null` = top-level / not in a collection
 1. **Per-user, set semantics**: a bookmark is a `(userId, target)` pair where target is one
    artefact or one collection; at most one per pair. Adding an existing bookmark and removing
    a missing one are no-ops. *(BM1)*
-2. **Own items only (v1)**: a user may bookmark only artefacts and collections **they own**.
-   (The store is keyed per-user so this can widen to "anything you can view" later without a
-   model change.) *(BM2)*
+2. **Anything you can view**: a user may bookmark any artefact they can currently **view**
+   (the effective access matrix, CL5/AH20 — their own, or one shared to them at any tier).
+   Adding a bookmark to a non-viewable artefact is a uniform not-found (no leak, AH8);
+   **removing** one's own bookmark row is always allowed (it is the user's own data — e.g.
+   cleanup after access was revoked). Collections are owner-only *objects* in v1 (CL10), so
+   for collections this degenerates to "your own" until collections become viewer-facing. *(BM2)*
 3. **No access semantics**: bookmarks never affect visibility, serving, or listings other
-   than the user's own bookmark list. Archived targets are **filtered out at read time**
-   (the bookmark row survives archive/restore). *(BM3)*
+   than the user's own bookmark list. Targets that are archived **or no longer viewable**
+   (access revoked, tier lowered) are **hidden at read time, not pruned** — the row survives,
+   and the pin reappears if the target is restored or re-shared. *(BM3)*
 4. **Lifecycle-bound**: permanently deleting an artefact or collection removes its bookmark
    rows (FK cascade backstop, explicit delete in the command). *(BM4)*
 
@@ -136,7 +140,7 @@ All owner-scoped (CL9/CL10) unless noted; `requireAuth` + tenant scope as everyw
 | `DELETE` | `/api/collections/:id` | Permanent delete with cascade (archived-only); 204 |
 | `PUT` | `/api/artefacts/:id/collection` | Move artefact (`{ collectionId | null }`); owner-only; mints slug per CL6 |
 | `GET` | `/api/bookmarks` | The caller's bookmarks (artefact ids + collection ids) |
-| `PUT/DELETE` | `/api/artefacts/:id/bookmark` | Bookmark / unbookmark an owned artefact |
+| `PUT/DELETE` | `/api/artefacts/:id/bookmark` | Bookmark / unbookmark a viewable artefact (BM2; remove is ungated) |
 | `PUT/DELETE` | `/api/collections/:id/bookmark` | Bookmark / unbookmark an owned collection |
 
 Artefact summaries (owner list, detail) additionally expose `collectionId` and the resolved
@@ -173,7 +177,9 @@ access automatically, because their gates already call the same matrix.
   rendered per-collection access with no nesting semantics; the brief's "sub-collections
   inherit their parent's access" wins, in its simplest coherent form.)
 - **No re-parenting of collections in v1** (CL3) — move artefacts, not folders.
-- **Bookmarks are own-items-only in v1** (BM2).
+- **Bookmarks cover anything you can view** (BM2): any viewable artefact — including ones in
+  "Shared with you" — plus your own collections (collections being owner-only objects, CL10).
+  View-gated on add, ungated on remove; hidden-not-pruned when access lapses (BM3).
 - **`status` + `archivedAt`**, not a boolean — matches the Hosting lifecycle convention
   (the prototype's `archived: bool` is a demo shorthand).
 - **No stored color** — the prototype's folder tint has no picker; the client derives a

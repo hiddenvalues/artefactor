@@ -707,19 +707,23 @@ Deps: **S25** (bookmarkable collections; artefact bookmarks alone would only nee
 - **Domain** — a thin per-user store mirroring the S21 pattern: `Bookmark` records
   (`userId`, artefact **or** collection target), `BookmarkRepository` port (`listByUser`,
   `add`, `remove`, `deleteByArtefact`, `deleteByCollection`) + in-memory double. Set
-  semantics (BM1); own-items-only enforced in the command (BM2).
+  semantics (BM1); adds are gated on *effective view access* in the command (BM2 —
+  anything you can view; removes ungated; collections degenerate to own, CL10).
 - **Persistence** — `artefact_bookmark` + `collection_bookmark` join tables (`user_id`,
   target id, `created_at`; PK on the pair; FK `ON DELETE CASCADE`).
 - **BFF** — `GET /api/bookmarks`; `PUT/DELETE /api/artefacts/:id/bookmark`;
   `PUT/DELETE /api/collections/:id/bookmark`. Permanent deletes (S15/S26) also remove
   bookmark rows (BM4).
 - **Client** — sidebar **Bookmarks** section (collections before artefacts, one-click
-  remove), `⋯` menu **Bookmark / Remove bookmark**, bookmark toggle on the collection page
-  header, bookmark badges on cards/rows and tree nodes. Archived targets filtered at read
-  (BM3).
-- **Acceptance:** bookmark add/remove is idempotent; bookmarking another user's artefact is
-  rejected (BM2); the list returns only the caller's bookmarks; archived targets drop out of
-  the list and return after restore; permanent delete removes the rows.
+  remove), `⋯` menu **Bookmark / Remove bookmark**, a bookmark toggle on "Shared with you"
+  cards/rows, a toggle on the collection page header, bookmark badges on cards/rows and tree
+  nodes. Archived / no-longer-viewable targets hidden at read (BM3); a bookmarked artefact
+  you don't own opens via its slug link.
+- **Acceptance:** bookmark add/remove is idempotent; bookmarking a viewable shared artefact
+  succeeds; bookmarking a non-viewable one is a uniform 404 (BM2/AH8); removing survives lost
+  access; the list returns only the caller's bookmarks; archived or no-longer-viewable
+  targets drop out of the list and return on restore/re-share; permanent delete removes the
+  rows.
 - **Boundary:** **OSS**.
 
 ## Build order

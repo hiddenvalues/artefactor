@@ -1,13 +1,23 @@
 <script lang="ts">
   import type { SharedArtefactSummary } from "../../../shared/contracts";
-  import { kindMeta, initials, relativeTime, STORAGE_ICON, STORAGE_LABEL } from "../format";
+  import {
+    kindMeta,
+    initials,
+    relativeTime,
+    BOOKMARK_ICON,
+    STORAGE_ICON,
+    STORAGE_LABEL,
+  } from "../format";
   import Icon from "./Icon.svelte";
 
   interface Props {
     g: SharedArtefactSummary;
     onOpen: () => void;
+    // S27 (BM2) — shared artefacts are bookmarkable too.
+    bookmarked?: boolean;
+    onBookmark?: () => void;
   }
-  let { g, onOpen }: Props = $props();
+  let { g, onOpen, bookmarked = false, onBookmark }: Props = $props();
 
   const m = $derived(kindMeta(g.kind));
   const ownerName = $derived(g.owner.name || g.owner.email || "Unknown");
@@ -43,6 +53,28 @@
       </span>
     {/if}
   </button>
+  {#if onBookmark}
+    <!-- Sits over the thumbnail's lower-right, outside the open-button so a
+         mis-click never opens the artefact. -->
+    <button
+      onclick={onBookmark}
+      title={bookmarked ? "Remove bookmark" : "Bookmark"}
+      aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
+      style="position:absolute;top:76px;right:9px;display:inline-flex;align-items:center;justify-content:center;padding:5px;border-radius:7px;border:none;background:var(--card);box-shadow:var(--shadow);cursor:pointer;color:{bookmarked ? 'var(--primary)' : 'var(--muted-fg)'};"
+    >
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 24 24"
+        fill={bookmarked ? "currentColor" : "none"}
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linejoin="round"
+      >
+        <path d={BOOKMARK_ICON[0]} />
+      </svg>
+    </button>
+  {/if}
   <div style="padding:13px 14px 13px;display:flex;flex-direction:column;gap:11px;">
     <div
       style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
