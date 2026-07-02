@@ -5,7 +5,11 @@ import {
   grantCollectionAccessCommand,
   listOwnCollections,
 } from "./collections.command";
-import { moveArtefactCommand } from "./move-artefact.command";
+import {
+  ejectArtefactCommand,
+  moveArtefactCommand,
+} from "./move-artefact.command";
+import { listSharedCollections } from "./shared-collections.query";
 import {
   archiveCollectionCommand,
   deleteCollectionCommand,
@@ -197,7 +201,7 @@ describe("moveArtefactCommand (S25, CL6)", () => {
     expect(moved.publicSlug).toBeNull();
   });
 
-  it("rejects a non-owned target collection as not-found", async () => {
+  it("rejects a non-owned, non-contributable target collection as not-found", async () => {
     const foreign = await createCollectionCommand(
       { requesterId: "other", name: "Theirs", scope: SCOPE },
       { collectionRepo, newId: () => "col-theirs" },
@@ -209,6 +213,115 @@ describe("moveArtefactCommand (S25, CL6)", () => {
         { artefactRepo, collectionRepo, generateSlug },
       ),
     ).rejects.toBeInstanceOf(CollectionNotFound);
+  });
+});
+
+describe("contributors (S29, CL12/CL13/CL14)", () => {
+  // A tree owned by OWNER, shared `authenticated`, with VIEWER on the access
+  // list (= contributor) — plus a VIEWER-owned artefact to contribute.
+  async function seedContributable() {
+    const root = await makeCollection("Team", { visibility: "authenticated" });
+    await grantCollectionAccessCommand(
+      { collectionId: root.id, requesterId: OWNER, userId: VIEWER, scope: SCOPE },
+      { collectionRepo },
+    );
+    await artefactRepo.save(baseArtefact("mine", { ownerId: VIEWER }));
+    return (await collectionRepo.findById(root.id, SCOPE))!;
+  }
+
+  it("a listed member moves their own artefact in (slug minted per CL6)", async () => {
+    const root = await seedContributable();
+    const moved = await moveArtefactCommand(
+      { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
+      { artefactRepo, collectionRepo, generateSlug },
+    );
+    expect(moved.collectionId).toBe(root.id);
+    expect(moved.publicSlug).toBe("slug-1");
+    expect(moved.ownerId).toBe(VIEWER); // stays theirs
+  });
+
+  it("an unlisted signed-in viewer cannot move in (uniform 404)", async () => {
+    const root = await makeCollection("Team", { visibility: "authenticated" });
+    await artefactRepo.save(baseArtefact("mine", { ownerId: "stranger" }));
+    await expect(
+      moveArtefactCommand(
+        { artefactId: "mine", requesterId: "stranger", collectionId: root.id, scope: SCOPE },
+        { artefactRepo, collectionRepo, generateSlug },
+      ),
+    ).rejects.toBeInstanceOf(CollectionNotFound);
+  });
+
+  it("the collection owner ejects a foreign artefact; a non-owner cannot", async () => {
+    const root = await seedContributable();
+    await moveArtefactCommand(
+      { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
+      { artefactRepo, collectionRepo, generateSlug },
+    );
+    await expect(
+      ejectArtefactCommand(
+        { collectionId: root.id, artefactId: "mine", requesterId: VIEWER, scope: SCOPE },
+        { artefactRepo, collectionRepo },
+      ),
+    ).rejects.toBeInstanceOf(CollectionNotFound); // not their collection
+    const evicted = await ejectArtefactCommand(
+      { collectionId: root.id, artefactId: "mine", requesterId: OWNER, scope: SCOPE },
+      { artefactRepo, collectionRepo },
+    );
+    expect(evicted.collectionId).toBeNull();
+    expect(evicted.visibility).toBe("private"); // dormant tier resurfaces
+    expect(evicted.status).toBe("active"); // untouched
+  });
+
+  it("archive cascade evicts foreign artefacts instead of archiving them (CL14)", async () => {
+    const root = await seedContributable();
+    await moveArtefactCommand(
+      { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
+      { artefactRepo, collectionRepo, generateSlug },
+    );
+    await artefactRepo.save(baseArtefact("owners-own", { collectionId: root.id }));
+    const { cascade } = await archiveCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
+      { collectionRepo, artefactRepo },
+    );
+    expect(cascade).toEqual({ collections: 0, artefacts: 1, evicted: 1 });
+    const mine = await artefactRepo.findById("mine", SCOPE);
+    expect(mine?.status).toBe("active"); // never archived by someone else
+    expect(mine?.collectionId).toBeNull(); // evicted
+    expect((await artefactRepo.findById("owners-own", SCOPE))?.status).toBe("archived");
+  });
+
+  it("delete cascade evicts foreign artefacts instead of erasing them (CL14)", async () => {
+    const root = await seedContributable();
+    await moveArtefactCommand(
+      { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
+      { artefactRepo, collectionRepo, generateSlug },
+    );
+    await artefactRepo.save(baseArtefact("owners-own", { collectionId: root.id }));
+    await archiveCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
+      { collectionRepo, artefactRepo },
+    );
+    const counts = await deleteCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
+      { collectionRepo, artefactRepo, dataRepo, viewRepo, payloadStore, bookmarkRepo },
+    );
+    expect(counts).toEqual({ collections: 0, artefacts: 1, evicted: 0 });
+    // ("mine" was already evicted by the archive cascade above.)
+    const mine = await artefactRepo.findById("mine", SCOPE);
+    expect(mine).not.toBeNull();
+    expect(mine?.collectionId).toBeNull();
+    expect(await artefactRepo.findById("owners-own", SCOPE)).toBeNull();
+    expect(payloadStore.deleted).toEqual(["ref-owners-own"]);
+  });
+
+  it("the shared-collections read reports contributor-ness without the grantee list", async () => {
+    const root = await seedContributable();
+    const asMember = await listSharedCollections(VIEWER, SCOPE, { collectionRepo });
+    expect(asMember.map((n) => n.collection.id)).toEqual([root.id]);
+    expect(asMember[0]?.canContribute).toBe(true);
+    expect(asMember[0]?.collection.sharedWith).toEqual([]); // privacy
+    const asStranger = await listSharedCollections("stranger", SCOPE, { collectionRepo });
+    expect(asStranger[0]?.canContribute).toBe(false); // views, can't contribute
   });
 });
 
@@ -301,7 +414,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
       { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
       { collectionRepo, artefactRepo },
     );
-    expect(cascade).toEqual({ collections: 1, artefacts: 2 });
+    expect(cascade).toEqual({ collections: 1, artefacts: 2, evicted: 0 });
     expect((await collectionRepo.findById(child.id, SCOPE))?.status).toBe("archived");
     expect((await artefactRepo.findById("a2", SCOPE))?.status).toBe("archived");
     expect((await artefactRepo.findById("loose", SCOPE))?.status).toBe("active");
@@ -331,7 +444,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
       { collectionId: child.id, requesterId: OWNER, scope: SCOPE },
       { collectionRepo, artefactRepo },
     );
-    expect(cascade).toEqual({ collections: 0, artefacts: 1 });
+    expect(cascade).toEqual({ collections: 0, artefacts: 1, evicted: 0 });
     expect((await collectionRepo.findById(root.id, SCOPE))?.status).toBe("active");
     expect((await artefactRepo.findById("a1", SCOPE))?.status).toBe("active");
   });
@@ -369,7 +482,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
       { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
       deps,
     );
-    expect(counts).toEqual({ collections: 1, artefacts: 2 });
+    expect(counts).toEqual({ collections: 1, artefacts: 2, evicted: 0 });
     expect(await collectionRepo.findById(root.id, SCOPE)).toBeNull();
     expect(await collectionRepo.findById(child.id, SCOPE)).toBeNull();
     expect(await artefactRepo.findById("a1", SCOPE)).toBeNull();

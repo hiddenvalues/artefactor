@@ -11,7 +11,12 @@
   // that creates under the selected target without leaving the modal.
   interface Props {
     artefact: ArtefactSummary;
-    collections: CollectionSummary[]; // active only
+    // Active targets: the viewer's own collections plus contributable shared
+    // trees (S29/CL12) — mixed in one forest, distinguished by ownerId.
+    collections: CollectionSummary[];
+    // The signed-in user — gates the inline "New collection" (own targets only:
+    // creating nodes inside someone else's tree is owner-only, CL9).
+    viewerId: string;
     busy?: boolean;
     onClose: () => void;
     onConfirm: (targetId: string | null) => void;
@@ -19,8 +24,15 @@
     // can select it. The caller owns the collections list refresh.
     onCreate: (name: string, parentId: string | null) => Promise<CollectionSummary>;
   }
-  let { artefact, collections, busy = false, onClose, onConfirm, onCreate }: Props =
-    $props();
+  let {
+    artefact,
+    collections,
+    viewerId,
+    busy = false,
+    onClose,
+    onConfirm,
+    onCreate,
+  }: Props = $props();
 
   let target = $state<string | null>(null);
   let expanded = $state<Record<string, boolean>>({});
@@ -71,6 +83,10 @@
   const byId = $derived(new Map(collections.map((c) => [c.id, c])));
   const targetName = $derived(target ? (byId.get(target)?.name ?? "") : null);
   const unchanged = $derived(target === artefact.collectionId);
+  // Inline create works at top level or under the viewer's own nodes (CL9).
+  const canCreateHere = $derived(
+    target === null || byId.get(target)?.ownerId === viewerId,
+  );
   const confirmLabel = $derived(
     target === null ? "Move to top level" : `Add to ${targetName}`,
   );
@@ -166,6 +182,11 @@
           <button onclick={() => (target = node.c.id)} style={rowStyle(active)}>
             <Icon paths={FOLDER_ICON} size={14} width={1.8} color={collectionColor(node.c.id)} style="flex-shrink:0;" />
             <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{node.c.name}</span>
+            {#if node.c.ownerId !== viewerId}
+              <span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;padding:1px 6px;border-radius:999px;background:var(--muted);color:var(--muted-fg);flex-shrink:0;">
+                Shared
+              </span>
+            {/if}
             {#if active}
               <Icon paths={["M20 6L9 17l-5-5"]} size={14} width={2.4} color="var(--primary)" style="flex-shrink:0;" />
             {/if}
@@ -173,9 +194,11 @@
         </div>
       {/each}
 
-      <!-- Inline new collection -->
+      <!-- Inline new collection (own targets only, CL9) -->
       <div style="margin-top:10px;padding:0 0 0 20px;">
-        {#if inlineOpen}
+        {#if !canCreateHere}
+          <!-- Creating inside someone else's tree is theirs to do. -->
+        {:else if inlineOpen}
           <div style="display:flex;align-items:center;gap:7px;">
             <input
               bind:value={inlineName}

@@ -16,8 +16,11 @@
     // S27 (BM2) — shared artefacts are bookmarkable too.
     bookmarked?: boolean;
     onBookmark?: () => void;
+    // S29 (CL13) — on the caller's own collection page: eject this foreign
+    // artefact back to its owner's top level.
+    onEject?: () => void;
   }
-  let { g, onOpen, bookmarked = false, onBookmark }: Props = $props();
+  let { g, onOpen, bookmarked = false, onBookmark, onEject }: Props = $props();
 
   const m = $derived(kindMeta(g.kind));
   const ownerName = $derived(g.owner.name || g.owner.email || "Unknown");
@@ -96,19 +99,32 @@
         {relativeTime(g.updatedAt)}
       </span>
     </div>
-    <button
-      onclick={onOpen}
-      style="width:100%;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--border);background:var(--card);color:var(--fg);border-radius:8px;font-size:12.5px;font-weight:500;cursor:pointer;font-family:inherit;"
-    >
-      <Icon
-        paths={[
-          "M15 3h6v6",
-          "M10 14L21 3",
-          "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
-        ]}
-        size={14}
-      />
-      Open
-    </button>
+    <div style="display:flex;gap:7px;">
+      <button
+        onclick={onOpen}
+        style="flex:1;height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--border);background:var(--card);color:var(--fg);border-radius:8px;font-size:12.5px;font-weight:500;cursor:pointer;font-family:inherit;"
+      >
+        <Icon
+          paths={[
+            "M15 3h6v6",
+            "M10 14L21 3",
+            "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
+          ]}
+          size={14}
+        />
+        Open
+      </button>
+      {#if onEject}
+        <button
+          onclick={onEject}
+          title="Remove from collection"
+          aria-label={`Remove ${g.title} from this collection`}
+          style="height:34px;padding:0 11px;display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--border);background:var(--card);color:var(--muted-fg);border-radius:8px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;"
+        >
+          <Icon paths={["M18 6L6 18M6 6l12 12"]} size={12} />
+          Remove
+        </button>
+      {/if}
+    </div>
   </div>
 </div>

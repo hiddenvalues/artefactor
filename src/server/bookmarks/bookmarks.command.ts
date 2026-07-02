@@ -9,13 +9,15 @@ import type { CollectionRepository } from "../../domain/collection/collection-re
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import { resolveEffectiveViewable } from "../collections/effective";
+import { canViewCollection } from "../../domain/collection/collection-access";
 
 // Application commands for S27 — Bookmarks (BM1–BM4). Per-user pins with set
 // semantics covering **anything the user can view** (BM2): adding is gated on
 // the effective access matrix (a non-viewable target answers uniform not-found,
 // AH8), while removing one's own bookmark row is always allowed — it is the
-// user's own data, and access may already have lapsed. Collections are
-// owner-only objects in v1 (CL10), so their gate stays ownership.
+// user's own data, and access may already have lapsed. Collections follow the
+// same rule via CL11: any collection whose root grants the signed-in user view
+// may be bookmarked (S28).
 
 export interface BookmarkDeps {
   bookmarkRepo: BookmarkRepository;
@@ -48,16 +50,23 @@ async function assertViewableArtefact(
   }
 }
 
-async function assertOwnCollection(
+// Resolve a collection and decide viewability against its tree root (CL11).
+// Returns null for missing / archived-node / non-granting — the callers treat
+// all three uniformly (no leak, CL10).
+async function loadViewableCollection(
   collectionId: string,
   userId: string,
   scope: TenantScope,
   deps: BookmarkDeps,
-): Promise<void> {
+): Promise<Collection | null> {
   const collection = await deps.collectionRepo.findById(collectionId, scope);
-  if (!collection || collection.ownerId !== userId) {
-    throw new CollectionNotFound(collectionId); // BM2 + CL10
-  }
+  if (!collection || collection.status !== "active") return null;
+  const root =
+    collection.parentId === null
+      ? collection
+      : await deps.collectionRepo.findById(collection.rootId, scope);
+  if (!root || !canViewCollection(root, userId)) return null;
+  return collection;
 }
 
 export async function setArtefactBookmark(
@@ -95,12 +104,14 @@ export async function setCollectionBookmark(
   deps: BookmarkDeps,
 ): Promise<void> {
   if (input.bookmarked) {
-    await assertOwnCollection(
+    // View-gated add (BM2/CL11): you can pin any collection you can open.
+    const viewable = await loadViewableCollection(
       input.collectionId,
       input.requesterId,
       input.scope,
       deps,
     );
+    if (!viewable) throw new CollectionNotFound(input.collectionId);
     await deps.bookmarkRepo.addCollection(input.requesterId, input.collectionId);
   } else {
     await deps.bookmarkRepo.removeCollection(
@@ -134,11 +145,15 @@ export async function listBookmarks(
 
   const collections: Collection[] = [];
   for (const id of marks.collectionIds) {
-    const collection = await deps.collectionRepo.findById(id, input.scope);
-    // Own + active only (CL10 / BM3): archived ones reappear on restore.
-    if (!collection || collection.ownerId !== input.requesterId) continue;
-    if (collection.status !== "active") continue;
-    collections.push(collection);
+    // Viewable + active only (CL11 / BM3): archived or no-longer-granting ones
+    // are hidden, not pruned — they reappear on restore / re-share.
+    const collection = await loadViewableCollection(
+      id,
+      input.requesterId,
+      input.scope,
+      deps,
+    );
+    if (collection) collections.push(collection);
   }
 
   return { artefacts, collections };

@@ -16,8 +16,11 @@
     // S27 (BM2) — shared artefacts are bookmarkable too.
     bookmarked?: boolean;
     onBookmark?: () => void;
+    // S29 (CL13) — on the caller's own collection page: eject this foreign
+    // artefact back to its owner's top level.
+    onEject?: () => void;
   }
-  let { g, onOpen, bookmarked = false, onBookmark }: Props = $props();
+  let { g, onOpen, bookmarked = false, onBookmark, onEject }: Props = $props();
 
   const m = $derived(kindMeta(g.kind));
   const ownerName = $derived(g.owner.name || g.owner.email || "Unknown");
@@ -58,6 +61,17 @@
   >
     {initials(ownerName)}
   </div>
+  {#if onEject}
+    <button
+      onclick={onEject}
+      title="Remove from collection"
+      aria-label={`Remove ${g.title} from this collection`}
+      style="display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 11px;border:1px solid var(--border);background:var(--card);color:var(--muted-fg);border-radius:8px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;flex-shrink:0;"
+    >
+      <Icon paths={["M18 6L6 18M6 6l12 12"]} size={12} />
+      Remove
+    </button>
+  {/if}
   {#if onBookmark}
     <button
       onclick={onBookmark}

@@ -13,15 +13,17 @@ import {
   type TenantScopeResolver,
 } from "../middleware/tenant-scope";
 import { createArtefactRoutes, toArtefactSummary } from "./artefacts";
-import { createCollectionRoutes } from "./collections";
+import { createCollectionRoutes, toCollectionSummary } from "./collections";
 import { createBookmarkRoutes } from "./bookmarks";
 import { listEffectivelyShared } from "../collections/shared.query";
+import { listSharedCollections } from "../collections/shared-collections.query";
 import { createDataRoutes } from "./data";
 import { createViewRoutes } from "./views";
 import { createUserRoutes } from "./users";
 import type {
   MeResponse,
   PublicConfigResponse,
+  SharedCollectionsResponse,
   SharedListResponse,
 } from "../../shared/contracts";
 
@@ -109,6 +111,30 @@ export function createApiRoutes(
         const who = identities.get(a.ownerId);
         return {
           ...toArtefactSummary(a, effectiveVisibility),
+          owner: { name: who?.name ?? "", email: who?.email ?? "" },
+        };
+      }),
+    });
+  });
+
+  // S28 — the collection trees shared *to* the caller (CL11): every node of
+  // every granting tree, with the per-tree contributor flag (CL12) and the
+  // owner's display identity. Signed-in only; the flat artefact list above is
+  // unchanged (both-way listing).
+  api.get("/shared/collections", requireAuth, async (c) => {
+    const scope = await resolveScope(c);
+    const nodes = await listSharedCollections(c.get("user")!.id, scope, {
+      collectionRepo: collectionRepository,
+    });
+    const identities = await userDirectory.lookup(
+      nodes.map((n) => n.collection.ownerId),
+    );
+    return c.json<SharedCollectionsResponse>({
+      collections: nodes.map(({ collection, canContribute }) => {
+        const who = identities.get(collection.ownerId);
+        return {
+          ...toCollectionSummary(collection),
+          canContribute,
           owner: { name: who?.name ?? "", email: who?.email ?? "" },
         };
       }),

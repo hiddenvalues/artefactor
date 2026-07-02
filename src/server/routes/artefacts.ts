@@ -76,20 +76,22 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   const effectiveVisOf = async (a: Artefact): Promise<Visibility> =>
     effectiveVisibility(a, await loadArtefactRoot(a, deps.collectionRepo));
 
-  // Batch variant for list responses: one collections read covers every owned
-  // artefact's tree (CL1 — an artefact only ever sits in its owner's collection).
+  // Batch variant for list responses: one collections read covers the owner's
+  // own trees; a container it doesn't know is another owner's tree the artefact
+  // was contributed into (S29/CL12) — those resolve per artefact via the repo.
   const effectiveVisMap = async (
     owner: string,
     scope: TenantScope,
-  ): Promise<(a: Artefact) => Visibility> => {
+  ): Promise<(a: Artefact) => Promise<Visibility>> => {
     const all = await deps.collectionRepo.listByOwner(owner, scope, {
       includeArchived: true,
     });
     const byId = new Map(all.map((col) => [col.id, col]));
-    return (a) => {
+    return async (a) => {
       if (a.collectionId === null) return a.visibility;
       const direct = byId.get(a.collectionId);
-      const root = direct ? byId.get(direct.rootId) : undefined;
+      if (!direct) return effectiveVisOf(a); // cross-owner container (CL12)
+      const root = byId.get(direct.rootId);
       // Unresolvable chain fails closed (AH20), matching resolveEffectiveViewable.
       return root?.visibility ?? "private";
     };
@@ -111,7 +113,9 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
       : owned;
     const effVis = await effectiveVisMap(ownerId(c), scope);
     return c.json<ArtefactListResponse>({
-      artefacts: artefacts.map((a) => toArtefactSummary(a, effVis(a))),
+      artefacts: await Promise.all(
+        artefacts.map(async (a) => toArtefactSummary(a, await effVis(a))),
+      ),
     });
   });
 

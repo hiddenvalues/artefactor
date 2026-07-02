@@ -97,10 +97,14 @@ describe("moveArtefactToCollection (CL1/CL7)", () => {
     expect(moveArtefactToCollection(a, null)).toBe(a);
   });
 
-  it("rejects cross-owner, cross-tenant, archived targets, and archived artefacts", () => {
-    expect(() =>
-      moveArtefactToCollection(makeArtefact(), makeRoot({ ownerId: "other" })),
-    ).toThrow(CollectionInvariantViolation);
+  it("rejects cross-tenant, archived targets, and archived artefacts", () => {
+    // Cross-owner placement is a command-level authority question now (CL12) —
+    // the pure transition allows it (a contributor placing into another
+    // owner's tree); tenant and status stay hard invariants.
+    expect(
+      moveArtefactToCollection(makeArtefact(), makeRoot({ ownerId: "other" }))
+        .collectionId,
+    ).toBe("c1");
     expect(() =>
       moveArtefactToCollection(makeArtefact(), makeRoot({ tenantId: "acme" })),
     ).toThrow(CollectionInvariantViolation);

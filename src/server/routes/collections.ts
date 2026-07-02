@@ -26,6 +26,10 @@ import {
   restoreCollectionCommand,
 } from "../collections/lifecycle.command";
 import { setCollectionBookmark } from "../bookmarks/bookmarks.command";
+import { ejectArtefactCommand } from "../collections/move-artefact.command";
+import { ArtefactNotFound } from "../../domain/artefact/errors";
+import { toArtefactSummary } from "./artefacts";
+import type { ArtefactSummary } from "../../shared/contracts";
 import { ownerId, requireAuth, type AuthEnv } from "../middleware/auth";
 import type { TenantScopeResolver } from "../middleware/tenant-scope";
 import type {
@@ -253,6 +257,28 @@ export function createCollectionRoutes(deps: CollectionRoutesDeps) {
       );
       return c.body(null, 204);
     } catch (err) {
+      return mapCollectionError(c, err);
+    }
+  });
+
+  // S29 — eject an artefact from the caller's collection to top level (CL13).
+  // Collection-owner-only; the artefact (any owner, any status) falls back to
+  // its dormant own tier untouched.
+  r.delete("/:id/artefacts/:artefactId", requireAuth, async (c) => {
+    try {
+      const evicted = await ejectArtefactCommand(
+        {
+          collectionId: c.req.param("id"),
+          artefactId: c.req.param("artefactId"),
+          requesterId: ownerId(c),
+          scope: await deps.resolveScope(c),
+        },
+        { artefactRepo: deps.artefactRepo, collectionRepo: deps.collectionRepo },
+      );
+      // Post-eviction the artefact is top-level: its own tier is effective.
+      return c.json<ArtefactSummary>(toArtefactSummary(evicted));
+    } catch (err) {
+      if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       return mapCollectionError(c, err);
     }
   });

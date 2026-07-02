@@ -9,6 +9,7 @@ import {
   archiveArtefact,
   restoreArtefact,
 } from "../../domain/artefact/artefact";
+import { evictFromCollection } from "../../domain/collection/move-artefact";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
@@ -38,13 +39,17 @@ export interface CollectionLifecycleDeps {
 export interface CascadeCounts {
   // Descendant collections affected (the node itself excluded).
   collections: number;
-  // Artefacts affected across the subtree.
+  // The owner's own artefacts affected across the subtree.
   artefacts: number;
+  // Foreign artefacts evicted to top level instead of being touched (CL14).
+  evicted: number;
 }
 
 // Archive the subtree (CL7): every active descendant collection and every
-// active artefact within. Returns the cascade counts for the toast copy
-// ("archived with N artefacts").
+// active artefact **of the collection owner's** within. Foreign artefacts —
+// contributors' (CL12) — are first evicted to top level, whatever their status:
+// no one's artefact is archived by another user's lifecycle (CL14). Returns the
+// cascade counts for the toast copy ("archived with N artefacts").
 export async function archiveCollectionCommand(
   input: CollectionLifecycleInput,
   deps: CollectionLifecycleDeps,
@@ -69,17 +74,30 @@ export async function archiveCollectionCommand(
     if (node.id === target.id) archivedRoot = archived;
   }
 
-  const artefacts = await deps.artefactRepo.listByCollectionIds(
+  const contained = await deps.artefactRepo.listByCollectionIds(
     subtree.map((c) => c.id),
     input.scope,
+    { includeArchived: true },
   );
-  for (const artefact of artefacts) {
-    await deps.artefactRepo.save(archiveArtefact(artefact, { now }));
+  let evicted = 0;
+  let archivedCount = 0;
+  for (const artefact of contained) {
+    if (artefact.ownerId !== target.ownerId) {
+      await deps.artefactRepo.save(evictFromCollection(artefact, { now })); // CL14
+      evicted += 1;
+    } else if (artefact.status === "active") {
+      await deps.artefactRepo.save(archiveArtefact(artefact, { now }));
+      archivedCount += 1;
+    }
   }
 
   return {
     collection: archivedRoot,
-    cascade: { collections: subtree.length - 1, artefacts: artefacts.length },
+    cascade: {
+      collections: subtree.length - 1,
+      artefacts: archivedCount,
+      evicted,
+    },
   };
 }
 
@@ -126,7 +144,13 @@ export async function restoreCollectionCommand(
 
   return {
     collection: restoredRoot,
-    cascade: { collections: subtree.length - 1, artefacts: restoredArtefacts },
+    cascade: {
+      collections: subtree.length - 1,
+      artefacts: restoredArtefacts,
+      // Evicted artefacts were never archived — restore has nothing to
+      // re-attach (CL14, documented simplification).
+      evicted: 0,
+    },
   };
 }
 
@@ -156,17 +180,27 @@ export async function deleteCollectionCommand(
   });
   const subtree = collectSubtree(all, target.id);
 
-  const artefacts = await deps.artefactRepo.listByCollectionIds(
+  const contained = await deps.artefactRepo.listByCollectionIds(
     subtree.map((c) => c.id),
     input.scope,
     { includeArchived: true },
   );
-  for (const artefact of artefacts) {
+  let evicted = 0;
+  let deleted = 0;
+  for (const artefact of contained) {
+    if (artefact.ownerId !== target.ownerId) {
+      // Never delete another owner's work — evict it untouched (CL14). Without
+      // this the row would fall to the collection_id FK cascade.
+      await deps.artefactRepo.save(evictFromCollection(artefact));
+      evicted += 1;
+      continue;
+    }
     await deps.payloadStore.delete(artefact.payloadRef);
     await deps.dataRepo.deleteByArtefact(artefact.id);
     await deps.viewRepo.deleteByArtefact(artefact.id);
     await deps.bookmarkRepo.deleteByArtefact(artefact.id);
     await deps.artefactRepo.delete(artefact.id);
+    deleted += 1;
   }
   // Children before parents so the FK on parent_id never dangles mid-delete.
   for (const node of [...subtree].reverse()) {
@@ -174,5 +208,5 @@ export async function deleteCollectionCommand(
     await deps.collectionRepo.delete(node.id);
   }
 
-  return { collections: subtree.length - 1, artefacts: artefacts.length };
+  return { collections: subtree.length - 1, artefacts: deleted, evicted };
 }

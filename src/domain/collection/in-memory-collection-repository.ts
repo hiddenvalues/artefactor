@@ -55,7 +55,8 @@ export class InMemoryCollectionRepository implements CollectionRepository {
             c.visibility === "public" ||
             (c.visibility === "selected" && c.sharedWith.includes(viewerId))),
       )
-      .map((c) => ({ ...c }));
+      // Recipients never see the grantee list (CL11).
+      .map((c) => ({ ...c, sharedWith: [] }));
   }
 
   async listByRoots(
@@ -70,6 +71,7 @@ export class InMemoryCollectionRepository implements CollectionRepository {
           c.status === "active" &&
           roots.has(c.rootId),
       )
-      .map((c) => ({ ...c }));
+      // Recipient-facing like listSharedRoots — empty grantee list (CL11).
+      .map((c) => ({ ...c, sharedWith: [] }));
   }
 }

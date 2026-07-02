@@ -726,6 +726,52 @@ Deps: **S25** (bookmarkable collections; artefact bookmarks alone would only nee
   rows.
 - **Boundary:** **OSS**.
 
+### S28 — Shared collections are viewer-facing (read-only)
+Deps: **S25.** (CL11; relaxes CL10's audience.)
+- **Query** — `listSharedCollections(viewerId, scope)`: the shared roots
+  (`listSharedRoots`) expanded to full trees (`listByRoots`); every node returned with the
+  root owner's display identity and a `canContribute` flag (CL12) — never the grantee list.
+  No new ports; no schema change.
+- **BFF** — `GET /api/shared/collections` (signed-in). The flat artefact list at
+  `GET /api/shared` is unchanged (**both-way listing**).
+- **Client** — "Shared with you" gains a **Collections** section (cards, opening the
+  collection page); the collection page works read-only for non-owners: breadcrumb within
+  the shared tree, effective-tier label (not editable), bookmark toggle, sub-collection
+  cards, and a mixed artefact list (others' artefacts with owner attribution; the viewer's
+  own contributions as normal cards). Bookmarked shared collections open this page.
+- **Acceptance:** a member/`authenticated` viewer lists and opens the tree; a stranger's
+  read of any node in a non-granting tree is a uniform 404 (CL10); anonymous requests never
+  see a collection; recipients get empty `sharedWith`; an archived root's tree reads 404.
+- **Boundary:** **OSS**.
+
+### S29 — Contributors + evict-on-cascade
+Deps: **S28.** (CL1 relaxed; CL12/CL13/CL14.)
+- **Domain** — pure `canViewCollection(root, viewerId)` (matrix semantics, signed-in only,
+  archived → no one) and `canContributeToTree(root, userId)` (owner, or listed **and**
+  viewing); `moveArtefactToCollection` drops the same-owner requirement (tenant + active
+  checks stay; authority moves to the command); `evictFromCollection` — guard-free
+  containment termination (works on archived artefacts; CL13/CL14).
+- **Commands** — move-in gate becomes: artefact owner **and** (own collection or
+  contributor of the target's root); create-in = create + move-in (no create change).
+  New eject command (collection-owner-only, direct containment). Archive/delete cascades
+  **evict foreign artefacts first** (any status), then cascade over the owner's own;
+  cascade counts report `evicted` alongside. Collection bookmarks gate on `canViewCollection`.
+- **BFF** — `DELETE /api/collections/:id/artefacts/:artefactId`; the owner-list read path
+  drops its "containers are all mine" batching assumption (a contributed artefact's
+  container belongs to someone else — resolve those roots by id).
+- **Client** — "New artefact" from a contributable collection page uploads then moves in;
+  the add/move-to-collection picker gains a "Shared with you" group of contributable trees;
+  the collection owner sees **Remove from collection** on foreign artefact cards; toasts
+  name evictions ("… archived with N artefacts · M returned to their owners").
+- **Acceptance:** a listed member creates/moves their artefact into the tree (slug minted
+  per CL6 when the root is shared) and it appears for every viewer both flat and in the
+  tree; an unlisted `authenticated` viewer's move-in is rejected 404 (CL12/AH8); the
+  collection owner ejects a foreign artefact (falls back to its dormant tier) but cannot
+  edit/archive/delete it; archiving/deleting the collection evicts foreign artefacts
+  (unarchived, undeleted, top-level) and cascades only over the owner's own; restore does
+  not re-attach evicted artefacts.
+- **Boundary:** **OSS**. No schema change (contributors ride `collection_access`).
+
 ## Build order
 
 Topological: **S0 → S1 → S2 → {S3, S4, S5, S7, S10, S11}**, **S5 → {S6, S14, S16}**,
@@ -743,5 +789,6 @@ of the EE **Tenancy/Organizations** and **Usage & Quota** contexts respectively.
 persistence ports) refactors the composition (**S2 onward**); behaviour-preserving and the sole core
 dependency of the EE **Postgres persistence** context. **S25** (collections) depends on the
 hosting core + sharing (**S2/S5/S6/S10/S16**); **S26** (collection lifecycle) on **S25 + S15**;
-**S27** (bookmarks) on **S25**. All three are OSS feature slices (context
-`ddd/artefact-collections.md`).
+**S27** (bookmarks) on **S25**; **S28** (viewer-facing shared collections) on **S25** and
+**S29** (contributors + evict-on-cascade) on **S28**. All five are OSS feature slices
+(context `ddd/artefact-collections.md`).

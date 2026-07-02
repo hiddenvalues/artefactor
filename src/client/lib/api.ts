@@ -11,6 +11,8 @@ import type {
   MeResponse,
   PublicConfigResponse,
   SharedArtefactSummary,
+  SharedCollectionSummary,
+  SharedCollectionsResponse,
   SharedListResponse,
   UserRef,
   UserSearchResponse,
@@ -150,6 +152,22 @@ export const api = {
   async delete(id: string): Promise<void> {
     const res = await fetch(`/api/artefacts/${id}`, { method: "DELETE" });
     if (!res.ok) await fail(res);
+  },
+
+  // S28 — the collection trees shared *to* the caller (every node, with the
+  // per-tree contributor flag and the owner's identity).
+  listSharedCollections(): Promise<SharedCollectionSummary[]> {
+    return fetch("/api/shared/collections")
+      .then(json<SharedCollectionsResponse>)
+      .then((r) => r.collections);
+  },
+
+  // S29 — eject an artefact from the caller's collection (CL13).
+  ejectArtefact(collectionId: string, artefactId: string): Promise<ArtefactSummary> {
+    return fetch(
+      `/api/collections/${collectionId}/artefacts/${encodeURIComponent(artefactId)}`,
+      { method: "DELETE" },
+    ).then(json<ArtefactSummary>);
   },
 
   // S25/S26 — Artefact Collections (owner-only folder tree, cascades).

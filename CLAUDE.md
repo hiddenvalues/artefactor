@@ -14,7 +14,11 @@ is **done**; **S19** (payload-retention seam), **S22** (tenant scope + access-po
 (**Collections & Bookmarks**) are **done**: an owner-only nestable folder tree whose **root's**
 access (all four tiers incl. `selected`) the contained artefacts **inherit at read time**
 (AH20/AH21 — own tier dormant, slug minted on effective share), archive/restore/permanent-delete
-**cascades**, per-user bookmarks, and the sidebar/collection-page/archive-view client UI. Context:
+**cascades**, per-user bookmarks, and the sidebar/collection-page/archive-view client UI. **S28/S29**
+extend this: shared collections are **viewer-facing** for signed-in users (both-way listing, no
+collection slugs) and **collaborative** — the root's access list doubles as its **contributor**
+list (place-own-artefacts-only; CL12), containment is co-owned (owner may eject, CL13), and
+lifecycle cascades **evict foreign artefacts instead of touching them** (CL14). Context:
 `docs/specs/ddd/artefact-collections.md`. New work
 either implements a pending enabler seam or adds a new slice (with its governing DDD invariant)
 before coding, per the spec-driven process below.

@@ -27,9 +27,12 @@ export interface CollectionRepository {
   // Active **root** collections whose (visibility, sharedWith) grants the
   // viewer, excluding the viewer's own — the collection side of the
   // effectively-shared composition (CL5): `authenticated`/`public` roots plus
-  // `selected` roots the viewer is a member of.
+  // `selected` roots the viewer is a member of. Returned with **empty
+  // `sharedWith`** — recipients never see the grantee list (CL11); a caller
+  // needing the real list (e.g. the CL12 contributor check) uses `findById`.
   listSharedRoots(viewerId: string, scope: TenantScope): Promise<Collection[]>;
   // Every active collection in the given trees (rootId ∈ rootIds) — expands
-  // shared roots into the collection-id set their artefacts live under.
+  // shared roots into the collection-id set their artefacts live under. Also
+  // returned with empty `sharedWith` (same recipient-facing rule).
   listByRoots(rootIds: readonly string[], scope: TenantScope): Promise<Collection[]>;
 }

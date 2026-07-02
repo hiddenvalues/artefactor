@@ -4,6 +4,7 @@
     ArtefactSummary,
     CollectionSummary,
     SharedArtefactSummary,
+    SharedCollectionSummary,
   } from "../shared/contracts";
   import type { ArtefactKind } from "../domain/artefact/kind";
   import {
@@ -93,8 +94,10 @@
   let owned = $state<ArtefactSummary[]>([]);
   let archived = $state<ArtefactSummary[]>([]);
   let shared = $state<SharedArtefactSummary[]>([]);
-  let collections = $state<CollectionSummary[]>([]); // active
+  let collections = $state<CollectionSummary[]>([]); // active, own
   let archivedCollections = $state<CollectionSummary[]>([]);
+  // S28 — trees shared *to* the user (every node, with canContribute + owner).
+  let sharedCollections = $state<SharedCollectionSummary[]>([]);
   let bookmarkedArtefacts = $state<ArtefactSummary[]>([]);
   let bookmarkedCollections = $state<CollectionSummary[]>([]);
 
@@ -158,9 +161,10 @@
   }
   async function loadCollections() {
     try {
-      [collections, archivedCollections] = await Promise.all([
+      [collections, archivedCollections, sharedCollections] = await Promise.all([
         api.listCollections(),
         api.listCollections(true),
+        api.listSharedCollections(),
       ]);
     } catch {
       /* non-fatal */
@@ -209,14 +213,31 @@
   });
 
   // ---- collections lookups ----
+  const myId = $derived($session.data?.user.id ?? "");
+  const sharedCollectionById = $derived(
+    new Map(sharedCollections.map((c) => [c.id, c])),
+  );
+  // Own (active + archived) and shared nodes in one lookup — names, chains,
+  // and the unified collection page resolve through this.
   const collectionById = $derived(
-    new Map([...collections, ...archivedCollections].map((c) => [c.id, c])),
+    new Map(
+      [...collections, ...archivedCollections, ...sharedCollections].map(
+        (c) => [c.id, c as CollectionSummary],
+      ),
+    ),
   );
   const collectionNameOf = $derived(
     (id: string | null) => (id ? (collectionById.get(id)?.name ?? "") : ""),
   );
   const currentCollection = $derived(
     currentCollectionId ? (collectionById.get(currentCollectionId) ?? null) : null,
+  );
+  const isOwnCollection = $derived(currentCollection?.ownerId === myId);
+  // The S28 node for a shared page (carries canContribute + owner identity).
+  const currentShared = $derived(
+    currentCollectionId
+      ? (sharedCollectionById.get(currentCollectionId) ?? null)
+      : null,
   );
   // The tree root a collection inherits from (CL4) — itself when top-level.
   function rootOf(c: CollectionSummary): CollectionSummary {
@@ -234,6 +255,11 @@
     }
     return chain;
   });
+  const sharedRoots = $derived(
+    sharedCollections
+      .filter((c) => c.parentId === null)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  );
   const bookmarkedArtefactIds = $derived(new Set(bookmarkedArtefacts.map((a) => a.id)));
   const bookmarkedCollectionIds = $derived(
     new Set(bookmarkedCollections.map((c) => c.id)),
@@ -258,11 +284,17 @@
 
   const isDash = $derived(view === "dashboard");
   const isColl = $derived(view === "collection");
+  // A collection page mixes ownership (S29): the viewer's own artefacts render
+  // as normal cards; others' (a contributor's in your tree, or the tree owner's
+  // in a shared tree) render as gallery cards with attribution.
   const collArtefacts = $derived(
     isColl ? owned.filter((a) => a.collectionId === currentCollectionId) : [],
   );
+  const collOthers = $derived(
+    isColl ? shared.filter((g) => g.collectionId === currentCollectionId) : [],
+  );
   const baseList = $derived(
-    isColl ? collArtefacts : isDash ? owned : shared,
+    isColl ? [...collArtefacts, ...collOthers] : isDash ? owned : shared,
   );
 
   const visibleOwned = $derived(
@@ -283,6 +315,14 @@
       shared
         .filter((g) => kindFilter === "all" || g.kind === kindFilter)
         .filter((g) => accessFilter === "all" || g.effectiveVisibility === accessFilter)
+        .filter((g) => matchesQuery(g.title)),
+    ),
+  );
+  // Others' artefacts on the current collection page, same scoped filters.
+  const visibleCollOthers = $derived(
+    sortList(
+      collOthers
+        .filter((g) => kindFilter === "all" || g.kind === kindFilter)
         .filter((g) => matchesQuery(g.title)),
     ),
   );
@@ -324,7 +364,11 @@
   });
 
   const showEmpty = $derived(
-    isDash || isColl ? visibleOwned.length === 0 : visibleShared.length === 0,
+    isColl
+      ? visibleOwned.length === 0 && visibleCollOthers.length === 0
+      : isDash
+        ? visibleOwned.length === 0
+        : visibleShared.length === 0,
   );
   const isFiltered = $derived(
     query.trim() !== "" || kindFilter !== "all" || (!isColl && accessFilter !== "all"),
@@ -369,16 +413,24 @@
   };
 
   // ---- collection page bits ----
+  // Children come from the page's tree: your own list on an own page, the S28
+  // shared nodes on a shared one.
+  const collectionPool = $derived(
+    isOwnCollection ? collections : (sharedCollections as CollectionSummary[]),
+  );
   const subCollections = $derived(
     isColl
-      ? collections
+      ? collectionPool
           .filter((c) => c.parentId === currentCollectionId)
           .sort((a, b) => a.name.localeCompare(b.name))
       : [],
   );
   function directCounts(c: CollectionSummary) {
-    const arts = owned.filter((a) => a.collectionId === c.id).length;
-    const colls = collections.filter((x) => x.parentId === c.id).length;
+    // Both-way listing means own + shared cover every artefact you can see.
+    const arts =
+      owned.filter((a) => a.collectionId === c.id).length +
+      shared.filter((g) => g.collectionId === c.id).length;
+    const colls = collectionPool.filter((x) => x.parentId === c.id).length;
     return { arts, colls };
   }
   const collSub = $derived.by(() => {
@@ -569,6 +621,21 @@
       .catch(() => toast.show("Could not update the bookmark", TOAST_ICONS.alert));
   }
 
+  // ---- eject (S29, CL13) ----
+  async function ejectFromCurrent(g: SharedArtefactSummary) {
+    if (!currentCollectionId) return;
+    try {
+      await api.ejectArtefact(currentCollectionId, g.id);
+      await Promise.all([loadShared(), loadOwned()]);
+      toast.show(`“${g.title}” removed from the collection`, TOAST_ICONS.check);
+    } catch (e) {
+      toast.show(
+        e instanceof ApiError ? e.message : "Could not remove it",
+        TOAST_ICONS.alert,
+      );
+    }
+  }
+
   // ---- collections (S25/S26) ----
   function openNewCollection(parent: CollectionSummary | null) {
     editorEditing = null;
@@ -641,8 +708,12 @@
         cascade.artefacts > 0
           ? ` with ${cascade.artefacts} artefact${cascade.artefacts === 1 ? "" : "s"}`
           : "";
+      const evictedNote =
+        cascade.evicted > 0
+          ? ` · ${cascade.evicted} returned to their owner${cascade.evicted === 1 ? "" : "s"}`
+          : "";
       toast.show(
-        `“${c.name}” archived${suffix}`,
+        `“${c.name}” archived${suffix}${evictedNote}`,
         TOAST_ICONS.archive,
         () => restoreCollection(c),
         "Undo",
@@ -787,8 +858,26 @@
           kind: input.kind,
           file: input.file!,
         });
-        toast.show(`“${created.title}” uploaded`, TOAST_ICONS.check);
-        goDashboard();
+        // Uploading from a collection page you own or contribute to (CL12)
+        // places the new artefact there: create-in = create + move-in, so the
+        // usual invariants and the CL6 slug mint apply unchanged.
+        const intoCollection =
+          view === "collection" &&
+          currentCollection !== null &&
+          currentCollection.status === "active" &&
+          (isOwnCollection || currentShared?.canContribute === true)
+            ? currentCollection
+            : null;
+        if (intoCollection) {
+          const moved = await api.moveToCollection(created.id, intoCollection.id);
+          toast.show(
+            `“${created.title}” uploaded to ${intoCollection.name} — inherits ${VIS[moved.effectiveVisibility].label} access`,
+            TOAST_ICONS.check,
+          );
+        } else {
+          toast.show(`“${created.title}” uploaded`, TOAST_ICONS.check);
+          goDashboard();
+        }
       }
       uploadOpen = false;
       editing = null;
@@ -987,10 +1076,10 @@
                 <!-- Breadcrumb -->
                 <div style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted-fg);margin-bottom:7px;flex-wrap:wrap;">
                   <button
-                    onclick={goDashboard}
+                    onclick={isOwnCollection ? goDashboard : goGallery}
                     style="background:none;border:none;padding:0;cursor:pointer;font-family:inherit;font-size:12px;color:var(--muted-fg);"
                   >
-                    Collections
+                    {isOwnCollection ? "Collections" : "Shared with you"}
                   </button>
                   {#each breadcrumb as crumb (crumb.id)}
                     <Icon paths={["M9 18l6-6-6-6"]} size={11} style="opacity:.6;" />
@@ -1014,8 +1103,31 @@
                     <h1 style="margin:0;font-size:21px;font-weight:600;letter-spacing:-0.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
                       {currentCollection.name}
                     </h1>
-                    <p style="margin:3px 0 0;font-size:13px;color:var(--muted-fg);">{collSub}</p>
+                    <p style="margin:3px 0 0;font-size:13px;color:var(--muted-fg);">
+                      {collSub}{!isOwnCollection && currentShared
+                        ? ` · Shared by ${currentShared.owner.name || currentShared.owner.email}`
+                        : ""}
+                    </p>
                   </div>
+                  {#if !isOwnCollection}
+                    <!-- S28 — a viewer's page is read-only: the tier is a fact,
+                         not a control; contribution happens via upload/move. -->
+                    {@const rootVis = VIS[rootOf(currentCollection).visibility]}
+                    <span
+                      style="display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 11px;border:1px solid var(--border);background:var(--subtle);color:var(--fg);border-radius:8px;font-size:12px;font-weight:500;white-space:nowrap;flex-shrink:0;"
+                    >
+                      <Icon paths={rootVis.icon} size={13} />
+                      {rootVis.label}
+                    </span>
+                    {#if currentShared?.canContribute}
+                      <span
+                        title="You can add your artefacts to this collection"
+                        style="display:inline-flex;align-items:center;height:32px;padding:0 10px;border-radius:8px;background:var(--accent-soft);color:var(--primary);font-size:11.5px;font-weight:600;white-space:nowrap;flex-shrink:0;"
+                      >
+                        Contributor
+                      </span>
+                    {/if}
+                  {:else}
                   <!-- Access control: editable on a root; Inherited on a nested one (CL4). -->
                   <VisibilityControl
                     id={`coll:${currentCollection.id}`}
@@ -1033,6 +1145,7 @@
                     onOpenCollection={() => openCollection(rootOf(currentCollection!).id)}
                     note="Members of this collection — and every artefact inside — inherit this access."
                   />
+                  {/if}
                   <!-- Bookmark toggle -->
                   <button
                     onclick={() => toggleCollectionBookmark(currentCollection!)}
@@ -1056,7 +1169,8 @@
                       <path d={BOOKMARK_ICON[0]} />
                     </svg>
                   </button>
-                  <!-- ⋯ menu -->
+                  <!-- ⋯ menu (owner-only — structure/access/lifecycle, CL9) -->
+                  {#if isOwnCollection}
                   <div style="position:relative;flex-shrink:0;">
                     <button
                       onclick={() => overlay.toggle("collmenu")}
@@ -1099,6 +1213,7 @@
                       </div>
                     {/if}
                   </div>
+                  {/if}
                 </div>
               {:else}
                 <h1 style="margin:0;font-size:21px;font-weight:600;letter-spacing:-0.02em;">
@@ -1206,6 +1321,44 @@
             </div>
           </div>
 
+          <!-- Shared collections (S28) — browsable trees, alongside the flat
+               artefact list below (both-way listing). -->
+          {#if view === "gallery" && sharedRoots.length > 0}
+            <div style="margin-bottom:22px;">
+              <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted-fg);margin-bottom:10px;">
+                Collections
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:12px;">
+                {#each sharedRoots as c (c.id)}
+                  {@const counts = directCounts(c)}
+                  <button
+                    onclick={() => openCollection(c.id)}
+                    style="display:flex;align-items:center;gap:11px;padding:12px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:var(--shadow);cursor:pointer;font-family:inherit;text-align:left;"
+                  >
+                    <div style="width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:color-mix(in srgb, {collectionColor(c.id)} 14%, transparent);">
+                      <Icon paths={FOLDER_ICON} size={16} width={1.7} color={collectionColor(c.id)} />
+                    </div>
+                    <div style="min-width:0;flex:1;">
+                      <div style="display:flex;align-items:center;gap:6px;">
+                        <span style="font-size:13px;font-weight:600;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                          {c.name}
+                        </span>
+                        {#if c.canContribute}
+                          <span style="font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;padding:1px 6px;border-radius:999px;background:var(--accent-soft);color:var(--primary);flex-shrink:0;">
+                            Contributor
+                          </span>
+                        {/if}
+                      </div>
+                      <div style="font-size:11.5px;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        {counts.arts} artefact{counts.arts === 1 ? "" : "s"} · Shared by {c.owner.name || c.owner.email}
+                      </div>
+                    </div>
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
           <!-- Sub-collections (collection page only) -->
           {#if isColl && subCollections.length > 0}
             <div style="margin-bottom:22px;">
@@ -1296,11 +1449,29 @@
               {#each visibleOwned as a (a.id)}
                 <ArtefactCard {...cardProps(a)} />
               {/each}
+              {#each visibleCollOthers as g (g.id)}
+                <GalleryCard
+                  {g}
+                  onOpen={() => openShared(g)}
+                  bookmarked={bookmarkedArtefactIds.has(g.id)}
+                  onBookmark={() => toggleArtefactBookmark(g)}
+                  onEject={isOwnCollection ? () => ejectFromCurrent(g) : undefined}
+                />
+              {/each}
             </div>
           {:else if (isDash || isColl) && density === "list"}
             <div style="display:flex;flex-direction:column;gap:10px;">
               {#each visibleOwned as a (a.id)}
                 <ArtefactRow {...cardProps(a)} />
+              {/each}
+              {#each visibleCollOthers as g (g.id)}
+                <GalleryRow
+                  {g}
+                  onOpen={() => openShared(g)}
+                  bookmarked={bookmarkedArtefactIds.has(g.id)}
+                  onBookmark={() => toggleArtefactBookmark(g)}
+                  onEject={isOwnCollection ? () => ejectFromCurrent(g) : undefined}
+                />
               {/each}
             </div>
           {:else if view === "gallery" && density === "grid"}
@@ -1360,7 +1531,11 @@
   {#if movingArtefact}
     <AddToCollectionModal
       artefact={movingArtefact}
-      {collections}
+      collections={[
+        ...collections,
+        ...sharedCollections.filter((c) => c.canContribute),
+      ]}
+      viewerId={myId}
       busy={moveBusy}
       onClose={() => (movingArtefact = null)}
       onConfirm={confirmMove}

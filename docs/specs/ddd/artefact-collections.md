@@ -9,12 +9,14 @@ Two ways to organize a growing number of artefacts, modeled on Metabase's sideba
 - **Bookmarks** — a flat, per-user list of pinned artefacts and collections. Pure
   convenience; no access semantics.
 
-**Owner-only in v1.** Collections are the owner's organization tool. Other users never see a
-collection as an object: no collection pages for non-owners, no collection grouping in
-"Shared with you", no collection slugs. What a collection's access level *does* is set the
-**effective access of the artefacts inside it** — those artefacts appear to other users
-individually (in "Shared with you", via their slug links), exactly like artefacts shared
-directly. Viewer-facing collections are a possible later extension, not part of this context.
+**Shared collections are viewable and collaborative (S28/S29).** A collection whose root's
+access grants a **signed-in** viewer is a browsable object for them: it appears (with its
+tree) in "Shared with you" alongside the flat artefact list (**both-way listing** — the
+artefacts stay listed individually too), and its pages are readable. Anonymous users never
+browse collections — there are **no collection slugs**; unauthenticated access remains by
+artefact link only (the v0.2 rule). **Contributors** — the people on the root's access list
+(CL12) — may additionally place artefacts *they own* into the tree. Everything else about a
+collection (name, structure, access, lifecycle) remains the owner's alone (CL9).
 
 ## Aggregate: `Collection`
 
@@ -39,8 +41,9 @@ Artefact Hosting amendment (AH20/AH21). `null` = top-level / not in a collection
 ## Invariants — collections
 
 1. **Ownership**: `ownerId` is present and immutable. A collection tree never spans owners:
-   a child's `ownerId` and `tenantId` equal its parent's. An artefact may only be placed in
-   a collection with the **same `ownerId`** (and `tenantId`) as the artefact. *(CL1)*
+   a child's `ownerId` and `tenantId` equal its parent's. An artefact may be placed in a
+   collection by **its own owner only**, into their own collection or — as a **contributor**
+   (CL12) — into another owner's; artefact and collection must share a `tenantId`. *(CL1)*
 2. **Name**: non-empty (trimmed). *(CL2)*
 3. **Fixed shape**: `parentId` (and therefore `rootId`) is set at create and never changes —
    **no re-parenting in v1**. This rules out cycles by construction and makes `rootId` a safe
@@ -79,9 +82,33 @@ Artefact Hosting amendment (AH20/AH21). `null` = top-level / not in a collection
    best-effort like AH11, with FK cascades as the DB-level backstop. *(CL8)*
 9. **Owner authority**: only a request authenticated as `ownerId` may create, rename, change
    access of, archive, restore, or delete a collection, or move artefacts in/out of it. *(CL9)*
-10. **No existence leak**: to a non-owner, a collection is indistinguishable from a missing
-    one (uniform not-found), mirroring AH8. Collections never appear in any non-owner
-    listing. *(CL10)*
+10. **No existence leak**: to a user the root does **not** grant, a collection is
+    indistinguishable from a missing one (uniform not-found), mirroring AH8. *(CL10)*
+11. **Viewer reads follow the root (S28)**: a **signed-in** user whom the root's
+    `(visibility, sharedWith)` grants view (the same matrix semantics as artefacts; an
+    archived root grants no one) may read the whole tree — nodes, breadcrumbs, contained
+    artefacts. Anonymous users never read collections (no collection slugs; artefact links
+    only). Recipients never receive the root's grantee list (`sharedWith` ships empty to
+    them, as in every shared read). *(CL11)*
+12. **Contributors (S29)**: the users on the **root's access list** who can also view the
+    tree (so: `sharedWith` members under `selected`/`authenticated`/`public` roots — under a
+    `private` root the list grants nothing), plus the owner. A contributor may **create or
+    move artefacts they own into any node of the tree** (create-in = create top-level +
+    move-in, so AH1–3 and the CL6 slug mint apply unchanged). Contribution is *placement
+    only*: rename, structure, access, and lifecycle stay owner-only (CL9); the tiers keep
+    pure view semantics — under `authenticated`/`public` roots the access list *is* the
+    contributor list. *(CL12)*
+13. **Containment is co-owned**: the artefact owner controls the artefact (AH9 — edit,
+    visibility-while-top-level, archive, delete, move-out); the collection owner controls
+    **membership of their container** and may **eject** any contained artefact to top level
+    (regardless of the artefact's status). Ejection is the one cross-aggregate write and it
+    only ever *reduces* exposure — the artefact falls back to its dormant own tier. *(CL13)*
+14. **Cascades never lifecycle foreign artefacts (S29)**: the archive and delete cascades
+    (CL7/CL8) first **evict** every contained artefact not owned by the collection owner —
+    to top level, untouched — and then apply only to the owner's own artefacts. Restore
+    (CL7) does not re-attach evicted artefacts (they were evicted, not archived). No one's
+    artefact is ever archived, deleted, or held unservable by another user's collection
+    lifecycle. *(CL14)*
 
 ## Invariants — bookmarks
 
@@ -92,8 +119,8 @@ Artefact Hosting amendment (AH20/AH21). `null` = top-level / not in a collection
    (the effective access matrix, CL5/AH20 — their own, or one shared to them at any tier).
    Adding a bookmark to a non-viewable artefact is a uniform not-found (no leak, AH8);
    **removing** one's own bookmark row is always allowed (it is the user's own data — e.g.
-   cleanup after access was revoked). Collections are owner-only *objects* in v1 (CL10), so
-   for collections this degenerates to "your own" until collections become viewer-facing. *(BM2)*
+   cleanup after access was revoked). Collections follow the same rule via CL11: any
+   collection whose root grants the signed-in user view may be bookmarked. *(BM2)*
 3. **No access semantics**: bookmarks never affect visibility, serving, or listings other
    than the user's own bookmark list. Targets that are archived **or no longer viewable**
    (access revoked, tier lowered) are **hidden at read time, not pruned** — the row survives,
@@ -141,7 +168,9 @@ All owner-scoped (CL9/CL10) unless noted; `requireAuth` + tenant scope as everyw
 | `PUT` | `/api/artefacts/:id/collection` | Move artefact (`{ collectionId | null }`); owner-only; mints slug per CL6 |
 | `GET` | `/api/bookmarks` | The caller's bookmarks (artefact ids + collection ids) |
 | `PUT/DELETE` | `/api/artefacts/:id/bookmark` | Bookmark / unbookmark a viewable artefact (BM2; remove is ungated) |
-| `PUT/DELETE` | `/api/collections/:id/bookmark` | Bookmark / unbookmark an owned collection |
+| `PUT/DELETE` | `/api/collections/:id/bookmark` | Bookmark / unbookmark a viewable collection (BM2/CL11) |
+| `GET` | `/api/shared/collections` | Trees shared *to* the caller (CL11): every node of every granting tree, each carrying `canContribute` (CL12) and the owner's display identity — never the grantee list |
+| `DELETE` | `/api/collections/:id/artefacts/:artefactId` | Eject an artefact from the caller's collection to top level (CL13; collection-owner-only) |
 
 Artefact summaries (owner list, detail) additionally expose `collectionId` and the resolved
 `effectiveVisibility` so the client can render the "Inherited" state and the "in
@@ -171,7 +200,15 @@ access automatically, because their gates already call the same matrix.
 
 ## Decided
 
-- **Owner-only collections in v1** — no viewer-facing collection objects (see above).
+- **Shared collections are viewer-facing for signed-in users (S28)**, listed **both ways**
+  in "Shared with you" (browsable trees *and* the flat artefact list). No collection slugs —
+  anonymous access stays artefact-link-only.
+- **Contribution is gated on the root's access list (S29, CL12)** — not on the view tier —
+  so `authenticated`/`public` roots don't invite drive-by additions; the owner names their
+  contributors with the same picker used for `selected` viewing.
+- **Evict-on-cascade (CL14)**: collection lifecycle never archives or deletes another
+  owner's artefact — foreign artefacts are ejected to top level first, falling back to
+  their dormant own tier.
 - **Root-governs-subtree inheritance** — one access decision per tree, made at the root
   (CL4); nested collections and artefacts are uniformly "Inherited". (The design prototype
   rendered per-collection access with no nesting semantics; the brief's "sub-collections

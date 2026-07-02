@@ -180,11 +180,14 @@ export interface MoveArtefactRequest {
   collectionId: string | null;
 }
 
-// Cascade counts (CL7/CL8) — drives the toast/confirm copy ("archived with N
-// artefacts", "N artefacts and M sub-collections will be deleted").
+// Cascade counts (CL7/CL8/CL14) — drives the toast/confirm copy ("archived
+// with N artefacts", "N artefacts and M sub-collections will be deleted",
+// "· K returned to their owners"). `artefacts` counts the collection owner's
+// own; `evicted` counts foreign artefacts returned to top level untouched.
 export interface CascadeCounts {
   collections: number;
   artefacts: number;
+  evicted: number;
 }
 
 export interface CollectionLifecycleResponse {
@@ -197,4 +200,17 @@ export interface CollectionLifecycleResponse {
 export interface BookmarksResponse {
   artefacts: ArtefactSummary[];
   collections: CollectionSummary[];
+}
+
+// S28 — `GET /api/shared/collections`: every node of every collection tree
+// whose root grants the signed-in caller (CL11). `canContribute` is the
+// per-tree CL12 decision, made server-side so the grantee list itself never
+// travels; `owner` is the tree owner's display identity ("Shared by …").
+export interface SharedCollectionSummary extends CollectionSummary {
+  canContribute: boolean;
+  owner: { name: string; email: string };
+}
+
+export interface SharedCollectionsResponse {
+  collections: SharedCollectionSummary[];
 }
