@@ -34,6 +34,7 @@ export async function resolveEffectiveViewable(
     return {
       status: artefact.status,
       ownerId: artefact.ownerId,
+      tenantId: artefact.tenantId,
       visibility: "private",
       sharedWith: [],
     };

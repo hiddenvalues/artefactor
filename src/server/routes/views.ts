@@ -5,6 +5,7 @@ import type { CollectionRepository } from "../../domain/collection/collection-re
 import type { ViewRepository } from "../../domain/views/view-repository";
 import { listArtefactViewers } from "../views/views.command";
 import type { UserDirectory } from "../data/user-directory";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import { ownerId, requireAuth, type AuthEnv } from "../middleware/auth";
 import type { TenantScopeResolver } from "../middleware/tenant-scope";
 import type { ArtefactViewersResponse } from "../../shared/contracts";
@@ -17,6 +18,8 @@ export interface ViewRoutesDeps {
   userDirectory: UserDirectory;
   // S22 (AH17) — resolves the request's tenant scope for the id-fallback resolve.
   resolveScope: TenantScopeResolver;
+  // S22 (AH18) — decides the `authenticated` tier for the slug-resolved artefact.
+  accessPolicy?: AccessPolicy;
 }
 
 // S21 — Artefact Views. Mounted at `/api/artefacts/:ref/viewers`, where `:ref`
@@ -47,6 +50,7 @@ export function createViewRoutes(deps: ViewRoutesDeps) {
           artefactRepo: deps.artefactRepo,
           collectionRepo: deps.collectionRepo,
           viewRepo: deps.viewRepo,
+          accessPolicy: deps.accessPolicy,
         },
       );
       const identities = await deps.userDirectory.lookup(

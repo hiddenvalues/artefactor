@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { canViewArtefact } from "../../domain/artefact/access";
+import {
+  canViewArtefactUnder,
+  defaultAccessPolicy,
+  type AccessPolicy,
+} from "../../domain/artefact/access";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import { resolveEffectiveViewable } from "../collections/effective";
@@ -23,6 +27,9 @@ export interface ServingDeps {
   dataRepo: DataRepository;
   viewRepo: ViewRepository;
   auth: AuthInstance;
+  // S22 (AH18) — serving is slug-addressed and tenant-global (AH6), so the
+  // per-tier tenant decision is the policy's. Default = the OSS matrix.
+  accessPolicy?: AccessPolicy;
 }
 
 // S6 + S12 — Serve artefact by slug. The shared links point at `/a/:slug`, which
@@ -35,6 +42,7 @@ export interface ServingDeps {
 // 404 so visibility is never leaked (AH7/AH8).
 export function createArtefactServingRoutes(deps: ServingDeps) {
   const app = new Hono<AuthEnv>();
+  const accessPolicy = deps.accessPolicy ?? defaultAccessPolicy;
 
   // Resolve the viewer's session so the access matrix can see who is asking.
   app.use("*", createAttachSession(deps.auth));
@@ -49,10 +57,11 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
       !artefact ||
       // The matrix decides on the effective tier (AH20/CL5): an artefact in a
       // collection is served under its tree root's access.
-      !canViewArtefact(
+      !(await canViewArtefactUnder(
+        accessPolicy,
         await resolveEffectiveViewable(artefact, deps.collectionRepo),
         viewerId,
-      )
+      ))
     ) {
       // An anonymous visitor who can't (yet) see it — e.g. a "Members"
       // (`authenticated`) link opened by someone in the org who hasn't created
@@ -108,10 +117,11 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
 
     if (
       !artefact ||
-      !canViewArtefact(
+      !(await canViewArtefactUnder(
+        accessPolicy,
         await resolveEffectiveViewable(artefact, deps.collectionRepo),
         viewerId,
-      )
+      ))
     ) {
       return c.notFound();
     }

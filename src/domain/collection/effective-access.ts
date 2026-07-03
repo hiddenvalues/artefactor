@@ -23,6 +23,9 @@ export function effectiveViewable(
   return {
     status: root.status === "archived" ? "archived" : artefact.status,
     ownerId: artefact.ownerId,
+    // CL1 — a contained artefact and its tree share owner and tenant, so the
+    // artefact's own tenant is the effective one (the AccessPolicy's input).
+    tenantId: artefact.tenantId,
     visibility: root.visibility,
     sharedWith: root.sharedWith,
   };

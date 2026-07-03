@@ -12,6 +12,10 @@ import {
   singletonScopeResolver,
   type TenantScopeResolver,
 } from "../middleware/tenant-scope";
+import {
+  defaultAccessPolicy,
+  type AccessPolicy,
+} from "../../domain/artefact/access";
 import { createArtefactRoutes, toArtefactSummary } from "./artefacts";
 import { createCollectionRoutes, toCollectionSummary } from "./collections";
 import { createBookmarkRoutes } from "./bookmarks";
@@ -34,6 +38,9 @@ export function createApiRoutes(
   adapters: Adapters,
   auth: AuthInstance,
   resolveScope: TenantScopeResolver = singletonScopeResolver,
+  // S22 (AH18) — decides the `authenticated` tier on the slug-addressed reads
+  // (data authors/entries, viewers). Default = the OSS matrix, byte-identical.
+  accessPolicy: AccessPolicy = defaultAccessPolicy,
 ) {
   const {
     artefactRepository,
@@ -195,6 +202,7 @@ export function createApiRoutes(
       dataRepo: dataRepository,
       userDirectory,
       resolveScope,
+      accessPolicy,
     }),
   );
 
@@ -208,6 +216,7 @@ export function createApiRoutes(
       viewRepo: viewRepository,
       userDirectory,
       resolveScope,
+      accessPolicy,
     }),
   );
 

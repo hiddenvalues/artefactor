@@ -9,6 +9,10 @@ import {
   singletonScopeResolver,
   type TenantScopeResolver,
 } from "./middleware/tenant-scope";
+import {
+  defaultAccessPolicy,
+  type AccessPolicy,
+} from "../domain/artefact/access";
 import { createApiRoutes } from "./routes";
 import { createArtefactServingRoutes } from "./routes/serve";
 import { createMcpRoutes, type McpScopeResolver } from "./mcp/routes";
@@ -23,6 +27,11 @@ import type { HealthResponse } from "../shared/contracts";
 // single-tenant `singletonScopeResolver`, so OSS is byte-identical). A
 // multi-tenant superset injects an active-org resolver (ET2) without editing
 // core route handlers.
+//
+// S22 (AH18) — so is the access policy: the one overridable matrix cell (the
+// `authenticated` tier) on the slug-addressed read paths (serve, data, views).
+// Default = the OSS matrix (any signed-in user); a superset injects an
+// org-membership policy (ET3) without editing core.
 export function createApp(
   adapters: Adapters = defaultAdapters,
   auth: AuthInstance = defaultAuth,
@@ -31,6 +40,7 @@ export function createApp(
   // session, so it has its own resolver (default = single-tenant). See ET2's
   // open question on the connector's active org.
   resolveMcpScope?: McpScopeResolver,
+  accessPolicy: AccessPolicy = defaultAccessPolicy,
 ) {
   const app = new Hono();
 
@@ -44,7 +54,7 @@ export function createApp(
     }),
   );
 
-  app.route("/api", createApiRoutes(adapters, auth, resolveScope));
+  app.route("/api", createApiRoutes(adapters, auth, resolveScope, accessPolicy));
 
   // S6 — public artefact serving by slug (the shared-link render route). Mounted
   // before the static handlers so `/a/:slug` is not swallowed by the SPA fallback.
@@ -57,6 +67,7 @@ export function createApp(
       dataRepo: adapters.dataRepository,
       viewRepo: adapters.viewRepository,
       auth,
+      accessPolicy,
     }),
   );
 

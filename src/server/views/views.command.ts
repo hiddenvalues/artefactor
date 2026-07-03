@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { canViewArtefact } from "../../domain/artefact/access";
+import {
+  canViewArtefactUnder,
+  defaultAccessPolicy,
+  type AccessPolicy,
+} from "../../domain/artefact/access";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
@@ -50,6 +54,9 @@ export interface ListViewersDeps {
   // AH20 — the access decision needs the effective tier (collection tree root).
   collectionRepo: CollectionRepository;
   viewRepo: ViewRepository;
+  // S22 (AH18) — the slug resolve is tenant-global (AH6), so the per-tier
+  // tenant decision is the policy's. Default = the OSS matrix.
+  accessPolicy?: AccessPolicy;
 }
 
 // Resolve the artefact a viewers request targets — by slug, falling back to id —
@@ -69,10 +76,11 @@ async function resolveViewableArtefact(
   if (
     !artefact ||
     // The matrix decides on the effective tier (AH20/CL5).
-    !canViewArtefact(
+    !(await canViewArtefactUnder(
+      deps.accessPolicy ?? defaultAccessPolicy,
       await resolveEffectiveViewable(artefact, deps.collectionRepo),
       viewerId,
-    )
+    ))
   ) {
     throw new ArtefactNotFound(ref);
   }

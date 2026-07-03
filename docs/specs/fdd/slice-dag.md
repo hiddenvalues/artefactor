@@ -564,11 +564,11 @@ chrome. (New DDD bounded context: `ddd/artefact-views.md`, invariants VT1–VT5;
 - **Boundary:** **OSS** (a general hosting feature; pure additive context + chrome). No `ee/`
   involvement.
 
-### S22 — Tenant scope + access-policy seam *(enabler; behaviour-preserving)*
+### S22 — Tenant scope + access-policy seam — **done** *(enabler; behaviour-preserving)*
 Two thin core seams that let a superset be **multi-tenant**, byte-identical in OSS. (DDD amendments:
 `ddd/artefact-hosting.md` AH17/AH18, `ddd/identity-access.md` IA5. EE context:
 `ee/docs/specs/ddd/tenancy.md`.)
-> **Progress:** **A1 + A2 done.** A1 — `Artefact.tenantId` + the `tenant_id` column (both schemas,
+> **Progress:** **done — A1 + A2 + B + C.** A1 — `Artefact.tenantId` + the `tenant_id` column (both schemas,
 > migration `0006`) default to `DEFAULT_TENANT` and are stamped at create. A2 — `findById`,
 > `listByOwner`, and `listShared` are now **scope-aware** (take a `TenantScope`,
 > `domain/artefact/tenant-scope.ts`); `findBySlug` stays **tenant-global** because a slug is a
@@ -580,8 +580,21 @@ Two thin core seams that let a superset be **multi-tenant**, byte-identical in O
 > multi-org user works within one active org per request, which also maps 1:1 onto the EP2 RLS
 > `SET LOCAL app.tenant_id`. Behaviour-preserving — all existing tests stay green; new in-memory
 > tests prove a stub multi-tenant scope excludes other-tenant rows and that `findBySlug` stays
-> cross-tenant. **Pending:** the `AccessPolicy` port (part B, whose shape depends on A2), and the
-> open-signup allowlist option (part C).
+> cross-tenant. B — the **`AccessPolicy` port** (`domain/artefact/access.ts`): `ViewableArtefact`
+> carries `tenantId`, and the matrix is factored so its **one policy-decided cell** — a signed-in
+> non-owner asking for the `authenticated` tier — delegates to
+> `grantsAuthenticatedTier(viewerId, tenantId)` (`canViewArtefactUnder`; the sync `canViewArtefact`
+> stays the OSS default form). AH7/AH8/AH9 are fixed **by construction**: the policy is never asked
+> about the anonymous, the owner's own view, other tiers, or archived. Injected through
+> `createApp`/`createApiRoutes` (default `defaultAccessPolicy`, byte-identical) into the paths where
+> the **slug capability crosses tenants**: serving (`/a/:slug` shell + frame) and the slug-resolved
+> data/viewers reads. Deliberately **not** threaded into id-addressed reads (bookmarks, dashboards)
+> or `canViewCollection`: those resolve via the tenant-scoped repo (T2), and within a scope the
+> viewer is a co-member by construction (collections additionally have no slugs and are signed-in
+> only), so a policy there could never decide differently. C — the sign-up allowlist accepts the
+> `"*"` allow-all sentinel (IA5). Route-level tests (`server/access-policy.test.ts`) prove a stub
+> co-member policy grants a member, denies a signed-in non-member with a flat 404 (AH8), keeps the
+> anonymous redirect uniform, never denies the owner, and leaves `public` untouched.
 - **Scope.** `Artefact` gains `tenantId` (immutable; migration defaults existing + new rows to
   `DEFAULT_TENANT`). `ArtefactRepository` list/find take a **`TenantScope`**; OSS wires the singleton
   scope, so listing/serving is unchanged. Subordinate reads (data, views, versions) inherit the

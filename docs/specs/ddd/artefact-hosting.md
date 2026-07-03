@@ -251,6 +251,15 @@ access matrix or the repository.
   OSS default = the matrix above. A superset overrides **only the `authenticated` tier** to mean
   "co-member of the artefact's tenant." AH8 (no existence leak / uniform redirect) and AH9 (owner
   authority) are **fixed under any policy**.
+- The port asks exactly one question — `grantsAuthenticatedTier(viewerId, tenantId)` — and it is
+  only ever asked for a **signed-in non-owner** requesting the `authenticated` tier. The anonymous
+  denial, the owner's view of their own artefact, the `public`/`selected`/`private` semantics, and
+  archived-is-inert (AH7) are decided by the fixed matrix *before* the policy is consulted, so no
+  policy can alter them (fixed by construction, not by convention).
+- The policy is consulted where the **slug capability crosses tenants** (serving and the
+  slug-resolved data/viewers reads). Id-addressed reads and collection reads need no policy: they
+  resolve through the tenant-scoped repository (seam a), and within a scope the viewer is a
+  co-member by construction — collections additionally have no slugs and are signed-in only.
 
 **AH17 — tenant scope is invisible to OSS.** Under the default singleton tenant + scope, the
 aggregate and all behaviour are identical to today; `tenantId` is carried but never discriminates.

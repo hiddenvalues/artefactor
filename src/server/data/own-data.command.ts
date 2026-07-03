@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { canViewArtefact } from "../../domain/artefact/access";
+import {
+  canViewArtefactUnder,
+  defaultAccessPolicy,
+  type AccessPolicy,
+} from "../../domain/artefact/access";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
@@ -25,6 +29,9 @@ export interface DataAccessDeps {
   // in a collection needs its tree root.
   collectionRepo: CollectionRepository;
   dataRepo: DataRepository;
+  // S22 (AH18) — the slug resolve below is tenant-global (AH6), so the per-tier
+  // tenant decision is the policy's. Default = the OSS matrix.
+  accessPolicy?: AccessPolicy;
 }
 
 export interface OwnDataDeps extends DataAccessDeps {
@@ -49,12 +56,13 @@ export async function resolveViewableArtefact(
     (await deps.artefactRepo.findById(ref, scope));
   if (
     !artefact ||
-    !canViewArtefact(
+    !(await canViewArtefactUnder(
+      deps.accessPolicy ?? defaultAccessPolicy,
       // The matrix decides on the effective tier — a contained artefact is
       // governed by its collection tree root (AH20/CL5).
       await resolveEffectiveViewable(artefact, deps.collectionRepo),
       viewerId,
-    )
+    ))
   ) {
     throw new ArtefactNotFound(ref);
   }

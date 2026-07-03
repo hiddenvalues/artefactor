@@ -9,8 +9,10 @@ dropped**) — the Artefact Hosting and Artefact Data contexts, the MCP connecto
 UI are complete. **Post-v0.2 the DAG also defines *enabler seams*: behaviour-preserving extension
 points that let a closed superset extend the core without forking it** (each ships an OSS default
 that keeps OSS behaviour byte-identical). **S24** (inject persistence ports into the composition)
-is **done**; **S19** (payload-retention seam), **S22** (tenant scope + access-policy), and **S23**
-(quota / payload-size / branding policies) are **specced but not yet implemented**. **S25–S27**
+and **S22** (tenant scope + access-policy seams — scope-aware repo reads, the `AccessPolicy` port
+deciding the one overridable `authenticated`-tier cell, and the allow-all sign-up option) are
+**done**; **S19** (payload-retention seam) and **S23** (quota / payload-size / branding policies)
+are **specced but not yet implemented**. **S25–S27**
 (**Collections & Bookmarks**) are **done**: an owner-only nestable folder tree whose **root's**
 access (all four tiers incl. `selected`) the contained artefacts **inherit at read time**
 (AH20/AH21 — own tier dormant, slug minted on effective share), archive/restore/permanent-delete

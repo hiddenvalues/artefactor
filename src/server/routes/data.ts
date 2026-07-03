@@ -15,6 +15,7 @@ import {
   listDataAuthors,
 } from "../data/author-data.command";
 import type { UserDirectory } from "../data/user-directory";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import { ownerId, requireAuth, type AuthEnv } from "../middleware/auth";
 import type { TenantScopeResolver } from "../middleware/tenant-scope";
 import type {
@@ -30,6 +31,8 @@ export interface DataRoutesDeps {
   userDirectory: UserDirectory;
   // S22 (AH17) — resolves the request's tenant scope for the id-fallback resolve.
   resolveScope: TenantScopeResolver;
+  // S22 (AH18) — decides the `authenticated` tier for the slug-resolved artefact.
+  accessPolicy?: AccessPolicy;
 }
 
 // S11 — Artefact Data: the caller's own blob. Mounted at
@@ -45,6 +48,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
     artefactRepo: deps.artefactRepo,
     collectionRepo: deps.collectionRepo,
     dataRepo: deps.dataRepo,
+    accessPolicy: deps.accessPolicy,
   };
 
   // `:ref` comes from the mount path (`/api/artefacts/:ref/data`), so it is
