@@ -329,6 +329,8 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
 - Served artefacts get an injected shim that **replaces `window.localStorage`** with a
   backend-backed store, **seeded server-side** with the current data context so reads are
   synchronous; writes are write-through + debounced with a `pagehide` beacon flush. *(AD runtime contract §1)*
+  *(Amended by S31: writes only when dirty, pinned with `If-Match`/`If-None-Match: *`, and a
+  412 stops the tab writing and prompts a reload in the host shell.)*
 - The artefact needs **zero code changes** and sees **one opaque dataset** — `localStorage`
   only, no `ARTEFACTOR` helper.
 - Over-cap write throws `QuotaExceededError`; a read-only context (logged-out public viewer,
@@ -877,7 +879,19 @@ quarter"), write the whole blob back.
 - **Domain / command** — `DataConflict` (new `DataError`). `putOwnDataEntry` gains an optional
   `{ ifUnmodifiedSince?: Date | null }`: a timestamp refuses the write if the stored entry's
   `updatedAt` is newer; `null` ("I read no entry") refuses if an entry now exists; absent writes
-  unconditionally. `PUT …/data/me` never passes it — byte-identical.
+  unconditionally.
+- **BFF** — `PUT …/data/me` optionally conditional: `If-Match: "<updatedAt ISO>"` → timestamp
+  pin, `If-None-Match: *` → `null`; conflict → **412**; unparseable `If-Match` → 400 (never an
+  unconditional write). No header → unconditional, as before.
+- **Runtime (amends S13)** — the open tab is the likeliest concurrent writer and, unguarded,
+  would silently revert an agent's write by saving its stale in-memory copy. The shim now
+  writes **only when dirty** (an idle open tab never writes — hide/close sends nothing), pins
+  every `PUT` to the `updatedAt` it was seeded with / last saved (`seedUpdatedAt` inlined by
+  `render.ts`), never overlaps saves (except the forced `pagehide` flush), and on 412 stops
+  writing and posts `artefactor:data-conflict` to the parent.
+- **Host shell (amends S12)** — a signed-in-only banner ("changed elsewhere … Reload") revealed
+  by that message, accepted only from its own same-origin frame; Reload re-seeds the current
+  data context.
 - **MCP** — `set_artefact_data { id, blob, if_unmodified_since? }` → `{ id, bytes, updatedAt }`.
   **Whole-blob replacement only**, stated outright in the description (a model assuming merge
   semantics would silently delete every key it didn't send). Owner-scoped via
@@ -894,7 +908,13 @@ quarter"), write the whole blob back.
 - **Acceptance:** round-trip get → transform → set → re-read returns the blob verbatim with
   `updatedAt` bumped and `createdAt` + entry id preserved; first write creates, second updates
   (never two entries); another author's entry untouched; invalid JSON → error naming the parse
-  failure; over 5 MB → error naming the actual size; stale pin (timestamp or `null`) →
+  failure; over 5 MB → error naming the actual size; HTTP `If-Match` current → 200, stale → 412
+  with nothing written, `If-None-Match: *` → 200 then 412, malformed → 400; the shim sends
+  nothing from an idle tab (hide/close), doesn't re-send after a completed save, pins with
+  `If-Match`/`If-None-Match: *`, adopts its own save's `updatedAt`, serialises overlapping
+  saves, and on 412 stops writing + notifies the shell; the served frame inlines the entry's
+  `updatedAt` as the pin; the shell renders the banner for signed-in viewers only and accepts
+  the message only from its own frame; stale pin (timestamp or `null`) →
   conflict, nothing written, message directs a re-read; no pin → unconditional write, existing
   data tests green; non-owner (even on a shared artefact) / unknown / archived / out-of-scope →
   not found; a tool-written blob — including one built from the declared schema's `example`

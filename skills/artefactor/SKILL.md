@@ -101,10 +101,12 @@ The write is **destructive and irreversible** — there is no versioning and no 
 
 1. **Read before write, always.** Call `get_artefact_data` first. Send back the **full**
    transformed blob — every key, not just the one you changed — and pass the `updatedAt` you
-   read as `if_unmodified_since` (`null` if the read returned no entry). If the user saved in
-   the meantime (e.g. they have the artefact open), the write is refused and nothing is stored:
-   re-read, re-apply your change to the new blob, and write again. Don't drop the pin to force
-   it through.
+   read as `if_unmodified_since` (`null` if the read returned no entry). Having the artefact
+   open in a browser is fine and expected — an open tab only saves when the user actually
+   changes something in it. So a refused write means the user **really edited their data** in
+   the moments between your read and your write: nothing was stored; re-read, re-apply your
+   change to the new blob, and write again. Don't drop the pin to force it through — that would
+   discard what they just did.
 2. **Use the declared schema, then verify.** `schema` (and its `example`) is your orientation —
    and it is what makes a write possible at all when the user's blob is still empty, the common
    case for an artefact they've just been given. But a declaration can be stale: before writing
@@ -119,6 +121,10 @@ The write is **destructive and irreversible** — there is no versioning and no 
    back.
 5. **Say what will change before writing** — in plain terms ("adds 6 rows to Q3, leaves
    everything else as is"), not just an approval prompt for an opaque tool call.
+6. **After writing, tell the user to reload** the artefact if they have it open. An open tab
+   keeps showing the data it loaded; it won't overwrite your change (if they edit in it, its
+   save is refused and Artefactor shows a "changed elsewhere — Reload" banner), but they only
+   see your change after a reload.
 
 To clear the data, write `{}`. The tool can't write a blob over 5 MB or one that isn't valid
 JSON; both errors say why.
@@ -330,4 +336,4 @@ manage who it belongs to.
       silently bumping the key, which discards every user's saved data).
 - [ ] If editing the user's data with `set_artefact_data`: read first, sent the **whole** blob
       pinned with the read's `updatedAt`, verified the shape against the HTML, kept the old blob,
-      and told the user what changes.
+      told the user what changes, and afterwards asked them to reload any open tab.

@@ -641,16 +641,21 @@ describe("MCP artefact tools (S18)", () => {
       // localStorage values are strings: the blob maps the declared key to the
       // JSON-encoded example.
       const blob = JSON.stringify({ [read.schema.key]: JSON.stringify(read.schema.example) });
-      await call(client, "set_artefact_data", {
-        id: a.id,
-        blob,
-        if_unmodified_since: read.updatedAt,
-      });
+      const written = json(
+        await call(client, "set_artefact_data", {
+          id: a.id,
+          blob,
+          if_unmodified_since: read.updatedAt,
+        }),
+      );
       expect(json(await call(client, "get_artefact_data", { id: a.id })).blob).toBe(blob);
 
       const artefact = (await deps.repo.findById(a.id, SINGLETON_SCOPE))!;
       const served = await renderServedArtefact(artefact, a.id, "u1", deps);
       expect(served).toContain(`"seed":${JSON.stringify(blob).replace(/</g, "\\u003c")}`);
+      // The reloaded tab pins its own later saves to the agent's write, so it
+      // neither conflicts with it nor can revert it.
+      expect(served).toContain(`"pin":"${written.updatedAt}"`);
     });
   });
 });

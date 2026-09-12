@@ -2,7 +2,11 @@ import { Hono } from "hono";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
-import { BlobTooLarge, InvalidBlob } from "../../domain/data/errors";
+import {
+  BlobTooLarge,
+  DataConflict,
+  InvalidBlob,
+} from "../../domain/data/errors";
 import type { DataRepository } from "../../domain/data/data-repository";
 import {
   deleteOwnDataEntry,
@@ -109,13 +113,23 @@ export function createDataRoutes(deps: DataRoutesDeps) {
   });
 
   // Upsert the caller's blob. The request body is the raw opaque JSON.
+  // S31 — optionally conditional: `If-Match: "<updatedAt ISO>"` or
+  // `If-None-Match: *` (the served shim always sends one) → 412 when stale.
   r.put("/me", requireAuth, async (c) => {
     const blob = await c.req.text();
+    const precondition = parsePrecondition(
+      c.req.header("If-Match"),
+      c.req.header("If-None-Match"),
+    );
+    if (precondition === "invalid") {
+      return c.json({ error: "If-Match must be a quoted ISO-8601 updatedAt" }, 400);
+    }
     try {
       const entry = await putOwnDataEntry(
         { ref: refOf(c), authorId: ownerId(c), scope: await deps.resolveScope(c) },
         blob,
         commandDeps,
+        { ifUnmodifiedSince: precondition },
       );
       return c.json<DataEntryResponse>({
         blob: entry.blob,
@@ -125,6 +139,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
       if (err instanceof ArtefactNotFound) return c.notFound();
       if (err instanceof InvalidBlob) return c.json({ error: err.message }, 400);
       if (err instanceof BlobTooLarge) return c.json({ error: err.message }, 413);
+      if (err instanceof DataConflict) return c.json({ error: err.message }, 412);
       throw err;
     }
   });
@@ -166,4 +181,21 @@ export function createDataRoutes(deps: DataRoutesDeps) {
   });
 
   return r;
+}
+
+// S31 — map the conditional-request headers onto the command's pin.
+// `If-Match: "<ISO updatedAt>"` → that instant; `If-None-Match: *` → null ("no
+// entry expected"); neither → undefined (unconditional). An If-Match that is not
+// a quoted timestamp is rejected rather than silently written unconditionally.
+function parsePrecondition(
+  ifMatch: string | undefined,
+  ifNoneMatch: string | undefined,
+): Date | null | undefined | "invalid" {
+  if (ifMatch !== undefined) {
+    const m = /^"([^"]+)"$/.exec(ifMatch.trim());
+    const at = m ? new Date(m[1]!) : null;
+    return at && !Number.isNaN(at.getTime()) ? at : "invalid";
+  }
+  if (ifNoneMatch?.trim() === "*") return null;
+  return undefined;
 }

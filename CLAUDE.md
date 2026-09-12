@@ -81,7 +81,11 @@ agent reads the whole blob, transforms it **agent-side**, and writes the **whole
 through the same `putOwnDataEntry` as `PUT …/data/me`, so the server still only parses to
 enforce AD8. It writes only the caller's **own** entry (never another author's), is
 owner-scoped like the reads, and takes an optional `if_unmodified_since` pin that refuses a
-stale write with `DataConflict` (the HTTP route never pins). The old **S8/S9** (API-key REST
+stale write with `DataConflict`. Because the user likely has the artefact open while the agent
+works, the **served tab pins too**: the S13 shim writes only when something changed, sends
+`If-Match`/`If-None-Match: *` (→ 412 on `PUT …/data/me`), and on a conflict stops writing and
+has the S12 host shell offer a reload — so an open tab can neither block nor silently revert an
+agent's write. The old **S8/S9** (API-key REST
 push) and **S17** (data merge-patch) are **dropped**. See `docs/specs/fdd/slice-dag.md`.
 
 **The client UI (Svelte SPA, `src/client`) is built and is the human-facing app** — not a stub.

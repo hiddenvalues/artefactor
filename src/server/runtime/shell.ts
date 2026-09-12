@@ -99,6 +99,16 @@ export function renderHostShell(ctx: HostShellContext): string {
     </div>`
     : "";
 
+  // S31 — shown when the framed artefact's saves were refused because the saved
+  // data was replaced elsewhere (e.g. by an agent). Signed-in only: anonymous
+  // contexts are never writable, so they can never conflict.
+  const conflictBanner = ctx.viewerId
+    ? `<div class="ae-conflict" id="ae-conflict" role="alert" hidden>
+    <span>Your data for this artefact was changed elsewhere, so changes made here since are no longer being saved. Reload to see the latest version.</span>
+    <button type="button" id="ae-conflict-reload">Reload</button>
+  </div>`
+    : "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -151,6 +161,11 @@ export function renderHostShell(ctx: HostShellContext): string {
   .ae-viewers-meta { font-size: 12px; color: var(--muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ae-viewers-empty { padding: .5rem .4rem; font-size: 13px; color: var(--muted-fg); }
   .ae-frame { flex: 1 1 auto; width: 100%; border: 0; }
+  .ae-conflict { flex: 0 0 auto; display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem; font-size: 13px; color: #6b4a00; background: #fff8c5; border-bottom: 1px solid #eac54f; }
+  .ae-conflict[hidden] { display: none; }
+  .ae-conflict span { margin-right: auto; }
+  .ae-conflict button { font: inherit; font-size: 13px; font-weight: 500; height: 28px; padding: 0 .7rem; border: 1px solid #d4a72c; border-radius: 7px; background: #fff; color: var(--fg); cursor: pointer; }
+  .ae-conflict button:hover { background: var(--muted); }
 </style>
 </head>
 <body>
@@ -167,6 +182,7 @@ export function renderHostShell(ctx: HostShellContext): string {
     </div>
     ${hostTools}
   </div>
+  ${conflictBanner}
   <iframe class="ae-frame" id="ae-frame" title="Artefact"></iframe>
 <script>
 (function(){
@@ -239,6 +255,20 @@ export function renderHostShell(ctx: HostShellContext): string {
   }
 
   sel.addEventListener("change", function(){ seed(sel.value); });
+
+  // S31 — the artefact's localStorage shim posts this when a save is refused
+  // because the saved data was replaced elsewhere (e.g. by an agent). Accept it
+  // only from our own same-origin frame; reloading re-seeds the latest data.
+  var conflict = document.getElementById("ae-conflict");
+  window.addEventListener("message", function(e){
+    if (e.source !== frame.contentWindow || e.origin !== location.origin) return;
+    if (!e.data || e.data.type !== "artefactor:data-conflict") return;
+    conflict.hidden = false;
+  });
+  document.getElementById("ae-conflict-reload").addEventListener("click", function(){
+    conflict.hidden = true;
+    seed(sel.value);
+  });
 
   // S21 — "viewed by" widget. Fetch the other viewers (the endpoint already
   // excludes the current viewer, VT4), show a count, and reveal a pop-over list
