@@ -1,6 +1,11 @@
 <script lang="ts">
   import { overlay } from "../ui.svelte";
-  import { ARCHIVE_ICON, BOOKMARK_ICON, FOLDER_ICON } from "../format";
+  import {
+    ARCHIVE_ICON,
+    BOOKMARK_ICON,
+    DOWNLOAD_ICON,
+    FOLDER_ICON,
+  } from "../format";
   import Icon from "./Icon.svelte";
 
   interface Props {
@@ -17,6 +22,11 @@
     // S25 — add/move to collection ("Move…" once it's already in one).
     inCollection?: boolean;
     onMoveToCollection?: () => void;
+    // S30 — "Download HTML". A plain anchor: the export endpoint authenticates
+    // on the session cookie, so no fetch/blob dance is needed. Owned artefacts
+    // only in this slice (the endpoint itself honours the access matrix, so
+    // widening to shared viewers is later client-only work).
+    downloadHref?: string;
   }
   let {
     id,
@@ -30,6 +40,7 @@
     onBookmark,
     inCollection = false,
     onMoveToCollection,
+    downloadHref,
   }: Props = $props();
 
   const key = $derived(`menu:${id}`);
@@ -112,6 +123,16 @@
           size={15}
         />Edit
       </button>
+      {#if downloadHref}
+        <a
+          href={downloadHref}
+          download
+          onclick={() => overlay.close()}
+          style="{itemStyle}color:var(--fg);text-decoration:none;"
+        >
+          <Icon paths={DOWNLOAD_ICON} size={15} />Download HTML
+        </a>
+      {/if}
       <div style="height:1px;background:var(--border);margin:5px 6px;"></div>
       <button onclick={() => run(onArchive)} style="{itemStyle}color:var(--destructive);">
         <Icon paths={ARCHIVE_ICON} size={15} />Archive

@@ -134,6 +134,17 @@ States are the product of `visibility × status`. Allowed transitions:
   concern, not a security boundary.
 - Because artefacts are served **same-origin**, their JS can call the backend store (see
   `artefact-data.md`) carrying the viewer's session — this is how forms persist data.
+- **Export (S30).** Alongside the render there is a second read path: the **export**, which
+  returns the **stored payload** — never the injected render. It is governed by the same
+  matrix as the render (AH7/AH8/AH9, on the *effective* tier per AH20): unknown handle,
+  not-viewable, and **archived** all surface as a flat 404, with **no owner carve-out** for an
+  archived artefact (restore → export → re-archive is the escape hatch; AH7 keeps archived
+  inert). The distinction from the render is the point: the render injects the localStorage
+  bootstrap and wraps the artefact in the host shell, whereas the export is byte-identical to
+  what was uploaded, so export → edit → re-upload round-trips through the same create/edit
+  commands and yields the same artefact. A payload convention carried *inside* the HTML — such
+  as the declared data schema in `artefact-data.md` — therefore travels with the export for
+  free, with no extra plumbing.
 
 ## Relationship to Artefact Data
 

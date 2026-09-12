@@ -21,7 +21,12 @@ extend this: shared collections are **viewer-facing** for signed-in users (both-
 collection slugs) and **collaborative** — the root's access list doubles as its **contributor**
 list (place-own-artefacts-only; CL12), containment is co-owned (owner may eject, CL13), and
 lifecycle cascades **evict foreign artefacts instead of touching them** (CL14). Context:
-`docs/specs/ddd/artefact-collections.md`. New work
+`docs/specs/ddd/artefact-collections.md`. **S30** (**Export artefact HTML**) is **done**:
+`GET /api/artefacts/:ref/download` returns the **stored** payload verbatim (no S13 bootstrap,
+no S12 shell) under the same access matrix as the data reads — archived 404s for the owner
+too (AH7, no carve-out) — plus the MCP read-back tools `get_artefact_html` /
+`get_artefact_data` and the **migrate-forward** doctrine + **declared data schema** convention
+(`<script type="application/artefactor-schema+json">`) in the skill. New work
 either implements a pending enabler seam or adds a new slice (with its governing DDD invariant)
 before coding, per the spec-driven process below.
 
@@ -52,8 +57,12 @@ adapters in `src/server/adapters.ts`. **Programmatic access (S18)** is a remote 
 bearer (BetterAuth's `mcp` plugin — discovery at `/.well-known/oauth-*`, dynamic client
 registration, authorize/consent/token under `/api/auth/mcp/*`, OIDC tables
 `oauth_application|oauth_access_token|oauth_consent`). Tools in `src/server/mcp/` wrap the
-existing Hosting commands (create/update/list/get/set-visibility/archive/restore), each
-attributed to the token's Account. Because connector-only clients (e.g. Claude design) **can't
+existing Hosting commands (create/update/list/get/set-visibility/archive/restore) plus the
+**S30 read-back pair** — `get_artefact_html` (the stored HTML) and `get_artefact_data` (the
+caller's **own** blob verbatim + the artefact's declared schema + the
+`currentPayloadVersion`/`authoredAgainstVersion` pin, the latter reserved and `null` until
+S19) — each attributed to the token's Account. Both read-back tools hard-error above a context
+cap (~1 MB HTML / 256 KB blob) instead of truncating, pointing at the GUI download. Because connector-only clients (e.g. Claude design) **can't
 load the `artefactor` Agent Skill**, the connector self-describes its authoring contract: the
 MCP server's `instructions` carry a compact persistence summary (ambient, present before any
 tool call) and a `get_authoring_guide` tool returns the full `skills/artefactor/SKILL.md` body
@@ -61,7 +70,10 @@ on demand (the Dockerfile copies `skills/` into the runtime image for this). The
 in `src/server/mcp/authoring-guide.ts` and the skill are kept in sync (same no-drift rule). **Data blobs stay opaque** — there is no data-write tool
 and no merge-patch (a backend merge would break opacity); `get_artefact`/`update_artefact`
 return `dataAuthorCount` so a breaking HTML change can be flagged, and the artefact owns its
-own data-shape compatibility (versioned localStorage keys). The old **S8/S9** (API-key REST
+own data-shape compatibility (versioned localStorage keys + a forward migration shipped in its
+own HTML). S30's `get_artefact_data` **reads** a snapshot of the caller's own blob without
+interpreting it, which is not a write tool; an actual `set_artefact_data` is a separate slice
+(S31) and would amend this decision deliberately. The old **S8/S9** (API-key REST
 push) and **S17** (data merge-patch) are **dropped**. See `docs/specs/fdd/slice-dag.md`.
 
 **The client UI (Svelte SPA, `src/client`) is built and is the human-facing app** — not a stub.
@@ -74,7 +86,9 @@ switcher; manage-access (`ManageAccessModal.svelte`); and archive / restore / pe
 to get an artefact that embeds **raster images** into Artefactor, because the MCP connector
 ("Path A") cannot carry base64 image bytes through a tool call. Both paths run the same
 create/edit commands, so invariants are identical. (See the two-path guidance in
-`skills/artefactor/SKILL.md` and the MCP `instructions`.)
+`skills/artefactor/SKILL.md` and the MCP `instructions`.) S30 adds the **return** trip:
+"Download HTML" in an owned artefact's `MoreMenu` (a plain anchor — session-cookie auth) hands
+back the stored document byte-for-byte, so download → edit → re-upload round-trips.
 
 Development is **spec-driven**: locate the governing
 DDD invariant and FDD slice before coding, build test-first, and keep spec ↔ tests ↔ code in
@@ -104,7 +118,7 @@ The domain and build plan live in `docs/specs/` and are the **source of truth**:
 - `docs/specs/ddd/` — domain model: ubiquitous language, the **Identity & Access**,
   **Artefact Hosting**, and **Artefact Data** bounded contexts, with aggregates and
   invariants.
-- `docs/specs/fdd/slice-dag.md` — the feature slice DAG (S0–S18; S8/S9/S17 dropped) and per-slice acceptance
+- `docs/specs/fdd/slice-dag.md` — the feature slice DAG (S0–S30; S8/S9/S17 dropped) and per-slice acceptance
   criteria (the seeds for TDD tests) with build order. `s0-scaffold.md` has the full S0 spec.
 
 `skills/artefactor/SKILL.md` is an Agent Skill for the **authoring + publishing** side

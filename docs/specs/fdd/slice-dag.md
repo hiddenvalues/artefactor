@@ -27,6 +27,12 @@ S1 Identity (BetterAuth — email+password for dev; Google OAuth added later)
         │
         └────────────► S18 MCP connector (remote MCP server + OAuth via BetterAuth `mcp` plugin;
                               wraps the Hosting commands as tools — needs S2, S3, S4, S5, S7, S10)
+                                     │
+                                     └──► S30 Export artefact HTML (GUI download + MCP read-back
+                                                tools — needs S2, S4, S6, S11, S18)
+                                                ┊
+                                                ┊ (optional sharpener, NOT a dependency)
+                                                ┄┄┄ S19 data version pin (AD9)
 
 ~~S8 Issue / revoke API key~~ and ~~S9 API push ingestion~~ are **dropped** — the pinned
 better-auth has no api-key plugin and a raw token API was deemed unnecessary; programmatic
@@ -785,6 +791,75 @@ Deps: **S28.** (CL1 relaxed; CL12/CL13/CL14.)
   not re-attach evicted artefacts.
 - **Boundary:** **OSS**. No schema change (contributors ride `collection_access`).
 
+### S30 — Export artefact HTML (GUI download + MCP read-back tools)
+Deps: **S2, S4, S6, S11, S18.** (AH7/AH8/AH9 for the export read path; AD2/AD4/AD8 for the
+data snapshot.) Artefactor could take HTML in but never give it back: the client had no
+download affordance, and an agent on the connector could `create`/`update` an artefact but
+never *read* one — so it could neither derive a new artefact from an existing one (A) nor
+safely update one in place after losing the original from context (B). (B) is a correctness
+problem: `update_artefact` replaces the HTML and leaves every per-user data blob untouched,
+and the backend treats blobs as opaque (AD8), so it cannot migrate them.
+
+- **Domain** — `extractDeclaredSchema(html)`: a pure, best-effort lift of the artefact's
+  **declared data schema** block (below) from its trusted HTML. Absent/malformed/non-object
+  → `null`, never an error. A payload *convention*, never enforced.
+- **Shared** — `artefactFilename(title, fallback)` + `attachmentDisposition(filename)`: pure
+  download-naming helpers (slugify, bound, ASCII-fold, RFC 5987), unit-tested on their own.
+- **BFF** — `GET /api/artefacts/:ref/download` (`:ref` = slug **or** id). Resolution and
+  access reuse `resolveViewableArtefact`, so effective-tier resolution through a collection
+  root (AH20) and the `AccessPolicy` cell (AH18) are **inherited, not re-implemented**. Body
+  = `PayloadStore.get(payloadRef)` **verbatim** — no S13 bootstrap, no S12 host shell, so the
+  download round-trips (download → edit → re-upload / `update_artefact` yields the same
+  artefact). `Content-Type: text/html; charset=UTF-8`; `Content-Disposition: attachment` with
+  both `filename` and `filename*`; `Content-Length` = `payloadBytes`. Unknown ref /
+  not-viewable / **archived** → flat 404.
+- **MCP** — `get_artefact_html { id }` → `{ id, title, kind, html, dataAuthorCount }`;
+  `get_artefact_data { id }` → `{ id, blob, bytes, updatedAt, dataAuthorCount, schema,
+  currentPayloadVersion, authoredAgainstVersion }` — the caller's **own** entry only, verbatim
+  via `getOwnDataEntry`, with no server-side summarising or key/type digest (that would be the
+  backend interpreting the blob). Both owner-scoped via `loadOwnActiveArtefact`. Each
+  hard-errors above its cap (`MAX_MCP_HTML_BYTES` ≈ 1 MB, `MAX_MCP_BLOB_BYTES` ≈ 256 KB),
+  naming the real size and pointing at the GUI download — **no truncation**: truncated HTML is
+  unusable for editing and truncated JSON unparseable, and either invites the agent to act on
+  a fragment as though it were whole.
+- **Doctrine** — `skills/artefactor/SKILL.md` + `PERSISTENCE_CONTRACT_SUMMARY`: **migrate
+  forward** now leads the breaking-change guidance (read old key → transform → write new;
+  idempotent, at load before first render, old key kept one generation, never `clear()`), the
+  snapshot is one blob and not the population, and the schema block joins the template +
+  checklist. Bumping the key without migrating is named for what it is — silent data loss.
+- **Client** — "Download HTML" in `MoreMenu` (reaching `ArtefactRow` + `ArtefactCard`), owned
+  artefacts only. A plain anchor: session-cookie auth needs no fetch/blob dance.
+- **Acceptance:** owner downloads own artefact by id at any visibility, byte-identical to what
+  was uploaded; viewer downloads a shared artefact by slug; anonymous downloads a `public` one;
+  private-to-a-non-owner, **archived (including for the owner)**, and unknown ref all 404; both
+  `Content-Disposition` forms present and `Content-Length` = `payloadBytes`; no bootstrap or
+  shell in the body; filename helper covers ASCII / non-ASCII (åäö) / symbol-only (falls back
+  to slug-or-id) / 300-char (bounded) / always `.html`. `get_artefact_html` returns the exact
+  stored HTML with `dataAuthorCount`; `get_artefact_data` returns the caller's own blob
+  verbatim, `blob: null` when they have none, never another author's; over-cap on either →
+  error naming the actual size; non-owner / unknown / archived / out-of-scope → not found;
+  `schema` is parsed JSON when present and `null` when absent, malformed, or not valid JSON —
+  **never** an error; a blob is never validated against a declared schema (AD8 holds); an
+  artefact with a declared schema survives export → re-upload intact; `currentPayloadVersion`
+  equals `payloadHash` and `authoredAgainstVersion` is `null` while S19 is unbuilt (both
+  fields' presence and shape asserted).
+- **Archived stays inert (AH7)** — no owner carve-out. Restore → download → re-archive is one
+  click, which is not worth an exception in AH7 for an escape hatch.
+- **On S19/AD9 — reserve, don't depend.** `get_artefact_data` returns the version-pin **pair**
+  but S19 is **not** a dependency edge, and the missing edge is deliberate, not an oversight:
+  AD9 is *advisory by spec* and never gates a read or write, so nothing here is incorrect while
+  the pin is `null`; and S19 also carries the unrelated AH15 `PayloadRetentionPolicy` port in
+  the edit command, which read-back has no business pulling in. `currentPayloadVersion` is free
+  today (`payloadHash` is already on the aggregate). When S19 lands, the pin populates with
+  **no tool-shape change and no doctrine rewrite** — the rule "pin present and ≠ current ⇒ that
+  user's data predates this payload" is written now and becomes true then.
+- **Out of scope:** the download affordance for "shared with you" (`GalleryCard`/`GalleryRow`)
+  and the `/a/:slug` shell toolbar (the endpoint already honours the matrix — widening is
+  client-only); baking a data snapshot into the downloaded file; any data **write** tool (S31);
+  a per-artefact "allow download" toggle (new field + invariant + migration, and defeated by
+  view-source anyway).
+- **Boundary:** **OSS**. No schema change.
+
 ## Build order
 
 Topological: **S0 → S1 → S2 → {S3, S4, S5, S7, S10, S11}**, **S5 → {S6, S14, S16}**,
@@ -804,4 +879,7 @@ dependency of the EE **Postgres persistence** context. **S25** (collections) dep
 hosting core + sharing (**S2/S5/S6/S10/S16**); **S26** (collection lifecycle) on **S25 + S15**;
 **S27** (bookmarks) on **S25**; **S28** (viewer-facing shared collections) on **S25** and
 **S29** (contributors + evict-on-cascade) on **S28**. All five are OSS feature slices
-(context `ddd/artefact-collections.md`).
+(context `ddd/artefact-collections.md`). **S30** (export HTML) depends on the hosting read
+path + the data store + the connector (**S2/S4/S6/S11/S18**); **S19** is an *optional
+sharpener* of S30's staleness signal, **not** a dependency edge (see the slice's
+reserve-don't-depend note).

@@ -22,6 +22,7 @@ import { createBookmarkRoutes } from "./bookmarks";
 import { listEffectivelyShared } from "../collections/shared.query";
 import { listSharedCollections } from "../collections/shared-collections.query";
 import { createDataRoutes } from "./data";
+import { createDownloadRoutes } from "./download";
 import { createViewRoutes } from "./views";
 import { createUserRoutes } from "./users";
 import type {
@@ -201,6 +202,20 @@ export function createApiRoutes(
       collectionRepo: collectionRepository,
       dataRepo: dataRepository,
       userDirectory,
+      resolveScope,
+      accessPolicy,
+    }),
+  );
+
+  // S30 — Export: the artefact's stored HTML as a download, addressed by its
+  // slug or id. Access follows the same matrix as the data reads (AH20/AH18);
+  // anonymous callers may download a `public` artefact by slug.
+  api.route(
+    "/artefacts",
+    createDownloadRoutes({
+      artefactRepo: artefactRepository,
+      collectionRepo: collectionRepository,
+      payloadStore,
       resolveScope,
       accessPolicy,
     }),
