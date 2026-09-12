@@ -80,8 +80,64 @@ artefact itself stays opaque and single-dataset.
 > blob's structure, breaking opacity. Writes are whole-blob `PUT`s. When an artefact's data
 > *shape* changes (e.g. the MCP connector replaces its HTML), the backend cannot and does not
 > migrate existing blobs — compatibility is the **artefact's** responsibility (versioned
-> `localStorage` keys; see `skills/artefactor`), and a genuinely breaking change is
-> best published as a **new artefact** rather than edited in place.
+> `localStorage` keys; see `skills/artefactor`). A breaking change is therefore best handled by
+> a **forward migration shipped in the artefact's own HTML** (read the old key, transform,
+> write the new one), which is the only place such a migration *can* live; publishing a
+> separate **new artefact** keeps the old one intact for existing users.
+
+### Snapshot read (S30)
+
+An agent on the MCP connector may read a **snapshot** of the data — `get_artefact_data`. This
+adds no authority and no interpretation:
+
+- It returns the **caller's own entry only** (AD2/AD4), the same one `GET …/data/me` returns,
+  and **verbatim** (AD8). There is deliberately **no** server-side summarising and no key/type
+  digest: passing bytes through is transport, but *describing* their structure would be the
+  backend interpreting the blob.
+- It is **one blob, not the population.** `dataAuthorCount` says how many other authors hold
+  data; their entries are never returned, and they may sit on older key versions, be partial,
+  or have been written by HTML two revisions back. Any migration written from a snapshot must
+  therefore tolerate shapes its author never saw.
+- It refuses an over-cap result rather than truncating (a truncated blob is unparseable JSON,
+  which invites acting on a fragment as though it were whole).
+
+### Declared data schema — a payload convention (S30)
+
+An artefact may declare its own data shape in an inert block inside its **HTML**:
+
+```html
+<script type="application/artefactor-schema+json">
+{ "key": "habit-tracker-v2", "version": 2, "description": "…",
+  "example": { "habits": [ { "id": "h1", "name": "Run" } ] } }
+</script>
+```
+
+This is a **payload convention**, not a domain rule. The backend **may forward** the block (the
+snapshot read returns it as parsed JSON, or `null` when it is absent, malformed, or not a JSON
+object — never an error) but **never interprets or enforces it**: a blob is never validated
+against a declared schema, because enforcing a schema would make the backend interpret the blob
+and collapse AD8. An unknown script `type` is ignored by browsers, so the block is inert, and
+because it lives in the trusted HTML it travels with an export automatically (see the export
+read path in `artefact-hosting.md`).
+
+It is best-effort by nature — a *second* representation of a truth that actually lives in the
+JS, with nothing enforcing agreement — so a stale declaration produces a **confident** wrong
+migration, which is worse than inference (inference fails visibly). The authoring rule is
+therefore: schema and code are written in the same breath; a reader trusts the schema for
+orientation and **verifies it against the HTML before any shape-changing write**. The block also
+says nothing about the population, so the "tolerate shapes you never saw" rule above stands
+regardless.
+
+**Two version notions, reconciled.** The schema's `version` and AD9's `authoredAgainstVersion`
+answer different questions and must not be conflated:
+
+| | Says | Set by |
+|--|------|--------|
+| `authoredAgainstVersion` (AD9) | this blob was written against payload hash X | the **backend**, on every write |
+| schema `version` | this HTML expects shape v2 | the **authoring agent**, by hand |
+
+They are complementary: the pin is *mechanical* and per-entry (is this user's data stale?), the
+declared version is *semantic* and per-payload (what shape does this HTML expect?). Keep both.
 
 ## Artefact runtime contract
 
@@ -159,6 +215,9 @@ read-only (AD5).
 - **Cross-user viewing is a host feature**, not an artefact capability: a host user-picker
   loads another author's data **read-only** by re-seeding the artefact. The artefact never
   knows whose data it holds.
+- **A snapshot may be read, never interpreted (S30).** The connector can return the caller's
+  own blob verbatim and forward the artefact's declared schema block, but the backend neither
+  summarises the blob nor validates it against that schema — AD8 is unchanged.
 
 ## Amendment (post-v0.2) — payload version pin
 
@@ -185,7 +244,16 @@ host can detect the mismatch.
 **Use.**
 - **OSS:** even with a single mutable payload, the host can tell whether a viewer's saved data
   **predates the current payload** (pin ≠ current hash) — a sharper form of the `dataAuthorCount`
-  breaking-change signal already exposed to the MCP connector.
+  breaking-change signal already exposed to the MCP connector. **S30 reserves this field
+  without depending on it**: the snapshot read already returns the pair
+  (`currentPayloadVersion`, `authoredAgainstVersion`), with the pin `null` until this slice
+  lands. That is sound precisely because AD9 is advisory and gates nothing — when S19 ships,
+  the pin populates with no change to the tool's shape and no rewrite of the doctrine written
+  against it (`null` ⇒ unknown, treat as possibly stale; ≠ current ⇒ written against older
+  HTML, migration owed; = current ⇒ matches what is deployed).
+
+  Do not conflate this pin with the **declared schema's** `version` (see "Declared data schema"
+  above): this one is mechanical and backend-set, that one semantic and author-set.
 - **Superset (history / rollback):** before serving an old or rolled-back version, compare the
   seeded entry's pin to the target version to decide whether the data is compatible (seed it, or
   warn / seed cautiously). This is the **pin-for-compatibility** decision — there is deliberately

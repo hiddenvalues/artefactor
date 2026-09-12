@@ -21,17 +21,23 @@ import type { DataRepository } from "../../domain/data/data-repository";
 // artefact that has no slug). Access follows the Artefact access matrix: an
 // archived artefact, or one the caller cannot view, surfaces as not-found
 // (AD4, AD6, AH7/8).
-// The repos a data request needs to resolve + access-check an artefact. Shared
-// by the own-data (S11) and author-data (S12) commands.
-export interface DataAccessDeps {
+// What `resolveViewableArtefact` needs: the artefact itself plus the collection
+// tree its effective tier comes from. Narrower than a data request's deps so the
+// S30 export path can inherit the same resolve without carrying a data repo.
+export interface ArtefactResolveDeps {
   artefactRepo: ArtefactRepository;
   // AH20 — access is decided on the *effective* tier, so resolving an artefact
   // in a collection needs its tree root.
   collectionRepo: CollectionRepository;
-  dataRepo: DataRepository;
   // S22 (AH18) — the slug resolve below is tenant-global (AH6), so the per-tier
   // tenant decision is the policy's. Default = the OSS matrix.
   accessPolicy?: AccessPolicy;
+}
+
+// The repos a data request needs to resolve + access-check an artefact. Shared
+// by the own-data (S11) and author-data (S12) commands.
+export interface DataAccessDeps extends ArtefactResolveDeps {
+  dataRepo: DataRepository;
 }
 
 export interface OwnDataDeps extends DataAccessDeps {
@@ -44,7 +50,7 @@ export interface OwnDataDeps extends DataAccessDeps {
 // not-viewable all → not-found. (Slugs are base64url tokens and ids are uuids,
 // so the slug→id fallback cannot mis-resolve across the two.)
 export async function resolveViewableArtefact(
-  deps: DataAccessDeps,
+  deps: ArtefactResolveDeps,
   ref: string,
   viewerId: string | null,
   scope: TenantScope,

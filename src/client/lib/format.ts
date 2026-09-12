@@ -89,6 +89,12 @@ export const FOLDER_ICON = [
 export const BOOKMARK_ICON = ["M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"];
 // Sidebar "Home" row + the picker's "Top level" option.
 export const HOME_ICON = ["M3 10.5 12 3l9 7.5", "M5 9.5V21h14V9.5"];
+// S30 — "Download HTML" (tray with a down arrow).
+export const DOWNLOAD_ICON = [
+  "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4",
+  "M7 10l5 5 5-5",
+  "M12 15V3",
+];
 // The archive box (menu items + the sidebar Archive entry). TOAST_ICONS.archive
 // is the 2-path toast variant of the same glyph.
 export const ARCHIVE_ICON = [

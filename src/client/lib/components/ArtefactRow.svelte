@@ -156,5 +156,6 @@
     {onBookmark}
     inCollection={inherited}
     {onMoveToCollection}
+    downloadHref="/api/artefacts/{a.id}/download"
   />
 </div>
