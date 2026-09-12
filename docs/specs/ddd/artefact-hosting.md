@@ -63,7 +63,8 @@ Aggregate root. The consistency boundary for one hosted artefact.
     invariants as **manual upload**; there is no privileged path that bypasses them.
 11. **Delete is archived-only**: an artefact may be permanently deleted only while
     `archived`, only by its owner; deletion also removes its payload file, all its data
-    entries, and all its view entries (Artefact Views, `artefact-views.md` VT5).
+    entries, all its view entries (Artefact Views, `artefact-views.md` VT5), and all its
+    comment threads (`artefact-feedback.md` FB6).
 12. **Selected ⟹ slug**: `selected` is a shared tier — it mints a slug on the first share
     and retains it exactly like `authenticated`/`public` (subsumed by AH4/AH5). The slug
     link is live only for the owner and members; a signed-in non-member gets a flat 404, and
@@ -328,3 +329,53 @@ cap from plan entitlements (10 MB default, 100 MB with *Large Artefacts*).
 **AH19 — size cap is policy-decided, 100 MB in OSS.** The HtmlPayload invariant (AH2: non-empty,
 ≤ cap) holds; only the *cap value* is supplied by the policy. The OSS policy returns the constant
 100 MB, so OSS is byte-identical.
+
+## Amendment (post-v0.2) — link gate: password + expiry
+
+> **Status:** DDD amendment (FDD slice **S32**). Adds an owner-set **link gate** that narrows
+> access *after* the access matrix grants it. Never widens access.
+
+**Problem.** Once shared, an artefact is reachable for as long as its tier grants it, by anyone
+the tier admits. Owners need the two controls every competing host offers: a **password** on
+the link and an **expiry** after which the link stops working — without inventing a fifth tier.
+
+**Value object.** `Artefact` (and `Collection`, consulted on roots only — CL4) gains:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `linkGate.passwordHash` | string \| null | scrypt hash of the owner-set password; never returned by any read. `null` = no password. |
+| `linkGate.expiresAt` | timestamp \| null | After this instant non-owners are denied. `null` = never expires. |
+| `linkGate.version` | integer | Bumped whenever the password is set, changed or cleared. Invalidates every outstanding pass. |
+
+A pure `evaluateLinkGate(gate, now, pass)` returns `open` | `expired` | `challenge`.
+
+**AH22 — the gate narrows, after the matrix, for non-owners only.** The gate is consulted only
+when the access matrix (AH8, under the effective access of AH20 and the `AccessPolicy` of AH18)
+has already **granted** view to a **non-owner**. The owner is never gated. It applies to
+**every** non-owner read of the artefact regardless of how it is addressed (slug or id alias):
+the host shell and frame, the data reads (AD4) and writes, the HTML download (S30), the viewer
+list (VT4), and comment threads (`artefact-feedback.md`). A gate on an artefact whose effective
+access comes from a collection is **dormant** — the **tree root's** gate applies instead,
+exactly as the root's `(visibility, sharedWith)` does (AH20/CL4).
+
+**AH23 — expiry is evaluated at read time and never mutates state.** An expired gate makes the
+artefact behave **exactly as `private`** for non-owners (unauthenticated → sign-in redirect,
+signed-in → 404; archived and unknown slugs are indistinguishable). Nothing is unshared: the
+tier, `sharedWith` and the slug (AH5) are retained, so clearing or extending `expiresAt`
+restores access at the **same URL**. A newly set `expiresAt` must lie in the future. An expired
+root hides its whole tree from non-owners (it drops out of "Shared with you").
+
+**AH24 — AH8 holds under the gate.** Because the gate is evaluated only after a grant (AH22),
+the password challenge is shown only to a viewer the matrix already admits — for an
+unauthenticated visitor that means only a `public` artefact. No probe the matrix denies can
+distinguish a gated artefact from a missing one.
+
+**Passes.** A correct password yields a **pass**: an HMAC-signed, httpOnly cookie scoped to the
+gate's holder (the artefact, or the collection root) carrying `linkGate.version`, valid for at
+most 7 days and never beyond `expiresAt`. A pass with a stale `version` is void — changing or
+clearing the password revokes every link already sent. Unlock attempts are rate-limited per
+holder and client.
+
+**Authority & guards.** Only the owner sets or clears a gate (AH9); not while archived (AH7);
+only on a top-level artefact or a collection root (a contained artefact's gate is dormant and
+cannot be edited, like its tier). Password length ≥ 8. Setting a gate does not change the tier.

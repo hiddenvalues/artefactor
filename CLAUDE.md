@@ -28,7 +28,10 @@ too (AH7, no carve-out) — plus the MCP read-back tools `get_artefact_html` /
 `get_artefact_data` and the **migrate-forward** doctrine + **declared data schema** convention
 (`<script type="application/artefactor-schema+json">`) in the skill. New work
 either implements a pending enabler seam or adds a new slice (with its governing DDD invariant)
-before coding, per the spec-driven process below.
+before coding, per the spec-driven process below. **S32–S34** (from the market analysis) are
+**specced but not yet implemented**: link password + expiry (AH22–AH24), the share-invitation
+seam (S33; invitations themselves are a superset feature), and comments with an MCP feedback loop
+(new context `docs/specs/ddd/artefact-feedback.md`); S31 stays reserved for the data-write tool.
 
 **The whole Artefact Hosting context plus the Artefact Data store *and its localStorage
 runtime + host data-context switcher* are complete** — S0, S1, S2, S3, S4, S5, S6, S7, S10,
@@ -118,7 +121,7 @@ The domain and build plan live in `docs/specs/` and are the **source of truth**:
 - `docs/specs/ddd/` — domain model: ubiquitous language, the **Identity & Access**,
   **Artefact Hosting**, and **Artefact Data** bounded contexts, with aggregates and
   invariants.
-- `docs/specs/fdd/slice-dag.md` — the feature slice DAG (S0–S30; S8/S9/S17 dropped) and per-slice acceptance
+- `docs/specs/fdd/slice-dag.md` — the feature slice DAG (S0–S34; S8/S9/S17 dropped; S31 reserved) and per-slice acceptance
   criteria (the seeds for TDD tests) with build order. `s0-scaffold.md` has the full S0 spec.
 
 `skills/artefactor/SKILL.md` is an Agent Skill for the **authoring + publishing** side

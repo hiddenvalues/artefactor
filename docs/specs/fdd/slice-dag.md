@@ -34,6 +34,13 @@ S1 Identity (BetterAuth — email+password for dev; Google OAuth added later)
                                                 ┊ (optional sharpener, NOT a dependency)
                                                 ┄┄┄ S19 data version pin (AD9)
 
+Market-analysis slices (post-S30; S31 is reserved for the data-write tool):
+
+S6 + S11/S12 + S21 + S25 + S30 ──► S32 Link controls (password + expiry; AH22–AH24)
+S1 + S16 + S25 ──────────────────► S33 Share-invitation seam (enabler; EE implements)
+S12 + S18 + S21 + S25 + S32 ─────► S34 Comments + agent feedback loop (FB1–FB7)
+                                        └──► S34b Anchored comments (needs S19)
+
 ~~S8 Issue / revoke API key~~ and ~~S9 API push ingestion~~ are **dropped** — the pinned
 better-auth has no api-key plugin and a raw token API was deemed unnecessary; programmatic
 access is the MCP connector (S18), authenticated by OAuth, not API keys.
@@ -860,6 +867,127 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
   view-source anyway).
 - **Boundary:** **OSS**. No schema change.
 
+### S32 — Link controls: password + expiry
+Deps: **S6, S11/S12, S21, S25, S30.** (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24.)
+An owner-set **link gate** that narrows access after the matrix grants it — the password and
+expiry every competing host offers, without a fifth tier. (Rationale: market analysis gap #4.)
+- **Domain** — `LinkGate` value object `{ passwordHash, expiresAt, version }` on `Artefact` and
+  `Collection` (roots only). Pure `evaluateLinkGate(gate, now, pass) → open | expired |
+  challenge`; pure `effectiveLinkGate(artefact, root)` (the root's gate when contained, AH20).
+  `setLinkGate` / `clearLinkGate` on both aggregates: owner-only (AH9), not archived (AH7),
+  top-level or root only, password ≥ 8, `expiresAt` in the future; a password change bumps
+  `version`. *(AH22, AH23)*
+- **Access composition** — one `authorizeArtefactRead(artefact, viewer, pass, now)` =
+  effective matrix (AH20/AH18) **then**, for non-owners only, the effective gate. Every non-owner
+  read uses it, **whichever ref form** is used: `/a/:slug` shell + `/frame`, `…/data/*` reads and
+  writes, `…/download`, `…/viewers`, and (S34) threads. `expired` maps to the private outcome
+  (sign-in redirect / 404); `challenge` renders the unlock page (shell) or `403 {gate:
+  "password"}` (API). The id alias must not bypass the gate. *(AH22–AH24)*
+- **Passes** — `POST /a/:slug/unlock` verifies the password (scrypt, constant-time) and sets an
+  httpOnly, SameSite=Lax, HMAC-signed (`BETTER_AUTH_SECRET`) cookie scoped to the gate holder id,
+  carrying `version`, TTL `min(7 d, expiresAt)`. Stale `version` → void. Rate limit: 10 attempts
+  per holder + client IP per 15 min.
+- **Persistence** — migration adds `link_password_hash`, `link_expires_at`,
+  `link_gate_version` (default 0) to `artefact` and `collection`. The hash is never mapped into
+  any summary or MCP result.
+- **BFF** — `PUT|DELETE /api/artefacts/:id/link-gate`, `PUT|DELETE /api/collections/:id/link-gate`
+  (owner). Summaries expose `linkGate: { passwordProtected, expiresAt }` to the owner only.
+- **Client** — `ManageAccessModal` gains a "Link protection" section (password set/change/clear,
+  expiry picker with presets 1 d / 7 d / 30 d / custom); contained artefacts show it as
+  "Inherited from <root>". Owner cards show lock / clock badges. An unlock page in the shell for
+  challenged viewers; an "expired" owner banner in the preview.
+- **Acceptance:** owner is never challenged or expired; a non-owner on a password-gated `public`
+  link is challenged, a wrong password is rejected, a right one opens shell + frame + data reads
+  for that holder only; the same artefact via its **id alias** is gated identically; changing the
+  password voids an existing pass; past `expiresAt` a signed-in non-owner gets 404 and an
+  anonymous one the sign-in redirect, with tier, `sharedWith` and slug unchanged, and extending
+  the expiry restores the same URL; a `selected` artefact's non-member is denied by the matrix
+  **before** any challenge (AH24 — no leak); a contained artefact follows its root's gate and its
+  own is dormant; setting a past expiry, a short password, or a gate while archived is rejected;
+  unlock is rate-limited; `download` and `…/viewers` honour the gate.
+- **Out of scope:** per-recipient passwords, view-count limits, MCP tools to set a gate (a
+  password typed into an agent transcript is the wrong habit).
+- **Boundary:** **OSS**.
+
+### S33 — Share-invitation seam *(enabler; behaviour-preserving)*
+Deps: **S1, S16, S25.** The core hook a superset uses to let an owner share with an **email that
+has no Account yet** (market analysis gap #1). **OSS does not invite anyone:** it has no
+transactional email, and its sign-up allowlist (IA4) stays the only way in. The invitation
+aggregate, magic-link sign-in, mail delivery and cross-org grants are the EE **Share
+invitations** context (`ee/docs/specs/ddd/share-invitations.md`) — in cloud, where sign-up is
+open (IA5), an invited person becomes an ordinary Account. No DDD invariant changes: an accepted
+invitation is an ordinary AH14 grant.
+- **Capabilities** — public `GET /api/config` gains `capabilities: { shareInvitations: boolean,
+  magicLinkSignIn: boolean }`, supplied by an injected `Capabilities` value through
+  `createApp` (the S22/S24 pattern). **OSS default: both `false`.**
+- **Endpoint contract (not mounted in OSS)** — the client targets, and a superset mounts:
+  `POST|GET /api/artefacts/:id/invitations`, `POST|GET /api/collections/:id/invitations` (owner;
+  body `{ email }` → `{ status: "granted" | "pending", invitation? }`; `GET` lists pending
+  `{ id, email, createdAt, expiresAt }`), and `DELETE /api/invitations/:id`. `granted` means the
+  email already had an Account and was added to `sharedWith` directly.
+- **Client** — when `shareInvitations` is on, `ManageAccessModal`'s people picker offers "Invite
+  <email>" for a well-formed email with no directory match and shows pending invitations as chips
+  (resend = re-POST, revoke = DELETE) beside the access list; a `private` target prompts to share
+  as `selected` first. When `magicLinkSignIn` is on, the sign-in page offers "Email me a sign-in
+  link" (BetterAuth's standard `POST /api/auth/sign-in/magic-link`). With both off, the UI renders
+  exactly as today.
+- **Acceptance:** under the OSS defaults `/api/config` reports both capabilities `false`, the
+  modal and sign-in page render unchanged, and no invitation route exists (404); with stub
+  capabilities on and stub endpoints, typing an unknown email shows "Invite", inviting renders a
+  pending chip, `granted` refreshes the access list instead, revoke removes the chip, and the
+  sign-in page shows the magic-link option.
+- **Boundary:** **OSS** (the capabilities flag, client affordances and endpoint contract). The
+  invitation domain, persistence, mail and sign-in are **EE** (Share invitations, EI1–EI3).
+
+### S34 — Comments + agent feedback loop (MCP)
+Deps: **S12, S18, S21, S25, S32** (gate composition). (New DDD bounded context: `ddd/artefact-feedback.md`, FB1–FB7; amends
+`ddd/artefact-hosting.md` AH11.) Threaded comments in the host chrome, read and answered by the
+owner's agent through the connector. (Market analysis gap #3 — the most differentiating slice.)
+- **Domain** — `CommentThread` aggregate with `Comment` entities; pure `startThread`, `reply`,
+  `editComment`, `deleteComment` (removes an emptied thread), `resolve` / `reopen`, each
+  enforcing FB4 authority. `CommentBody` value object (FB, ≤ 10 000 chars). `anchor` field
+  present and forced `null` (FB7). `ThreadRepository` port (`save`, `findById`,
+  `listByArtefact(status)`, `countOpenByArtefacts`, `deleteByArtefact`).
+- **Commands** — every command resolves the artefact by ref under `authorizeArtefactRead` (S32)
+  for FB3, and checks `archived` for FB5. Permanent delete (S15) and the CL8 cascade call
+  `deleteByArtefact` (FB6).
+- **Persistence** — `comment_thread` (`id`, `artefact_id` FK cascade, `tenant_id`, `anchor`
+  JSON null, `status`, `created_by`, `created_at`, `resolved_by`, `resolved_at`) and `comment`
+  (`id`, `thread_id` FK cascade, `author_id` FK, `body`, `via_connector`, `created_at`,
+  `edited_at`). Drizzle + in-memory repos.
+- **BFF** — the endpoints in `artefact-feedback.md`. Owner summaries gain `openThreadCount`
+  (batched via `countOpenByArtefacts`).
+- **MCP** — `list_feedback`, `reply_to_feedback`, `resolve_feedback` (owner-only, `viaConnector
+  = true`); `get_artefact` returns `openThreadCount`. Update the connector `instructions`,
+  `authoring-guide.ts` and `skills/artefactor/SKILL.md` with the **list → update → reply →
+  resolve** loop in the same change.
+- **Shell (S12 chrome)** — a comments widget (speech-bubble + open count) in `.ae-tools` beside
+  the viewer list, opening a side drawer: open / resolved tabs, new-thread box, replies, edit /
+  delete / resolve per FB4, "via Claude" label on connector comments. Bodies rendered as text
+  nodes only.
+- **Client (SPA)** — owner dashboard cards show an open-thread badge.
+- **Acceptance:** a signed-in viewer starts a thread and replies; a non-viewer gets 404 and an
+  anonymous viewer of a `public` artefact sees no threads and cannot post (FB2/FB3); a
+  password-gated artefact's threads need a pass (AH22); an author
+  edits their own comment, the owner can delete but not edit it, a stranger can do neither;
+  deleting a thread's last comment removes the thread; the owner or thread creator
+  resolves/reopens, others cannot; archived → 404 for everyone, threads back on restore;
+  permanent delete (and a collection delete cascade) removes threads; a body of `<img src=x
+  onerror=alert(1)>` renders as literal text in the shell; an empty or 10 001-char body is
+  rejected; a non-null anchor is rejected (FB7); `list_feedback` returns only open threads by
+  default, is not-found for a non-owner token, and `reply_to_feedback` produces a comment with
+  `viaConnector = true` attributed to the token's Account; `openThreadCount` matches.
+- **Out of scope:** notifications and mentions (EE — OSS has no transactional email), markdown,
+  anchoring (**S34b**).
+- **Boundary:** **OSS**.
+
+#### S34b — Anchored comments *(follow-on; not yet specced in detail)*
+Deps: **S34, S19** (payload version). Attach a thread to a text quote in the payload
+(`Anchor` = TextQuoteSelector + `payloadVersion`, reserved in FB7) via an annotation layer
+injected alongside the S13 runtime; threads whose `payloadVersion` ≠ the current payload hash
+show as "on an earlier version" instead of mis-anchoring. Governing invariants to be written
+before the slice starts.
+
 ## Build order
 
 Topological: **S0 → S1 → S2 → {S3, S4, S5, S7, S10, S11}**, **S5 → {S6, S14, S16}**,
@@ -882,4 +1010,11 @@ hosting core + sharing (**S2/S5/S6/S10/S16**); **S26** (collection lifecycle) on
 (context `ddd/artefact-collections.md`). **S30** (export HTML) depends on the hosting read
 path + the data store + the connector (**S2/S4/S6/S11/S18**); **S19** is an *optional
 sharpener* of S30's staleness signal, **not** a dependency edge (see the slice's
-reserve-don't-depend note).
+reserve-don't-depend note). **S32** (link controls) depends on every non-owner read path it
+gates (**S6/S11/S12/S21/S30**) and on **S25** (the root's gate governs contained artefacts).
+**S33** (share-invitation seam) depends on `/api/config` (**S1**) and the access-list modal for
+artefacts and collection roots (**S16/S25**); it is behaviour-preserving and the sole core
+dependency of the EE **Share invitations** context. **S34** (comments) depends on the shell
+(**S12**), the connector (**S18**), the S21 chrome pattern, **S25** (effective access) and **S32**
+(its composed read authorization). **S34b** (anchors) needs **S34 + S19**. S32, S33 and S34's
+prerequisites are independent, so S32 and S33 can proceed in parallel. All are OSS.
