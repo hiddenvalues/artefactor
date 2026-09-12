@@ -30,9 +30,13 @@ S1 Identity (BetterAuth — email+password for dev; Google OAuth added later)
                                      │
                                      └──► S30 Export artefact HTML (GUI download + MCP read-back
                                                 tools — needs S2, S4, S6, S11, S18)
-                                                ┊
-                                                ┊ (optional sharpener, NOT a dependency)
-                                                ┄┄┄ S19 data version pin (AD9)
+                                                │  ┊
+                                                │  ┊ (optional sharpener, NOT a dependency)
+                                                │  ┄┄┄ S19 data version pin (AD9)
+                                                │
+                                                └──► S31 Agent edits data: set_artefact_data
+                                                           (needs S11, S18, S30; S19 likewise
+                                                           an optional sharpener only)
 
 ~~S8 Issue / revoke API key~~ and ~~S9 API push ingestion~~ are **dropped** — the pinned
 better-auth has no api-key plugin and a raw token API was deemed unnecessary; programmatic
@@ -860,6 +864,52 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
   view-source anyway).
 - **Boundary:** **OSS**. No schema change.
 
+### S31 — Agent edits data: `set_artefact_data` MCP tool
+Deps: **S11, S18, S30.** (AD1/AD2/AD3/AD6/AD8; AH7.) A user's saved data could only change by
+opening the artefact and editing by hand. With the S30 snapshot read, an agent can close the
+loop: read the whole blob, transform it in the session ("add these six rows", "reset last
+quarter"), write the whole blob back.
+
+- **Not S17.** The dropped merge-patch put the merge in the backend (parsing the blob, breaking
+  AD8). S31 transforms **agent-side** and writes through the existing `putOwnDataEntry`, which
+  parses only to enforce AD8 — the server still never interprets the blob. See "Connector write
+  (S31)" in `ddd/artefact-data.md`.
+- **Domain / command** — `DataConflict` (new `DataError`). `putOwnDataEntry` gains an optional
+  `{ ifUnmodifiedSince?: Date | null }`: a timestamp refuses the write if the stored entry's
+  `updatedAt` is newer; `null` ("I read no entry") refuses if an entry now exists; absent writes
+  unconditionally. `PUT …/data/me` never passes it — byte-identical.
+- **MCP** — `set_artefact_data { id, blob, if_unmodified_since? }` → `{ id, bytes, updatedAt }`.
+  **Whole-blob replacement only**, stated outright in the description (a model assuming merge
+  semantics would silently delete every key it didn't send). Owner-scoped via
+  `loadOwnActiveArtefact`, matching the S30 reads. `InvalidBlob` → error carrying the JSON
+  parser's message; `BlobTooLarge` → error naming the actual size against the 5 MB cap;
+  `DataConflict` → error directing a re-read via `get_artefact_data`. All leave the entry
+  untouched.
+- **Doctrine** — `skills/artefactor/SKILL.md` + `PERSISTENCE_CONTRACT_SUMMARY`: read before
+  write, always, pinned with the read's `updatedAt`; use the declared schema (its `example` is
+  what makes a write into an empty blob possible) but verify an inferred shape against
+  `get_artefact_html`; check the version pin (`≠ current` or `null` ⇒ transform to the live
+  shape, don't write back as found); keep the pre-write blob to revert; say what will change
+  before writing.
+- **Acceptance:** round-trip get → transform → set → re-read returns the blob verbatim with
+  `updatedAt` bumped and `createdAt` + entry id preserved; first write creates, second updates
+  (never two entries); another author's entry untouched; invalid JSON → error naming the parse
+  failure; over 5 MB → error naming the actual size; stale pin (timestamp or `null`) →
+  conflict, nothing written, message directs a re-read; no pin → unconditional write, existing
+  data tests green; non-owner (even on a shared artefact) / unknown / archived / out-of-scope →
+  not found; a tool-written blob — including one built from the declared schema's `example`
+  into an empty entry — is what the served artefact's localStorage shim seeds.
+- **On S19/AD9 — sharpener, not dependency** (as S30). The write path stamps the pin for free
+  once S19 exists, because it is the same `putOwnDataEntry`; S19's own tests assert it. The
+  doctrine holds either way.
+- **Open question, decided: owner-scoped v1.** `putOwnDataEntry` already permits writing your
+  own blob on any viewable artefact, but a write reaching further than the owner-scoped read
+  would break read-modify-write exactly where the reach was wanted. Widening read + write
+  together (addressed by slug or id) is one deliberate follow-up.
+- **Out of scope:** a delete tool (write `{}`); merge-patch (S17 stays dropped); writing another
+  author's blob (a domain no, not a follow-up); any GUI equivalent.
+- **Boundary:** **OSS**. No schema change.
+
 ## Build order
 
 Topological: **S0 → S1 → S2 → {S3, S4, S5, S7, S10, S11}**, **S5 → {S6, S14, S16}**,
@@ -882,4 +932,5 @@ hosting core + sharing (**S2/S5/S6/S10/S16**); **S26** (collection lifecycle) on
 (context `ddd/artefact-collections.md`). **S30** (export HTML) depends on the hosting read
 path + the data store + the connector (**S2/S4/S6/S11/S18**); **S19** is an *optional
 sharpener* of S30's staleness signal, **not** a dependency edge (see the slice's
-reserve-don't-depend note).
+reserve-don't-depend note). **S31** (agent data write) depends on **S11/S18/S30**, with S19
+again an optional sharpener only.

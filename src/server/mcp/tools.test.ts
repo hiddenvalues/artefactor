@@ -5,9 +5,10 @@ import { buildMcpServer, type McpToolDeps } from "./server";
 import { MAX_MCP_BLOB_BYTES, MAX_MCP_HTML_BYTES } from "./tools";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
-import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
+import { SINGLETON_SCOPE, type TenantScope } from "../../domain/artefact/tenant-scope";
 import { InMemoryDataRepository } from "../../domain/data/in-memory-data-repository";
-import { upsertDataEntry } from "../../domain/data/data-entry";
+import { MAX_BLOB_BYTES, upsertDataEntry } from "../../domain/data/data-entry";
+import { renderServedArtefact } from "../runtime/render";
 import type { PayloadStore, StoredPayload } from "../../domain/artefact/ports";
 
 // S18 — the MCP tool surface, exercised through a real in-memory MCP
@@ -51,8 +52,11 @@ describe("MCP artefact tools (S18)", () => {
   });
 
   // A connected MCP client acting as `userId` against the shared deps.
-  async function clientFor(userId: string): Promise<Client> {
-    const server = buildMcpServer(userId, deps, SINGLETON_SCOPE);
+  async function clientFor(
+    userId: string,
+    scope: TenantScope = SINGLETON_SCOPE,
+  ): Promise<Client> {
+    const server = buildMcpServer(userId, deps, scope);
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     await server.connect(serverT);
     const client = new Client({ name: "test", version: "1.0.0" });
@@ -83,6 +87,7 @@ describe("MCP artefact tools (S18)", () => {
         "get_authoring_guide",
         "list_artefacts",
         "restore_artefact",
+        "set_artefact_data",
         "set_visibility",
         "update_artefact",
       ].sort(),
@@ -95,6 +100,9 @@ describe("MCP artefact tools (S18)", () => {
     expect(instructions).toBeTruthy();
     expect(instructions).toMatch(/localStorage/);
     expect(instructions).toMatch(/get_authoring_guide/);
+    // S31 — the write doctrine is ambient too, not only in the full guide.
+    expect(instructions).toMatch(/set_artefact_data/);
+    expect(instructions).toMatch(/if_unmodified_since/);
   });
 
   it("get_authoring_guide returns the full skill body", async () => {
@@ -435,5 +443,214 @@ describe("MCP artefact tools (S18)", () => {
     await call(u1, "archive_artefact", { id: a.id });
     expect((await call(u1, "get_artefact_html", { id: a.id })).isError).toBe(true);
     expect((await call(u1, "get_artefact_data", { id: a.id })).isError).toBe(true);
+  });
+
+  // S31 — the agent writes the caller's own blob: whole-blob replacement through
+  // the same `putOwnDataEntry` the BFF uses, optionally pinned against the
+  // `updatedAt` it read.
+  describe("set_artefact_data (S31)", () => {
+    const PAST = new Date("2026-01-01T00:00:00.000Z");
+
+    async function mine(client: Client, html = "<i>t</i>") {
+      return json(
+        await call(client, "create_artefact", { title: "Tracker", kind: "form", html }),
+      );
+    }
+
+    it("states whole-blob replacement outright in its description", async () => {
+      const client = await clientFor("u1");
+      const tool = (await client.listTools()).tools.find(
+        (t) => t.name === "set_artefact_data",
+      );
+      expect(tool?.description).toMatch(/whole|entire|full/i);
+      expect(tool?.description).toMatch(/not a (patch|merge)|no merge|not merged/i);
+    });
+
+    it("round-trips: get → set → re-read returns the new blob verbatim, preserving identity (AD1)", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      await deps.dataRepo.save(
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"k":"old"}', now: PAST }),
+      );
+
+      const read = json(await call(client, "get_artefact_data", { id: a.id }));
+      // Deliberately odd spacing — the blob must come back byte-for-byte.
+      const next = '{ "k" : "new",  "n":[1,2] }';
+      const r = await call(client, "set_artefact_data", {
+        id: a.id,
+        blob: next,
+        if_unmodified_since: read.updatedAt,
+      });
+      expect(r.isError).toBeFalsy();
+      const saved = json(r);
+      expect(saved.id).toBe(a.id);
+      expect(saved.bytes).toBe(new TextEncoder().encode(next).byteLength);
+      expect(new Date(saved.updatedAt).getTime()).toBeGreaterThan(PAST.getTime());
+
+      const again = json(await call(client, "get_artefact_data", { id: a.id }));
+      expect(again.blob).toBe(next);
+      expect(again.updatedAt).toBe(saved.updatedAt);
+      const entry = await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1");
+      expect(entry?.id).toBe("d1");
+      expect(entry?.createdAt).toEqual(PAST);
+    });
+
+    it("creates the entry on first write and updates it in place on the second — never two", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      await call(client, "set_artefact_data", { id: a.id, blob: '{"v":1}' });
+      const first = await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1");
+      await call(client, "set_artefact_data", { id: a.id, blob: '{"v":2}' });
+      const second = await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1");
+
+      expect(first?.blob).toBe('{"v":1}');
+      expect(second?.blob).toBe('{"v":2}');
+      expect(second?.id).toBe(first?.id);
+      expect(await deps.dataRepo.listAuthorsByArtefact(a.id)).toHaveLength(1);
+    });
+
+    it("writes only the caller's own entry — another author's is untouched (AD2)", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      await deps.dataRepo.save(
+        upsertDataEntry({ id: "d2", artefactId: a.id, authorId: "u2", blob: '{"theirs":1}', now: PAST }),
+      );
+      await call(client, "set_artefact_data", { id: a.id, blob: '{"mine":1}' });
+
+      const theirs = await deps.dataRepo.findByArtefactAndAuthor(a.id, "u2");
+      expect(theirs?.blob).toBe('{"theirs":1}');
+      expect(theirs?.updatedAt).toEqual(PAST);
+      expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"mine":1}');
+    });
+
+    it("rejects invalid JSON with an error naming the parse failure, writing nothing (AD8)", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      const r = await call(client, "set_artefact_data", { id: a.id, blob: '{"a":' });
+      expect(r.isError).toBe(true);
+      let parseMessage = "";
+      try {
+        JSON.parse('{"a":');
+      } catch (e) {
+        parseMessage = (e as Error).message;
+      }
+      expect(r.content[0]!.text).toContain(parseMessage);
+      expect(await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1")).toBeNull();
+    });
+
+    it("rejects an over-cap blob with an error naming the actual size against the 5 MB cap (AD8)", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      const blob = JSON.stringify({ big: "a".repeat(MAX_BLOB_BYTES) });
+      const r = await call(client, "set_artefact_data", { id: a.id, blob });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toContain(String(new TextEncoder().encode(blob).byteLength));
+      expect(r.content[0]!.text).toContain(String(MAX_BLOB_BYTES));
+      expect(await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1")).toBeNull();
+    });
+
+    it("a stale if_unmodified_since → conflict error directing a re-read, nothing written", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      await deps.dataRepo.save(
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"read"}', now: PAST }),
+      );
+      const read = json(await call(client, "get_artefact_data", { id: a.id }));
+      // The user's open tab saves between the agent's read and its write.
+      const tabAt = new Date("2026-02-01T00:00:00.000Z");
+      const existing = (await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))!;
+      await deps.dataRepo.save(
+        upsertDataEntry({ ...existing, blob: '{"v":"tab"}', existing, now: tabAt }),
+      );
+
+      const r = await call(client, "set_artefact_data", {
+        id: a.id,
+        blob: '{"v":"agent"}',
+        if_unmodified_since: read.updatedAt,
+      });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toMatch(/get_artefact_data/);
+      expect(r.content[0]!.text).toMatch(/re-?read/i);
+      expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"v":"tab"}');
+    });
+
+    it("a null if_unmodified_since (the empty read) conflicts once the user has saved", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      const read = json(await call(client, "get_artefact_data", { id: a.id }));
+      expect(read.updatedAt).toBeNull();
+      await deps.dataRepo.save(
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"tab"}' }),
+      );
+
+      const r = await call(client, "set_artefact_data", {
+        id: a.id,
+        blob: '{"v":"agent"}',
+        if_unmodified_since: read.updatedAt,
+      });
+      expect(r.isError).toBe(true);
+      expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"v":"tab"}');
+    });
+
+    it("without if_unmodified_since, writes unconditionally", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(client);
+      await deps.dataRepo.save(
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"tab"}' }),
+      );
+      const r = await call(client, "set_artefact_data", { id: a.id, blob: '{"v":"agent"}' });
+      expect(r.isError).toBeFalsy();
+      expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"v":"agent"}');
+    });
+
+    it("is owner-scoped: another user's (even when shared), unknown, archived, and out-of-scope → not found (AD6, AH7)", async () => {
+      const u1 = await clientFor("u1");
+      const a = await mine(u1);
+      await call(u1, "set_visibility", { id: a.id, visibility: "authenticated" });
+      const u2 = await clientFor("u2");
+      const other = { tenantId: "another-tenant" };
+      const u1Elsewhere = await clientFor("u1", other);
+
+      for (const [client, id] of [
+        [u2, a.id],
+        [u1, "nope"],
+        [u1Elsewhere, a.id],
+      ] as const) {
+        const r = await call(client, "set_artefact_data", { id, blob: "{}" });
+        expect(r.isError).toBe(true);
+        // The same ArtefactNotFound for every case — existence does not leak.
+        expect(r.content[0]!.text).toBe(id);
+      }
+
+      await call(u1, "archive_artefact", { id: a.id });
+      expect((await call(u1, "set_artefact_data", { id: a.id, blob: "{}" })).isError).toBe(true);
+      expect(await deps.dataRepo.listAuthorsByArtefact(a.id)).toHaveLength(0);
+    });
+
+    it("a blob written into an empty entry from the declared schema's example is what the served artefact seeds", async () => {
+      const client = await clientFor("u1");
+      const a = await mine(
+        client,
+        '<script type="application/artefactor-schema+json">' +
+          '{"key":"habit-tracker-v2","version":2,"example":{"habits":[{"id":"h1","name":"Read"}]}}' +
+          "</script><head></head><h1>habits</h1>",
+      );
+      const read = json(await call(client, "get_artefact_data", { id: a.id }));
+      expect(read.blob).toBeNull();
+
+      // localStorage values are strings: the blob maps the declared key to the
+      // JSON-encoded example.
+      const blob = JSON.stringify({ [read.schema.key]: JSON.stringify(read.schema.example) });
+      await call(client, "set_artefact_data", {
+        id: a.id,
+        blob,
+        if_unmodified_since: read.updatedAt,
+      });
+      expect(json(await call(client, "get_artefact_data", { id: a.id })).blob).toBe(blob);
+
+      const artefact = (await deps.repo.findById(a.id, SINGLETON_SCOPE))!;
+      const served = await renderServedArtefact(artefact, a.id, "u1", deps);
+      expect(served).toContain(`"seed":${JSON.stringify(blob).replace(/</g, "\\u003c")}`);
+    });
   });
 });

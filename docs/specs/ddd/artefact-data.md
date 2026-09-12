@@ -139,6 +139,51 @@ answer different questions and must not be conflated:
 They are complementary: the pin is *mechanical* and per-entry (is this user's data stale?), the
 declared version is *semantic* and per-payload (what shape does this HTML expect?). Keep both.
 
+### Connector write (S31)
+
+An agent on the MCP connector may **write** the caller's own blob — `set_artefact_data`. It is
+the same whole-blob upsert as `PUT …/data/me`, through the same `putOwnDataEntry` command, so
+AD1 (one per pair, upsert), AD2 (author = the token's user), AD3 (authenticated) and AD8 (valid
+JSON ≤ 5 MB, parsed only to check) hold unchanged.
+
+**Why this is not the dropped merge-patch.** A merge-patch put the merge *in the backend*: the
+server would have had to parse the blob to fold a fragment into it, breaking AD8. Here the
+transform happens **agent-side** — the agent reads the whole blob (the S30 snapshot read),
+transforms it in its session, and writes the whole blob back. The server still never interprets
+it and the artefact still owns its shape. There is no partial write: a key the agent leaves out
+is gone.
+
+**Hard boundary — own entry only.** The tool can only ever name the caller's own entry. Writing
+another author's entry is forbidden by AD2/AD5; an owner curating other users' saved data is
+**outside this domain**, not a missing permission.
+
+**Owner-scoped (v1).** Like the snapshot read, the tool reaches only artefacts the caller owns
+and that are active (unknown / not owned / archived / out of tenant scope → not found, AD6/AH7),
+even though AD2/AD5 would allow writing one's own entry on any viewable artefact (as `PUT
+…/data/me` does). A write reaching further than its read would break the read-modify-write loop
+for exactly the artefacts the wider reach was for; widening **both** together is one deliberate
+follow-up.
+
+**Optimistic pin — `DataConflict`.** A data write is otherwise a blind overwrite of a single
+mutable blob with no versioning or undo, and a user with the artefact open may be mid-save
+(debounced shim) while the agent writes. `putOwnDataEntry` therefore takes an optional
+`ifUnmodifiedSince`:
+
+| Pin | Stored entry | Result |
+|-----|--------------|--------|
+| absent | any | write unconditionally (the `PUT …/data/me` behaviour, unchanged) |
+| a timestamp | none, or `updatedAt` ≤ pin | write |
+| a timestamp | `updatedAt` > pin | **`DataConflict`** — nothing written |
+| `null` ("I read no entry") | none | write (create) |
+| `null` | exists | **`DataConflict`** — nothing written |
+
+The connector passes the `updatedAt` its snapshot read returned; on conflict the agent re-reads
+and re-applies. The check is best-effort (read-then-save, not a transaction) — it closes the
+realistic human-scale race, not a same-millisecond one. The HTTP route never pins.
+
+**AD9.** Because the tool goes through `putOwnDataEntry`, once S19 lands a connector write
+stamps `authoredAgainstVersion` exactly as a shim write does — no connector-specific path.
+
 ## Artefact runtime contract
 
 **Design principle: the artefact only knows about `localStorage`.** Artefacts are written to
@@ -218,6 +263,10 @@ read-only (AD5).
 - **A snapshot may be read, never interpreted (S30).** The connector can return the caller's
   own blob verbatim and forward the artefact's declared schema block, but the backend neither
   summarises the blob nor validates it against that schema — AD8 is unchanged.
+- **The agent may write its own blob, whole (S31).** `set_artefact_data` is the same
+  whole-blob upsert as `PUT …/data/me`, transformed agent-side, optionally pinned against a
+  prior read (`DataConflict`). Merge-patch stays dropped; another author's entry is never
+  writable.
 
 ## Amendment (post-v0.2) — payload version pin
 

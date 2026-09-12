@@ -14,6 +14,7 @@ import {
   type DataEntry,
 } from "../../domain/data/data-entry";
 import type { DataRepository } from "../../domain/data/data-repository";
+import { DataConflict } from "../../domain/data/errors";
 
 // Application commands for S11 — read/write the caller's own data blob. Data is
 // addressed by an artefact **reference** that is either its slug (the public
@@ -95,11 +96,20 @@ export async function getOwnDataEntry(
   return deps.dataRepo.findByArtefactAndAuthor(artefact.id, ref.authorId);
 }
 
+export interface PutOwnDataOptions {
+  // S31 — optimistic pin. `undefined` writes unconditionally (the `PUT
+  // …/data/me` behaviour). A Date refuses the write if the stored entry was
+  // updated after it; `null` means "I read no entry" and refuses if one now
+  // exists. A best-effort check (read-then-save), not a transaction.
+  ifUnmodifiedSince?: Date | null;
+}
+
 // PUT own entry — validate + upsert the caller's blob (AD1, AD2, AD8).
 export async function putOwnDataEntry(
   ref: OwnDataRef,
   blob: string,
   deps: OwnDataDeps,
+  options: PutOwnDataOptions = {},
 ): Promise<DataEntry> {
   const artefact = await resolveViewableArtefact(
     deps,
@@ -111,6 +121,16 @@ export async function putOwnDataEntry(
     artefact.id,
     ref.authorId,
   );
+  const pin = options.ifUnmodifiedSince;
+  if (
+    pin !== undefined &&
+    existing &&
+    (pin === null || existing.updatedAt.getTime() > pin.getTime())
+  ) {
+    throw new DataConflict(
+      `Your saved data for this artefact changed at ${existing.updatedAt.toISOString()}, after the version you read${pin ? ` (${pin.toISOString()})` : " (no entry)"}. Nothing was written.`,
+    );
+  }
   const entry = upsertDataEntry({
     id: (deps.newId ?? randomUUID)(),
     artefactId: artefact.id,

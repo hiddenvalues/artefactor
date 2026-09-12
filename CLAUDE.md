@@ -26,7 +26,10 @@ lifecycle cascades **evict foreign artefacts instead of touching them** (CL14). 
 no S12 shell) under the same access matrix as the data reads — archived 404s for the owner
 too (AH7, no carve-out) — plus the MCP read-back tools `get_artefact_html` /
 `get_artefact_data` and the **migrate-forward** doctrine + **declared data schema** convention
-(`<script type="application/artefactor-schema+json">`) in the skill. New work
+(`<script type="application/artefactor-schema+json">`) in the skill. **S31** (**Agent edits
+data**) is **done**: the MCP `set_artefact_data` tool closes the read-modify-write loop —
+whole-blob replacement of the caller's own entry, optionally pinned (`if_unmodified_since` →
+`DataConflict`). New work
 either implements a pending enabler seam or adds a new slice (with its governing DDD invariant)
 before coding, per the spec-driven process below.
 
@@ -57,7 +60,7 @@ adapters in `src/server/adapters.ts`. **Programmatic access (S18)** is a remote 
 bearer (BetterAuth's `mcp` plugin — discovery at `/.well-known/oauth-*`, dynamic client
 registration, authorize/consent/token under `/api/auth/mcp/*`, OIDC tables
 `oauth_application|oauth_access_token|oauth_consent`). Tools in `src/server/mcp/` wrap the
-existing Hosting commands (create/update/list/get/set-visibility/archive/restore) plus the
+existing Hosting commands (create/update/list/get/set-visibility/archive/restore), the S31 `set_artefact_data` write, plus the
 **S30 read-back pair** — `get_artefact_html` (the stored HTML) and `get_artefact_data` (the
 caller's **own** blob verbatim + the artefact's declared schema + the
 `currentPayloadVersion`/`authoredAgainstVersion` pin, the latter reserved and `null` until
@@ -67,13 +70,18 @@ load the `artefactor` Agent Skill**, the connector self-describes its authoring 
 MCP server's `instructions` carry a compact persistence summary (ambient, present before any
 tool call) and a `get_authoring_guide` tool returns the full `skills/artefactor/SKILL.md` body
 on demand (the Dockerfile copies `skills/` into the runtime image for this). The short summary
-in `src/server/mcp/authoring-guide.ts` and the skill are kept in sync (same no-drift rule). **Data blobs stay opaque** — there is no data-write tool
-and no merge-patch (a backend merge would break opacity); `get_artefact`/`update_artefact`
-return `dataAuthorCount` so a breaking HTML change can be flagged, and the artefact owns its
-own data-shape compatibility (versioned localStorage keys + a forward migration shipped in its
-own HTML). S30's `get_artefact_data` **reads** a snapshot of the caller's own blob without
-interpreting it, which is not a write tool; an actual `set_artefact_data` is a separate slice
-(S31) and would amend this decision deliberately. The old **S8/S9** (API-key REST
+in `src/server/mcp/authoring-guide.ts` and the skill are kept in sync (same no-drift rule). **Data blobs stay opaque** — there is **no
+merge-patch** (a backend merge would have to parse the blob, breaking opacity);
+`get_artefact`/`update_artefact` return `dataAuthorCount` so a breaking HTML change can be
+flagged, and the artefact owns its own data-shape compatibility (versioned localStorage keys + a
+forward migration shipped in its own HTML). S30's `get_artefact_data` **reads** a snapshot of
+the caller's own blob without interpreting it. **S31** (`set_artefact_data`) deliberately
+reverses the earlier "no data-write tool" half of this decision — *not* the merge-patch half: the
+agent reads the whole blob, transforms it **agent-side**, and writes the **whole** blob back
+through the same `putOwnDataEntry` as `PUT …/data/me`, so the server still only parses to
+enforce AD8. It writes only the caller's **own** entry (never another author's), is
+owner-scoped like the reads, and takes an optional `if_unmodified_since` pin that refuses a
+stale write with `DataConflict` (the HTTP route never pins). The old **S8/S9** (API-key REST
 push) and **S17** (data merge-patch) are **dropped**. See `docs/specs/fdd/slice-dag.md`.
 
 **The client UI (Svelte SPA, `src/client`) is built and is the human-facing app** — not a stub.
@@ -118,7 +126,7 @@ The domain and build plan live in `docs/specs/` and are the **source of truth**:
 - `docs/specs/ddd/` — domain model: ubiquitous language, the **Identity & Access**,
   **Artefact Hosting**, and **Artefact Data** bounded contexts, with aggregates and
   invariants.
-- `docs/specs/fdd/slice-dag.md` — the feature slice DAG (S0–S30; S8/S9/S17 dropped) and per-slice acceptance
+- `docs/specs/fdd/slice-dag.md` — the feature slice DAG (S0–S31; S8/S9/S17 dropped) and per-slice acceptance
   criteria (the seeds for TDD tests) with build order. `s0-scaffold.md` has the full S0 spec.
 
 `skills/artefactor/SKILL.md` is an Agent Skill for the **authoring + publishing** side

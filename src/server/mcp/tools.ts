@@ -22,7 +22,13 @@ import {
   restoreArtefactCommand,
 } from "../artefacts/lifecycle.command";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
-import { getOwnDataEntry } from "../data/own-data.command";
+import { getOwnDataEntry, putOwnDataEntry } from "../data/own-data.command";
+import { MAX_BLOB_BYTES } from "../../domain/data/data-entry";
+import {
+  BlobTooLarge,
+  DataConflict,
+  InvalidBlob,
+} from "../../domain/data/errors";
 import { extractDeclaredSchema } from "../../domain/data/declared-schema";
 import { toArtefactSummary } from "../routes/artefacts";
 import { loadAuthoringGuide } from "./authoring-guide";
@@ -57,6 +63,21 @@ export const MAX_MCP_BLOB_BYTES = 256 * 1024; // 256 KB
 // A read-back result that is too big to put in the model's context. Carried as
 // an error so it reaches the model as an `isError` result it can act on.
 class ResultTooLarge extends Error {}
+
+// S31 — a write the domain refused (bad blob, stale pin), restated with the
+// detail the model needs to correct its input.
+class ToolInputRejected extends Error {}
+
+// The JSON parser's own message for an unparseable blob — what `InvalidBlob`
+// deliberately does not carry.
+function jsonParseError(text: string): string {
+  try {
+    JSON.parse(text);
+    return "unknown parse error";
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
 
 // An MCP tool result wrapping a JSON value as text content.
 function ok(value: unknown) {
@@ -102,7 +123,8 @@ async function run<T>(body: () => Promise<T>) {
     if (
       err instanceof ArtefactNotFound ||
       err instanceof InvariantViolation ||
-      err instanceof ResultTooLarge
+      err instanceof ResultTooLarge ||
+      err instanceof ToolInputRejected
     ) {
       return fail(err.message);
     }
@@ -347,6 +369,82 @@ export function registerArtefactTools(
           // migration owed; = current ⇒ matches what is deployed.
           authoredAgainstVersion: null as string | null,
         };
+      }),
+  );
+
+  // S31 — the write half of the read-modify-write loop. Not the dropped S17: the
+  // agent reads the WHOLE blob, transforms it in the session, and writes the
+  // WHOLE blob back through the same `putOwnDataEntry` as `PUT …/data/me`, which
+  // parses only to enforce AD8. The server still never interprets the blob. The
+  // author is always the token's user (AD2/AD3) — there is no way to name
+  // another author's entry. Owner-scoped like the read tools, so the write never
+  // reaches further than the read it depends on.
+  server.registerTool(
+    "set_artefact_data",
+    {
+      title: "Set artefact data",
+      description:
+        "Replace YOUR OWN saved data for one of your active artefacts. WHOLE-BLOB REPLACEMENT: the blob you send becomes the entire saved dataset — this is not a patch and nothing is merged, so any key you leave out is deleted. Always call get_artefact_data first, transform the full blob, send all of it back, and pass the updatedAt you read as if_unmodified_since (null if you read no entry) so a save the user made in the meantime is not silently overwritten. The blob is a JSON object mapping localStorage keys to string values (≤ 5 MB). There is no undo: keep the previous blob so you can revert, tell the user what will change before writing, and verify a shape you took from the declared schema against get_artefact_html. Writing {} clears your data. Returns { id, bytes, updatedAt }.",
+      inputSchema: {
+        id: z.string().min(1).describe("The artefact id."),
+        blob: z
+          .string()
+          .describe(
+            "The complete JSON text to store — replaces the whole entry.",
+          ),
+        if_unmodified_since: z
+          .string()
+          .datetime()
+          .nullable()
+          .optional()
+          .describe(
+            "The updatedAt returned by get_artefact_data (null if it returned no entry). The write is refused if your saved data changed since. Omit to overwrite unconditionally.",
+          ),
+      },
+    },
+    async ({ id, blob, if_unmodified_since }) =>
+      run(async () => {
+        const a = await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
+        const bytes = new TextEncoder().encode(blob).byteLength;
+        try {
+          const entry = await putOwnDataEntry(
+            { ref: a.id, authorId: userId, scope },
+            blob,
+            { artefactRepo: repo, collectionRepo: deps.collectionRepo, dataRepo },
+            {
+              ifUnmodifiedSince:
+                if_unmodified_since === undefined
+                  ? undefined
+                  : if_unmodified_since === null
+                    ? null
+                    : new Date(if_unmodified_since),
+            },
+          );
+          return {
+            id: a.id,
+            bytes,
+            updatedAt: entry.updatedAt.toISOString(),
+          };
+        } catch (err) {
+          // The domain errors are phrased for the HTTP route; the model needs
+          // the specifics to fix its input, so they are restated here.
+          if (err instanceof BlobTooLarge) {
+            throw new ToolInputRejected(
+              `The blob is ${bytes} bytes, over the ${MAX_BLOB_BYTES}-byte (5 MB) cap for saved data. Nothing was written.`,
+            );
+          }
+          if (err instanceof InvalidBlob) {
+            throw new ToolInputRejected(
+              `The blob is not valid JSON (${jsonParseError(blob)}). Nothing was written.`,
+            );
+          }
+          if (err instanceof DataConflict) {
+            throw new ToolInputRejected(
+              `${err.message} Re-read it with get_artefact_data, re-apply your change to that blob, and write again with the new updatedAt.`,
+            );
+          }
+          throw err;
+        }
       }),
   );
 
