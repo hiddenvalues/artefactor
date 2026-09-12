@@ -22,6 +22,8 @@ import {
   restoreArtefactCommand,
 } from "../artefacts/lifecycle.command";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
+import { getOwnDataEntry } from "../data/own-data.command";
+import { extractDeclaredSchema } from "../../domain/data/declared-schema";
 import { toArtefactSummary } from "../routes/artefacts";
 import { loadAuthoringGuide } from "./authoring-guide";
 import { env } from "../env";
@@ -40,6 +42,21 @@ export interface McpToolDeps {
   payloadStore: PayloadStore;
   dataRepo: DataRepository;
 }
+
+// S30 — caps on what a read-back tool may return. An MCP result lands in the
+// model's context, but payloads are capped at 100 MB (AH2) and blobs at 5 MB
+// (AD8) — orders of magnitude more than a context can take. Each tool therefore
+// hard-errors above its cap, naming the real byte size and pointing at the GUI
+// download, rather than truncating: truncated HTML is unusable for editing and
+// truncated JSON is unparseable, and either invites the model to act on a
+// fragment as though it were whole. (Same shape of refusal as create_artefact's
+// base64-raster-image rule.)
+export const MAX_MCP_HTML_BYTES = 1024 * 1024; // 1 MB
+export const MAX_MCP_BLOB_BYTES = 256 * 1024; // 256 KB
+
+// A read-back result that is too big to put in the model's context. Carried as
+// an error so it reaches the model as an `isError` result it can act on.
+class ResultTooLarge extends Error {}
 
 // An MCP tool result wrapping a JSON value as text content.
 function ok(value: unknown) {
@@ -82,7 +99,11 @@ async function run<T>(body: () => Promise<T>) {
   try {
     return ok(await body());
   } catch (err) {
-    if (err instanceof ArtefactNotFound || err instanceof InvariantViolation) {
+    if (
+      err instanceof ArtefactNotFound ||
+      err instanceof InvariantViolation ||
+      err instanceof ResultTooLarge
+    ) {
       return fail(err.message);
     }
     throw err;
@@ -232,6 +253,100 @@ export function registerArtefactTools(
           scope,
         });
         return withDataCount(a);
+      }),
+  );
+
+  // S30 — read-back. Until now an agent could write artefacts but never read one,
+  // which blocks two things: (A) deriving a new artefact from an existing one,
+  // and (B) updating one in place after losing the original from context. (B) is
+  // a correctness problem, not a convenience: `update_artefact` replaces the HTML
+  // and leaves every per-user data blob untouched, and the backend treats blobs
+  // as opaque (AD8), so it cannot migrate them — only the author's own HTML can.
+  // Both tools are owner-scoped via `loadOwnActiveArtefact`, like every other
+  // tool here: unknown / not yours / archived / out-of-scope → not found.
+
+  server.registerTool(
+    "get_artefact_html",
+    {
+      title: "Get artefact HTML",
+      description:
+        "Return the stored HTML of one of your active artefacts, exactly as served. Use it to derive a new artefact from an existing one, or to re-read an artefact you are about to update after losing the original from context (update_artefact replaces the HTML wholesale, so you need the current source to change it safely). Also returns dataAuthorCount — if it is > 0, call get_artefact_data before any change to the data shape. Refuses an artefact whose HTML is too large for a tool result; download that one from the Artefactor web app instead.",
+      inputSchema: { id: z.string().min(1).describe("The artefact id.") },
+    },
+    async ({ id }) =>
+      run(async () => {
+        const a = await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
+        if (a.payloadBytes > MAX_MCP_HTML_BYTES) {
+          throw new ResultTooLarge(
+            `This artefact's HTML is ${a.payloadBytes} bytes, over the ${MAX_MCP_HTML_BYTES}-byte limit for a tool result. It is not truncated, because partial HTML cannot be edited safely — download the file from the Artefactor web app ("Download HTML" on the artefact) and work from that instead.`,
+          );
+        }
+        const html = new TextDecoder().decode(
+          await payloadStore.get(a.payloadRef),
+        );
+        return {
+          id: a.id,
+          title: a.title,
+          kind: a.kind,
+          html,
+          dataAuthorCount: (await dataRepo.listAuthorsByArtefact(a.id)).length,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "get_artefact_data",
+    {
+      title: "Get artefact data snapshot",
+      description:
+        "Return YOUR OWN saved data for one of your active artefacts, verbatim, plus the data shape the artefact declares for itself. Read this before an HTML change that alters the shape the artefact reads from localStorage: `schema` is the artefact's own declaration (trust it for orientation, verify it against the HTML before acting — nothing enforces that they agree), `blob` is your own entry (null if you have none), and `dataAuthorCount` says how many users hold data in total. The snapshot is ONE user's blob, not the population: other users' entries may sit on older key versions, be partial, or have been written by HTML two revisions back, so any migration you ship must tolerate shapes you never saw. Compare authoredAgainstVersion with currentPayloadVersion to judge staleness (null = unknown, treat as possibly stale). Refuses a blob too large for a tool result.",
+      inputSchema: { id: z.string().min(1).describe("The artefact id.") },
+    },
+    async ({ id }) =>
+      run(async () => {
+        const a = await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
+        // The caller's OWN entry only (AD2/AD4), through the same command the
+        // BFF uses — returned verbatim, never summarised (AD8 opacity).
+        const entry = await getOwnDataEntry(
+          { ref: a.id, authorId: userId, scope },
+          { artefactRepo: repo, collectionRepo: deps.collectionRepo, dataRepo },
+        );
+        const bytes = entry
+          ? new TextEncoder().encode(entry.blob).byteLength
+          : 0;
+        if (bytes > MAX_MCP_BLOB_BYTES) {
+          throw new ResultTooLarge(
+            `Your saved data for this artefact is ${bytes} bytes, over the ${MAX_MCP_BLOB_BYTES}-byte limit for a tool result. It is not truncated, because partial JSON cannot be parsed — inspect it from the artefact itself, or download the artefact from the Artefactor web app.`,
+          );
+        }
+        // The declared schema is lifted from the trusted HTML as a string, the
+        // same class of operation as locating <head> to inject the bootstrap.
+        // The server forwards it and NEVER validates a blob against it.
+        const schema = extractDeclaredSchema(
+          new TextDecoder().decode(await payloadStore.get(a.payloadRef)),
+        );
+        return {
+          id: a.id,
+          blob: entry?.blob ?? null,
+          bytes,
+          // Returned so a later write can be pinned against it (S31/ALI-268);
+          // without it an agent's write blindly overwrites whatever the user has
+          // saved since.
+          updatedAt: entry?.updatedAt.toISOString() ?? null,
+          dataAuthorCount: (await dataRepo.listAuthorsByArtefact(a.id)).length,
+          schema,
+          // Two version notions, deliberately kept apart (AD9): the *mechanical*
+          // pin below is the payload hash the backend stamps on a write, while
+          // the schema's own `version` is *semantic* and author-declared.
+          currentPayloadVersion: a.payloadHash,
+          // Reserved by S30, populated by S19 (ALI-269) — which is an optional
+          // sharpener of this staleness signal, not a dependency: AD9 is advisory
+          // and never gates a read or write, so `null` is correct until then.
+          // The doctrine is written now and becomes exact then: null ⇒ unknown,
+          // treat as possibly stale; ≠ current ⇒ written against older HTML,
+          // migration owed; = current ⇒ matches what is deployed.
+          authoredAgainstVersion: null as string | null,
+        };
       }),
   );
 

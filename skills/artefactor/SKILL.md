@@ -31,11 +31,26 @@ the user** (OAuth), so everything you create is owned by them. Tools:
 - **`list_artefacts`** / **`get_artefact`** — find what the user already has (use these before
   creating a duplicate; update in place when iterating). `get_artefact` returns
   **`dataAuthorCount`** — how many users have saved data in this artefact.
+- **`get_artefact_html`** `{ id }` — the artefact's **stored HTML**, exactly as served. Use it
+  to derive a new artefact from an existing one, or to re-read an artefact before updating it
+  when you no longer have the source (`update_artefact` replaces the HTML wholesale, so you
+  need the current document to change it safely).
+- **`get_artefact_data`** `{ id }` — **your own** saved data for the artefact, verbatim, plus
+  the shape the artefact **declares** for itself. Read it before any change to the data shape.
+  Returns `blob` (your entry, `null` if you have none), `bytes`, `updatedAt`, `schema` (the
+  declared block below, or `null`), `dataAuthorCount`, and the version pin pair
+  `currentPayloadVersion` / `authoredAgainstVersion`.
 - **`set_visibility`** / **`archive_artefact`** / **`restore_artefact`** — manage sharing and
   lifecycle.
 - **`get_authoring_guide`** — returns this guide. If you're working through the connector
   without this skill loaded (e.g. in Claude design), call it before writing artefact HTML to
   get the persistence contract, template, and checklist below.
+
+Both read-back tools **refuse** a result too large for a tool call (roughly 1 MB of HTML,
+256 KB of data) rather than truncating it — truncated HTML can't be edited and truncated JSON
+can't be parsed. When that happens, the user can get the file from the Artefactor web app:
+**"Download HTML"** in an artefact's ⋯ menu returns the stored document byte-for-byte, so
+download → edit → re-upload round-trips.
 
 **Typical flow:** write the HTML following the persistence rules below → `create_artefact` →
 share via `set_visibility` (or by passing `visibility`). When the user says "update the X
@@ -79,16 +94,74 @@ keeps it **opaque** — the backend never reads or rewrites it. You shape and se
 won't (and can't) migrate them; the data is opaque to it. So if your new HTML expects a
 **different data shape** than the old one, returning users' saved data may be misread.
 
-Before a shape-changing update, check `dataAuthorCount`. If it's `> 0` and the change is
-breaking, do one of:
+Before a shape-changing update: check `dataAuthorCount`, and call **`get_artefact_data`** to
+see the shape actually saved. Then pick one of three, in this order:
 
-- **Bump the storage-key version** in the HTML (`my-artefact-v1` → `my-artefact-v2`). Old data
-  is simply ignored and the artefact starts fresh — the localStorage-native migration (rule 2).
+- **Migrate forward (preferred).** Ship migration code *in the new HTML*: read the old key,
+  transform it, write the new one. This is the only place a migration **can** live — a
+  server-side migration would mean parsing the blob, which the backend never does. Each user's
+  data migrates on their next visit. Write it so it is:
+  - **idempotent** — safe to run on every load, including when it already ran;
+  - **run at load, before first render**, so nothing renders against the old shape;
+  - **non-destructive** — leave the old key in place for one generation, and never `clear()`.
+- **Bump the storage-key version** (`my-artefact-v1` → `my-artefact-v2`) **without** migrating.
+  Old data is simply ignored — which means every user **silently loses** what they saved.
+  Only do this when you know the saved data is disposable, and say so to the user.
 - **Publish a new artefact** (`create_artefact`) — a clean "v2" with its own id, link, and
   data — when you want to keep the old one intact for existing users.
 
 Non-breaking edits (copy, styling, bug fixes, additive fields your code already tolerates) are
 safe to `update_artefact` in place.
+
+**The snapshot is one blob, not the population.** `get_artefact_data` returns the data of the
+user you are acting for; `dataAuthorCount` tells you how many *other* people also hold data,
+and you never see theirs. Their blobs may sit on older key versions, be partial, or have been
+written by HTML two revisions back. So write the migration to tolerate shapes you never saw —
+absent, partial, or of an unknown version — and never assume the one blob you read is
+representative.
+
+**The pin is the per-user staleness signal.** `dataAuthorCount` says *some* users hold data;
+comparing `authoredAgainstVersion` with `currentPayloadVersion` says whether *this* entry
+predates the live payload:
+
+- `null` ⇒ unknown — treat as possibly stale;
+- ≠ `currentPayloadVersion` ⇒ definitely written against older HTML, migration owed;
+- = `currentPayloadVersion` ⇒ matches what is currently deployed.
+
+(The pin is backend-set and mechanical — "written against payload X". The `version` in the
+declared schema below is author-set and semantic — "this HTML expects shape v2". They answer
+different questions; keep both.)
+
+### Declaring your data shape
+
+Declare the shape your artefact saves, in an inert block in the HTML, so the shape is knowable
+without reading all the code and without anyone's data being populated:
+
+```html
+<script type="application/artefactor-schema+json">
+{ "key": "habit-tracker-v2",
+  "version": 2,
+  "description": "All tracker state under one key.",
+  "example": { "habits": [ { "id": "h1", "name": "Run", "done": ["2026-09-01"] } ],
+               "settings": { "week_start": "mon" } } }
+</script>
+```
+
+The browser ignores an unknown script `type`, so the block does nothing at runtime, and it
+lives in the HTML — so it travels with a download/re-upload automatically. `get_artefact_data`
+returns it as `schema`.
+
+- **The `example` is the centrepiece.** Someone facing an empty blob needs a populated
+  exemplar, not a type list. Use **invented values only** — never real user data: the block
+  ships inside an artefact that may be downloaded or made `public`. One or two items, a couple
+  of KB at most.
+- **`version` is what makes migrate-forward checkable** — compare the deployed artefact's
+  declared version with the one you are about to publish to know whether a migration is owed.
+- **Write the schema and the code in the same breath.** Nothing enforces that they agree, and a
+  stale schema produces a *confident* wrong migration — worse than inference, which at least
+  fails visibly. So: trust the schema for orientation, and **verify it against the HTML before
+  any shape-changing write**. It also says nothing about the population — users on older
+  versions are still out there, so the "tolerate shapes you never saw" rule stands regardless.
 
 ## Persisting data (localStorage)
 
@@ -151,14 +224,39 @@ manage who it belongs to.
 ### Recommended template
 
 ```html
+<script type="application/artefactor-schema+json">
+{ "key": "my-artefact-v1",
+  "version": 1,
+  "description": "What this artefact saves.",
+  "example": { "items": [], "settings": {} } }
+</script>
 <script>
 (function () {
   "use strict";
-  var STORAGE_KEY = "my-artefact-v1";   // name-it + version it
+  var STORAGE_KEY = "my-artefact-v1";   // name-it + version it; keep in step
+                                        // with the declared schema above
+  var OLD_KEY = null;                   // set to the previous key when you bump
 
+  migrate();                            // before anything renders
   var state = load() || defaultState();
 
   function defaultState() { return { /* your initial shape */ }; }
+
+  // Idempotent forward migration: only runs when the new key is empty and the
+  // old one has something. Never removes the old key -- one generation of
+  // overlap costs nothing and makes a bad migration recoverable.
+  function migrate() {
+    if (!OLD_KEY) return;
+    try {
+      if (localStorage.getItem(STORAGE_KEY)) return;      // already migrated
+      var old = JSON.parse(localStorage.getItem(OLD_KEY) || "null");
+      if (!old) return;                                   // nothing to carry over
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(upgrade(old)));
+    } catch (e) { /* unreadable/unwritable -> start fresh, never throw */ }
+  }
+
+  // Tolerate shapes you never saw: absent, partial, or an unknown version.
+  function upgrade(old) { return old; /* map old fields onto the new shape */ }
 
   function load() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); }
@@ -189,5 +287,9 @@ manage who it belongs to.
 - [ ] The artefact still works when a save fails (file mode, read-only, quota).
 - [ ] Saved state stays well under 5 MB (no big base64 blobs).
 - [ ] Frequent writes are debounced.
+- [ ] The artefact declares its data shape in an `application/artefactor-schema+json` block,
+      with an invented (never real) `example`.
+- [ ] The declared schema agrees with the code — same key, same version, same shape.
 - [ ] If publishing via the connector: chose the right `kind` + `visibility`, and on a breaking
-      data change bumped the storage key or published a new artefact (not edited in place).
+      data change read `get_artefact_data` first and shipped a forward migration (rather than
+      silently bumping the key, which discards every user's saved data).

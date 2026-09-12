@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildMcpServer, type McpToolDeps } from "./server";
+import { MAX_MCP_BLOB_BYTES, MAX_MCP_HTML_BYTES } from "./tools";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
@@ -77,6 +78,8 @@ describe("MCP artefact tools (S18)", () => {
         "archive_artefact",
         "create_artefact",
         "get_artefact",
+        "get_artefact_data",
+        "get_artefact_html",
         "get_authoring_guide",
         "list_artefacts",
         "restore_artefact",
@@ -233,5 +236,204 @@ describe("MCP artefact tools (S18)", () => {
     const client = await clientFor("u1");
     const r = await call(client, "get_artefact", { id: "does-not-exist" });
     expect(r.isError).toBe(true);
+  });
+  // ---------------------------------------------------------------- S30 ----
+  // Read-back: an agent can pull an artefact's HTML and its own data snapshot,
+  // so it can derive a new artefact from an existing one (A) or update one in
+  // place after losing the original from context (B) — seeing, for (B), the
+  // data shape a breaking HTML change might orphan.
+
+  it("get_artefact_html returns the exact stored HTML with dataAuthorCount", async () => {
+    const client = await clientFor("u1");
+    const html =
+      "<!doctype html><title>Rakna</title><script>localStorage.setItem('k','v')</script>";
+    const a = json(
+      await call(client, "create_artefact", { title: "Counter", kind: "form", html }),
+    );
+    await deps.dataRepo.save(
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u2", blob: "{}" }),
+    );
+
+    const r = json(await call(client, "get_artefact_html", { id: a.id }));
+    expect(r).toEqual({
+      id: a.id,
+      title: "Counter",
+      kind: "form",
+      html,
+      dataAuthorCount: 1,
+    });
+  });
+
+  it("get_artefact_html refuses an over-cap payload, naming the real size", async () => {
+    const client = await clientFor("u1");
+    const html = "<i>" + "a".repeat(MAX_MCP_HTML_BYTES) + "</i>";
+    const a = json(
+      await call(client, "create_artefact", { title: "Huge", kind: "other", html }),
+    );
+
+    const r = await call(client, "get_artefact_html", { id: a.id });
+    expect(r.isError).toBe(true);
+    // Names the actual size and points at the GUI download — never truncates,
+    // since truncated HTML is unusable for editing.
+    expect(r.content[0]!.text).toContain(
+      String(new TextEncoder().encode(html).byteLength),
+    );
+    expect(r.content[0]!.text).toMatch(/download/i);
+  });
+
+  it("get_artefact_data returns the caller's own blob verbatim", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", { title: "Tracker", kind: "form", html: "<i>t</i>" }),
+    );
+    const blob = JSON.stringify({ "habit-tracker-v2": '{"habits":[]}' });
+    await deps.dataRepo.save(
+      upsertDataEntry({
+        id: "d1",
+        artefactId: a.id,
+        authorId: "u1",
+        blob,
+        now: new Date("2026-09-12T10:00:00.000Z"),
+      }),
+    );
+
+    const r = json(await call(client, "get_artefact_data", { id: a.id }));
+    expect(r.blob).toBe(blob);
+    expect(r.bytes).toBe(new TextEncoder().encode(blob).byteLength);
+    expect(r.updatedAt).toBe("2026-09-12T10:00:00.000Z");
+    expect(r.dataAuthorCount).toBe(1);
+  });
+
+  it("get_artefact_data returns blob: null when the caller has no entry, and never another author's", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", { title: "Tracker", kind: "form", html: "<i>t</i>" }),
+    );
+    await deps.dataRepo.save(
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u2", blob: '{"theirs":1}' }),
+    );
+
+    const r = json(await call(client, "get_artefact_data", { id: a.id }));
+    expect(r.blob).toBeNull();
+    expect(r.bytes).toBe(0);
+    expect(r.updatedAt).toBeNull();
+    // The snapshot is one blob, not the population — the count says others exist.
+    expect(r.dataAuthorCount).toBe(1);
+    expect(JSON.stringify(r)).not.toContain("theirs");
+  });
+
+  it("get_artefact_data refuses an over-cap blob, naming the real size", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", { title: "Fat", kind: "form", html: "<i>f</i>" }),
+    );
+    const blob = JSON.stringify({ big: "a".repeat(MAX_MCP_BLOB_BYTES) });
+    await deps.dataRepo.save(
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob }),
+    );
+
+    const r = await call(client, "get_artefact_data", { id: a.id });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]!.text).toContain(
+      String(new TextEncoder().encode(blob).byteLength),
+    );
+    expect(r.content[0]!.text).toMatch(/download/i);
+  });
+
+  it("get_artefact_data returns the artefact's declared schema as parsed JSON", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", {
+        title: "Habits",
+        kind: "form",
+        html:
+          '<script type="application/artefactor-schema+json">' +
+          '{"key":"habit-tracker-v2","version":2,"example":{"habits":[{"id":"h1"}]}}' +
+          "</script><h1>habits</h1>",
+      }),
+    );
+
+    const r = json(await call(client, "get_artefact_data", { id: a.id }));
+    // The shape arrives without pulling the whole HTML into context, and it
+    // answers the empty-blob case a blob-only read cannot.
+    expect(r.schema).toEqual({
+      key: "habit-tracker-v2",
+      version: 2,
+      example: { habits: [{ id: "h1" }] },
+    });
+  });
+
+  it("get_artefact_data returns schema: null when it is absent or unparseable", async () => {
+    const client = await clientFor("u1");
+    const none = json(
+      await call(client, "create_artefact", { title: "Plain", kind: "form", html: "<i>p</i>" }),
+    );
+    expect(json(await call(client, "get_artefact_data", { id: none.id })).schema).toBeNull();
+
+    const broken = json(
+      await call(client, "create_artefact", {
+        title: "Broken",
+        kind: "form",
+        html: '<script type="application/artefactor-schema+json">{ oops }</script>',
+      }),
+    );
+    const r = await call(client, "get_artefact_data", { id: broken.id });
+    // Malformed is never an error — the agent falls back to reading the HTML.
+    expect(r.isError).toBeFalsy();
+    expect(json(r).schema).toBeNull();
+  });
+
+  it("never validates a blob against the declared schema (AD8 opacity)", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", {
+        title: "Habits",
+        kind: "form",
+        html:
+          '<script type="application/artefactor-schema+json">{"key":"habit-tracker-v2","version":2}</script>',
+      }),
+    );
+    // A blob that contradicts the declaration entirely.
+    const blob = '{"something-else":"[1,2,3]"}';
+    await deps.dataRepo.save(
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob }),
+    );
+
+    const r = await call(client, "get_artefact_data", { id: a.id });
+    expect(r.isError).toBeFalsy();
+    expect(json(r).blob).toBe(blob);
+  });
+
+  it("get_artefact_data reports the payload version pin (AD9 reserved)", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", { title: "Pinned", kind: "form", html: "<i>p</i>" }),
+    );
+    const stored = (await deps.repo.findById(a.id, SINGLETON_SCOPE))!;
+
+    const r = json(await call(client, "get_artefact_data", { id: a.id }));
+    expect(r.currentPayloadVersion).toBe(stored.payloadHash);
+    // Reserved, not yet populated: S19 (ALI-269) sets the pin on every write.
+    // The field's presence and shape are asserted now so S19 needs no tool change.
+    expect(r).toHaveProperty("authoredAgainstVersion");
+    expect(r.authoredAgainstVersion).toBeNull();
+  });
+
+  it("both read-back tools are owner-scoped: unknown, another user's, and archived all -> not found", async () => {
+    const u1 = await clientFor("u1");
+    const a = json(
+      await call(u1, "create_artefact", { title: "Mine", kind: "other", html: "<i>m</i>" }),
+    );
+
+    const u2 = await clientFor("u2");
+    expect((await call(u2, "get_artefact_html", { id: a.id })).isError).toBe(true);
+    expect((await call(u2, "get_artefact_data", { id: a.id })).isError).toBe(true);
+
+    expect((await call(u1, "get_artefact_html", { id: "nope" })).isError).toBe(true);
+    expect((await call(u1, "get_artefact_data", { id: "nope" })).isError).toBe(true);
+
+    await call(u1, "archive_artefact", { id: a.id });
+    expect((await call(u1, "get_artefact_html", { id: a.id })).isError).toBe(true);
+    expect((await call(u1, "get_artefact_data", { id: a.id })).isError).toBe(true);
   });
 });
