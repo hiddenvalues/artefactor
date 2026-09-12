@@ -235,20 +235,3 @@ pins **Node 26.4.0** (`.nvmrc`); use it for every command so the native addon's 
 
 **Docker:** multi-stage `Dockerfile` builds a single image; `docker-entrypoint.sh` runs
 migrations then starts the server. Mount a volume at `/data` (SQLite DB + artefact payloads).
-
-**Two remotes — development vs deploy.** Development lives on `origin`
-(`oskarhagberg/artefactor`); **production deploys from the `humlytech/artefactor` fork**, where
-every push to `main` runs `.github/workflows/deploy.yml` (CI gate → image to
-`ghcr.io/humlytech/artefactor` → Coolify webhook). `deploy.yml` guards on
-`github.repository == 'humlytech/artefactor'`, so a push to `origin`'s `main` never deploys.
-
-```bash
-git remote add humly git@github.com:humlytech/artefactor.git   # one-time, per clone
-git ship                                                       # deploy: ships origin/main → humly main
-```
-
-`git ship` is a repo-local alias (`.git/config`, shared by every worktree) for
-`git fetch origin main && git push humly origin/main:refs/heads/main` — it ships **`origin/main`,
-not local `main`**, so a stale local checkout cannot silently deploy old code or no-op. Normal
-flow: merge the PR into `origin/main` on GitHub → `git ship`. If you ever commit straight to
-local `main`, `git push origin main` first. Full runbook: `docs/deployment.md`.
