@@ -272,6 +272,34 @@ describe("checkClaudeMd", () => {
     expect(checkClaudeMd(documented)).toEqual([]);
   });
 
+  it("does not treat an over-indented fence-like line (an indented code block) as a fence", () => {
+    const md = ["    ```", "### S40 — Pasted", "- **Depends on:** S31", "    ```"].join("\n");
+    expect(checkClaudeMd(md)).toEqual([
+      expect.stringMatching(/line 2: slice heading/),
+      expect.stringMatching(/line 3: slice metadata field/),
+    ]);
+  });
+
+  it("closes a fence only on the same delimiter character with at least the opening length", () => {
+    const md = [
+      "````markdown",
+      "```",
+      "### S31 — Still inside the four-backtick fence",
+      "~~~",
+      "````",
+      "### S40 — Pasted after the fence closed",
+    ].join("\n");
+    expect(checkClaudeMd(md)).toEqual([expect.stringMatching(/line 6: slice heading/)]);
+  });
+
+  it("does not exempt the lines of a fence that is never closed", () => {
+    const md = ["```", "### S40 — Pasted", "- **Status:** done"].join("\n");
+    expect(checkClaudeMd(md)).toEqual([
+      expect.stringMatching(/line 2: slice heading/),
+      expect.stringMatching(/line 3: slice metadata field/),
+    ]);
+  });
+
   it("accepts prose and non-slice headings about dependencies and build order", () => {
     const prose = [
       "### Architecture at a glance",

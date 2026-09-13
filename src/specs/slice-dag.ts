@@ -208,36 +208,61 @@ export function computeWaves(slices: Slice[], options: ValidateOptions = {}): Sl
 const STATUS_SECTION = /^## Status\b/;
 const STATUS_MARKER = /\*\*(done|pending|specced|in progress|dropped|half done)\*\*/gi;
 const INDENTED_METADATA_FIELD = /^\s*- \*\*(Status|Depends on|Optional|Linear):\*\*/;
-const CODE_FENCE = /^\s*(```|~~~)/;
+/** A CommonMark code fence: ≤ 3 spaces of indent, then 3+ backticks or tildes, then the rest. */
+const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const WHERE = "slice status lives in docs/specs/fdd/slice-dag.md";
 
 /**
  * `CLAUDE.md` holds only what's true between slices, so it must not carry slice status: no
  * `## Status` section, no bold per-slice status markers (`**done**`, `**pending**`, …), and no
  * slice heading or metadata field copied out of the DAG. Headings and fields inside a fenced
- * code block are allowed, so the metadata format can be documented by example.
+ * code block are allowed, so the metadata format can be documented by example. Fences follow
+ * CommonMark: a closing fence uses the opening character, at least as many of it, and nothing
+ * after. A fence that never closes exempts nothing.
  */
 export function checkClaudeMd(markdown: string): string[] {
-  const violations: string[] = [];
-  let inFence = false;
-  markdown.split(/\r?\n/).forEach((line, i) => {
-    const at = `CLAUDE.md line ${i + 1}`;
-    if (STATUS_SECTION.test(line)) {
-      violations.push(`${at}: a Status section — ${WHERE}`);
+  const violations: { line: number; message: string }[] = [];
+  let fence: { char: string; length: number } | null = null;
+  /** Slice heading/field lines inside the open fence — reported only if it never closes. */
+  let fenced: { line: number; message: string }[] = [];
+
+  markdown.split(/\r?\n/).forEach((text, i) => {
+    const line = i + 1;
+    const at = `CLAUDE.md line ${line}`;
+    if (STATUS_SECTION.test(text)) {
+      violations.push({ line, message: `${at}: a Status section — ${WHERE}` });
     }
-    for (const marker of line.matchAll(STATUS_MARKER)) {
-      violations.push(`${at}: status marker ${marker[0]} — ${WHERE}`);
+    for (const marker of text.matchAll(STATUS_MARKER)) {
+      violations.push({ line, message: `${at}: status marker ${marker[0]} — ${WHERE}` });
     }
-    if (CODE_FENCE.test(line)) {
-      inFence = !inFence;
-      return;
+
+    const delimiter = CODE_FENCE.exec(text);
+    if (delimiter) {
+      const run = delimiter[1]!;
+      const rest = delimiter[2]!;
+      if (fence === null) {
+        // A backtick fence's info string can't contain backticks (CommonMark).
+        if (!(run[0] === "`" && rest.includes("`"))) {
+          fence = { char: run[0]!, length: run.length };
+          return;
+        }
+      } else if (run[0] === fence.char && run.length >= fence.length && rest.trim() === "") {
+        fence = null;
+        fenced = [];
+        return;
+      }
     }
-    if (inFence) return;
-    if (SLICE_HEADING.test(line)) {
-      violations.push(`${at}: slice heading outside a code block — ${WHERE}`);
-    } else if (INDENTED_METADATA_FIELD.test(line)) {
-      violations.push(`${at}: slice metadata field outside a code block — ${WHERE}`);
+
+    let message: string | null = null;
+    if (SLICE_HEADING.test(text)) {
+      message = `${at}: slice heading outside a code block — ${WHERE}`;
+    } else if (INDENTED_METADATA_FIELD.test(text)) {
+      message = `${at}: slice metadata field outside a code block — ${WHERE}`;
     }
+    if (message !== null) (fence === null ? violations : fenced).push({ line, message });
   });
-  return violations;
+
+  return [...violations, ...fenced]
+    .sort((x, y) => x.line - y.line)
+    .map((v) => v.message);
 }
