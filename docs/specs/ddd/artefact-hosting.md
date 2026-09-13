@@ -173,7 +173,7 @@ _None at the context level. Slice-local details are in the FDD spec._
 
 ## Amendment (post-v0.2) — payload retention is a seam
 
-> **Status:** DDD amendment (FDD slice **S19**). Introduces an extensibility **seam without
+> **Status:** DDD amendment (FDD slice **S19b — Payload-retention seam**). Introduces an extensibility **seam without
 > changing OSS behaviour**. A superset can swap the policy to retain prior payloads and offer
 > rollback; OSS keeps a single mutable payload.
 

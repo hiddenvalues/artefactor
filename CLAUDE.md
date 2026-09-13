@@ -2,124 +2,95 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Status: v0.2 shipped; post-v0.2 adds behaviour-preserving enabler seams
+**Where work stands:** slice status and dependencies live in
+[`docs/specs/fdd/slice-dag.md`](docs/specs/fdd/slice-dag.md) — the single, test-enforced source
+of truth (`pnpm spec:dag` prints the graph and the next build waves). In-flight work lives in
+**Linear**. This file holds only what's true between slices.
 
-The v0.2 feature slices are **done** (S0–S7, S10–S16, S18, **S20**, **S21**; **S8/S9/S17
-dropped**) — the Artefact Hosting and Artefact Data contexts, the MCP connector, and the client
-UI are complete. **Post-v0.2 the DAG also defines *enabler seams*: behaviour-preserving extension
-points that let a closed superset extend the core without forking it** (each ships an OSS default
-that keeps OSS behaviour byte-identical). **S24** (inject persistence ports into the composition)
-and **S22** (tenant scope + access-policy seams — scope-aware repo reads, the `AccessPolicy` port
-deciding the one overridable `authenticated`-tier cell, and the allow-all sign-up option) are
-**done**; **S19** is **half done** — its **data version pin** (AD9: every `putOwnDataEntry`
-write stamps `DataEntry.authoredAgainstVersion` with the artefact's payload hash; advisory,
-surfaced by `get_artefact_data`) has shipped, while its **payload-retention seam** (AH15) and
-**S23** (quota / payload-size / branding policies) are **specced but not yet implemented**. **S25–S27**
-(**Collections & Bookmarks**) are **done**: an owner-only nestable folder tree whose **root's**
-access (all four tiers incl. `selected`) the contained artefacts **inherit at read time**
-(AH20/AH21 — own tier dormant, slug minted on effective share), archive/restore/permanent-delete
-**cascades**, per-user bookmarks, and the sidebar/collection-page/archive-view client UI. **S28/S29**
-extend this: shared collections are **viewer-facing** for signed-in users (both-way listing, no
-collection slugs) and **collaborative** — the root's access list doubles as its **contributor**
-list (place-own-artefacts-only; CL12), containment is co-owned (owner may eject, CL13), and
-lifecycle cascades **evict foreign artefacts instead of touching them** (CL14). Context:
-`docs/specs/ddd/artefact-collections.md`. **S30** (**Export artefact HTML**) is **done**:
-`GET /api/artefacts/:ref/download` returns the **stored** payload verbatim (no S13 bootstrap,
-no S12 shell) under the same access matrix as the data reads — archived 404s for the owner
-too (AH7, no carve-out) — plus the MCP read-back tools `get_artefact_html` /
-`get_artefact_data` and the **migrate-forward** doctrine + **declared data schema** convention
-(`<script type="application/artefactor-schema+json">`) in the skill. **S31** (**Agent edits
-data**) is **done**: the MCP `set_artefact_data` tool closes the read-modify-write loop —
-whole-blob replacement of the caller's own entry, optionally pinned (`if_unmodified_since` →
-`DataConflict`). New work
-either implements a pending enabler seam or adds a new slice (with its governing DDD invariant)
-before coding, per the spec-driven process below. **S32–S34** (from the market analysis) are
-**specced but not yet implemented**: link password + expiry (AH22–AH24), the share-invitation
-seam (S33; invitations themselves are a superset feature), and comments with an MCP feedback loop
-(new context `docs/specs/ddd/artefact-feedback.md`).
+## Architecture at a glance
 
-**The whole Artefact Hosting context plus the Artefact Data store *and its localStorage
-runtime + host data-context switcher* are complete** — S0, S1, S2, S3, S4, S5, S6, S7, S10,
-S11 (own data blob), S12 (data-context switcher), S13 (localStorage hijack), S14, S15
-(permanent delete), S16 (share with specific people), S18 (MCP connector + OAuth). The
-monolith builds, runs, migrates, and tests green. Auth is
-wired (`src/server/auth.ts`): email + password via BetterAuth's Drizzle adapter, session
-middleware + `requireAuth` guard, protected `GET /api/me`. Artefact Hosting: Drizzle
-`ArtefactRepository` (`save`/`findById`/`findBySlug`/`listByOwner`/`listShared`), the pure
-access matrix (`domain/artefact/access.ts`), commands (create/edit/set-visibility/archive/
-restore) under `src/server/artefacts/`, and routes `POST|GET /api/artefacts`, `GET|PATCH
-/api/artefacts/:id` (+`/:id/raw`), `PUT /api/artefacts/:id/visibility`, `POST
-/api/artefacts/:id/archive|restore`, `GET /api/shared`, `GET /a/:slug` (+ `/a/:slug/frame`).
-Artefact Data
-(`src/domain/data/`, `src/server/data/`): the `DataEntry` aggregate (opaque ≤5 MB JSON blob,
-one per `(artefact, author)`), a Drizzle data repo, and `GET|PUT|DELETE
-/api/artefacts/:ref/data/me` (`:ref` = slug **or** id, access-matrix gated), plus the S12
-switcher reads `GET /api/artefacts/:ref/data/authors` + `GET …/data/:authorId` (access-matrix
-gated, **not** auth-gated — anonymous may read a `public` artefact's data). The S13 runtime
-(`src/server/runtime/`) injects a seeded `localStorage` shim into both serving paths so
-artefacts persist with zero code changes (owner preview writes back via the id alias). S12
-serves `/a/:slug` as a host **shell** (toolbar + `<iframe>`) wrapping the artefact at
-`/a/:slug/frame` (`?author=<id>` re-seeds another author's blob read-only). Shared port
-adapters in `src/server/adapters.ts`. **Programmatic access (S18)** is a remote **MCP server**:
-`POST /mcp` (Streamable HTTP via `@hono/mcp`, stateless JSON responses) guarded by an OAuth
-bearer (BetterAuth's `mcp` plugin — discovery at `/.well-known/oauth-*`, dynamic client
-registration, authorize/consent/token under `/api/auth/mcp/*`, OIDC tables
-`oauth_application|oauth_access_token|oauth_consent`). Tools in `src/server/mcp/` wrap the
-existing Hosting commands (create/update/list/get/set-visibility/archive/restore), the S31 `set_artefact_data` write, plus the
-**S30 read-back pair** — `get_artefact_html` (the stored HTML) and `get_artefact_data` (the
-caller's **own** blob verbatim + the artefact's declared schema + the
-`currentPayloadVersion`/`authoredAgainstVersion` pin — the latter stamped on every data write by
-S19, `null` for no entry or a pre-pin entry) — each attributed to the token's Account. Both read-back tools hard-error above a context
-cap (~1 MB HTML / 256 KB blob) instead of truncating, pointing at the GUI download. Because connector-only clients (e.g. Claude design) **can't
-load the `artefactor` Agent Skill**, the connector self-describes its authoring contract: the
-MCP server's `instructions` carry a compact persistence summary (ambient, present before any
-tool call) and a `get_authoring_guide` tool returns the full `skills/artefactor/SKILL.md` body
-on demand (the Dockerfile copies `skills/` into the runtime image for this). The short summary
-in `src/server/mcp/authoring-guide.ts` and the skill are kept in sync (same no-drift rule). **Data blobs stay opaque** — there is **no
-merge-patch** (a backend merge would have to parse the blob, breaking opacity);
-`get_artefact`/`update_artefact` return `dataAuthorCount` so a breaking HTML change can be
-flagged, and the artefact owns its own data-shape compatibility (versioned localStorage keys + a
-forward migration shipped in its own HTML). S30's `get_artefact_data` **reads** a snapshot of
-the caller's own blob without interpreting it. **S31** (`set_artefact_data`) deliberately
-reverses the earlier "no data-write tool" half of this decision — *not* the merge-patch half: the
-agent reads the whole blob, transforms it **agent-side**, and writes the **whole** blob back
-through the same `putOwnDataEntry` as `PUT …/data/me`, so the server still only parses to
-enforce AD8. It writes only the caller's **own** entry (never another author's), is
-owner-scoped like the reads, and takes an optional `if_unmodified_since` pin that refuses a
-stale write with `DataConflict`. Because the user likely has the artefact open while the agent
-works, the **served tab pins too**: the S13 shim writes only when something changed, sends
-`If-Match`/`If-None-Match: *` (→ 412 on `PUT …/data/me`), and on a conflict stops writing and
-has the S12 host shell offer a reload — so an open tab can neither block nor silently revert an
-agent's write. The old **S8/S9** (API-key REST
-push) and **S17** (data merge-patch) are **dropped**. See `docs/specs/fdd/slice-dag.md`.
-
-**The client UI (Svelte SPA, `src/client`) is built and is the human-facing app** — not a stub.
-It provides: sign-in; a dashboard of your owned / "shared with you" / archived artefacts
-(grouped by kind, searchable, filterable by access); the **manual HTML upload** dialog
-(`lib/components/UploadModal.svelte` — drag-drop or pick a **single `.html` file**, set title +
-kind; the same dialog edits an existing artefact by replacing its HTML); the S12 data-context
-switcher; manage-access (`ManageAccessModal.svelte`); and archive / restore / permanent-delete
-(`ConfirmDialog.svelte`). **This manual upload is "Path B" for publishing** — the supported way
-to get an artefact that embeds **raster images** into Artefactor, because the MCP connector
-("Path A") cannot carry base64 image bytes through a tool call. Both paths run the same
-create/edit commands, so invariants are identical. (See the two-path guidance in
-`skills/artefactor/SKILL.md` and the MCP `instructions`.) S30 adds the **return** trip:
-"Download HTML" in an owned artefact's `MoreMenu` (a plain anchor — session-cookie auth) hands
-back the stored document byte-for-byte, so download → edit → re-upload round-trips.
-
-Development is **spec-driven**: locate the governing
-DDD invariant and FDD slice before coding, build test-first, and keep spec ↔ tests ↔ code in
-sync in the same change.
-
-### Architecture at a glance
-
-- **Monolith**: one Hono process (`src/server`) serves the BFF API (`/api`, `/health`) and
-  the built Svelte SPA (`dist/client`, with SPA fallback). Entry `src/server/index.ts`.
+- **Monolith**: one Hono process (`src/server`) serves the BFF API (`/api`, `/health`), the
+  artefact serving routes (`/a/*`), the MCP server (`/mcp`) and the built Svelte SPA
+  (`dist/client`, with SPA fallback). Entry `src/server/index.ts`.
 - **Pure domain layer** (`src/domain`) — aggregates + invariants, **no framework imports**;
   defines repository/store **ports**. This is the primary TDD surface (tested against
   in-memory repos). Adapters live in `src/infra` (Drizzle in `db/`, filesystem payloads in
   `storage/`). The server is the composition root wiring routes → domain → adapters.
 - **Client** (`src/client`) is a Vite + Svelte 5 SPA; shared BFF contracts in `src/shared`.
+- **Composition + enabler seams.** `createApp` takes the persistence adapter set
+  (`src/server/adapters.ts` is the OSS default: SQLite + filesystem) and the BetterAuth instance
+  as injected dependencies, plus a `TenantScopeResolver` and an `AccessPolicy`. These are
+  **enabler seams**: behaviour-preserving extension points that let a closed superset extend
+  the core without forking it, each wired with an OSS default that keeps OSS behaviour
+  byte-identical. The access matrix (`domain/artefact/access.ts`) stays single-sourced; the
+  policy decides only its one overridable cell (a signed-in non-owner on the `authenticated`
+  tier).
+- **Identity** (`src/server/auth.ts`) — BetterAuth via its Drizzle adapter: Google OAuth in
+  production, email + password in dev/test only, a sign-up email-domain allowlist (with a `*`
+  allow-all option), session middleware + the `requireAuth` guard, protected `GET /api/me`.
+- **Artefact Hosting** (`src/domain/artefact/`, `src/server/artefacts/`) — the `Artefact`
+  aggregate, a Drizzle `ArtefactRepository`, the pure access matrix, and commands for
+  create / edit / set-visibility / manage access list / archive / restore / permanent delete.
+  Routes: `POST|GET /api/artefacts`, `GET|PATCH|DELETE /api/artefacts/:id` (+ `/:id/raw` owner
+  preview), `PUT …/:id/visibility`, `GET|POST|DELETE …/:id/access(/:userId)`,
+  `POST …/:id/archive|restore`, `PUT …/:id/collection`, `PUT|DELETE …/:id/bookmark`,
+  `GET /api/shared`, `GET /api/users/search`, and the export `GET /api/artefacts/:ref/download`
+  (the **stored** payload verbatim — no bootstrap, no shell — so download → edit → re-upload
+  round-trips).
+- **Artefact Collections** (`docs/specs/ddd/artefact-collections.md`) — an owner-only nestable
+  folder tree whose **root's** access the contained artefacts inherit at read time; the root's
+  access list doubles as its contributor list. Archive / restore / permanent delete cascade and
+  evict foreign artefacts rather than touching them. Per-user bookmarks. Routes under
+  `/api/collections` and `GET /api/shared/collections`.
+- **Artefact Data** (`src/domain/data/`, `src/server/data/`) — the `DataEntry` aggregate: an
+  opaque ≤ 5 MB JSON blob, one per `(artefact, author)`, stamped on every write with the
+  payload hash it was authored against (advisory). `GET|PUT|DELETE /api/artefacts/:ref/data/me`
+  (`:ref` = slug **or** id, access-matrix gated; `PUT` optionally pinned with
+  `If-Match` / `If-None-Match: *` → 412), plus `GET …/data/authors` and `GET …/data/:authorId`,
+  which are access-matrix gated but **not** auth-gated (anonymous may read a `public`
+  artefact's data). `GET /api/artefacts/:ref/viewers` lists who has viewed.
+- **Serving runtime** (`src/server/runtime/`) — `/a/:slug` is a server-rendered host **shell**
+  (toolbar: data-context switcher, viewers, conflict banner) wrapping the artefact in an
+  `<iframe>` at `/a/:slug/frame` (`?author=<id>` re-seeds another author's blob read-only). Both
+  serving paths (shell frame and the owner preview) inject a seeded `localStorage` shim, so
+  artefacts persist with zero code changes. The shim writes only when something changed, pins
+  each write, and on a 412 stops writing and has the shell offer a reload — an open tab can
+  neither block nor silently revert another writer.
+- **MCP connector** (`src/server/mcp/`) — `POST /mcp` (Streamable HTTP via `@hono/mcp`,
+  stateless JSON responses) behind an OAuth bearer from BetterAuth's `mcp` plugin (discovery at
+  `/.well-known/oauth-*`, dynamic client registration, authorize / consent / token under
+  `/api/auth/mcp/*`, OIDC tables `oauth_application|oauth_access_token|oauth_consent`). Tools
+  wrap the Hosting and Data commands, each attributed to the token's Account:
+  `create_artefact`, `update_artefact`, `list_artefacts`, `get_artefact`, `set_visibility`,
+  `archive_artefact`, `restore_artefact`, the read-backs `get_artefact_html` and
+  `get_artefact_data` (the caller's **own** blob verbatim + the declared schema + the
+  `currentPayloadVersion` / `authoredAgainstVersion` pin), the write `set_artefact_data`, and
+  `get_authoring_guide`. Read-backs hard-error above a context cap (~1 MB HTML / 256 KB blob)
+  instead of truncating, pointing at the GUI download. Because connector-only clients (e.g.
+  Claude design) **can't load the `artefactor` Agent Skill**, the server's `instructions` carry
+  a compact persistence summary (ambient, before any tool call) and `get_authoring_guide`
+  returns the full `skills/artefactor/SKILL.md` body (the Dockerfile copies `skills/` into the
+  runtime image). `src/server/mcp/authoring-guide.ts` and the skill are kept in sync.
+- **Data blobs stay opaque — no merge-patch.** A backend merge would have to parse the blob,
+  breaking opacity. The server parses only to enforce the size/JSON bound. Agents edit data by
+  **read-modify-write**: `get_artefact_data`, transform **agent-side**, write the **whole** blob
+  back with `set_artefact_data` through the same `putOwnDataEntry` as `PUT …/data/me`, only to
+  the caller's own entry, optionally pinned (`if_unmodified_since` → `DataConflict`).
+  `get_artefact` / `update_artefact` return `dataAuthorCount` so a breaking HTML change can be
+  flagged; the artefact owns its data-shape compatibility (versioned `localStorage` keys + a
+  forward migration shipped in its own HTML, and a declared data schema in
+  `<script type="application/artefactor-schema+json">`).
+- **Two publishing paths.** *Path A* — the MCP connector pushes HTML; it cannot carry base64
+  raster image bytes through a tool call. *Path B* — the **manual HTML upload** dialog in the
+  client (`lib/components/UploadModal.svelte`: drag-drop or pick a single `.html` file, title +
+  kind; the same dialog replaces an existing artefact's HTML) — is the supported way to publish
+  an artefact that embeds raster images. Both run the same create/edit commands, so invariants
+  are identical. (See `skills/artefactor/SKILL.md` and the MCP `instructions`.)
+- **Client UI** (`src/client`) is the human-facing app, not a stub: sign-in; a dashboard of
+  owned / "shared with you" / archived artefacts (grouped by kind, searchable, filterable by
+  access); a collections sidebar, collection pages and an archive view; manual upload;
+  manage-access (`ManageAccessModal.svelte`); archive / restore / permanent delete
+  (`ConfirmDialog.svelte`); "Download HTML" in an owned artefact's `MoreMenu`.
 
 ## What this is
 
@@ -135,8 +106,8 @@ The domain and build plan live in `docs/specs/` and are the **source of truth**:
 - `docs/specs/ddd/` — domain model: ubiquitous language, the **Identity & Access**,
   **Artefact Hosting**, and **Artefact Data** bounded contexts, with aggregates and
   invariants.
-- `docs/specs/fdd/slice-dag.md` — the feature slice DAG (S0–S34; S8/S9/S17 dropped) and per-slice acceptance
-  criteria (the seeds for TDD tests) with build order. `s0-scaffold.md` has the full S0 spec.
+- `docs/specs/fdd/slice-dag.md` — the feature slice DAG: every slice's status, dependencies and
+  acceptance criteria (the seeds for TDD tests). `s0-scaffold.md` has the full S0 spec.
 
 `skills/artefactor/SKILL.md` is an Agent Skill for the **authoring + publishing** side
 (claude.ai / Claude design) — it teaches Claude both to **publish/update/share** artefacts via
@@ -190,6 +161,23 @@ sync with implementation and tests at all times.
   feature is a vertical slice of the DDD model. Features are organized as a **DAG**:
   a feature depends on the features (slices) it builds on, and is only started once its
   dependencies are in place. Build order follows the DAG topologically.
+  `docs/specs/fdd/slice-dag.md` records the DAG: each `### <id> — <title>` slice heading is
+  followed directly by a metadata block —
+
+  ```markdown
+  ### S31 — Agent edits data: `set_artefact_data` MCP tool
+  - **Status:** done
+  - **Depends on:** S11, S18, S30
+  - **Optional:** S19a
+  - **Linear:** ALI-268
+  ```
+
+  `Status` is `specced | in progress | done | dropped`; `Depends on` lists hard edges (bare ids,
+  `—` for none); `Optional` (non-blocking edges) and `Linear` may be omitted. The drift test
+  `src/specs/slice-dag.test.ts` (part of `pnpm test`) fails on a missing or invalid block, an
+  unknown or dropped dependency, a cycle, a `done`/`in progress` slice with an unfinished
+  dependency, or slice status creeping back into this file. `pnpm spec:dag` prints the graph
+  and the parallel build waves.
 - **TDD (Test-Driven Development)** — every slice is built test-first. Unit tests encode
   the invariants and business logic from the DDD spec. A spec, its implementation, and
   its tests must always agree.
@@ -226,6 +214,12 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
   that govern the work.
 - Keep spec ↔ tests ↔ implementation in sync in the same change.
 - Respect the FDD DAG: don't build a slice before its dependency slices exist.
+- `CLAUDE.md` holds only what's true between slices: product, architecture, locked decisions,
+  process and commands. A change edits it only for an architecture fact or a locked-decision
+  reversal — slice status belongs in `docs/specs/fdd/slice-dag.md`, in-flight work in Linear.
+- **Slice naming:** in all human-facing text a session writes (chat, Linear, PR titles and
+  bodies, commit messages), refer to a slice by its **full title** — e.g. "S31 — Agent edits
+  data", never "S31". The machine-parsed metadata fields in `slice-dag.md` keep bare ids.
 
 ## Commands
 
@@ -239,6 +233,7 @@ pnpm check                     # svelte-check + tsc --noEmit (server) — type s
 pnpm db:generate               # drizzle-kit: generate a migration from src/infra/db/schema.ts
 pnpm db:migrate                # apply migrations (tsx src/infra/db/migrate.ts)
 pnpm db:studio                 # drizzle studio
+pnpm spec:dag [file]           # slice DAG → mermaid graph + parallel build waves (default: core DAG)
 
 # Identity (S1): regenerate BetterAuth's Drizzle tables after changing src/server/auth.ts
 # (e.g. the mcp/OIDC plugin tables added in S18), then re-run db:generate to emit the migration.

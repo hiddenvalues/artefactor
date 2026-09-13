@@ -206,9 +206,9 @@ describe("own-data commands (S11)", () => {
     });
   });
 
-  // S19 (AD9) — every write stamps the payload hash it was written against.
+  // S19a (AD9) — every write stamps the payload hash it was written against.
   // Advisory only: the pin never decides whether a read or write is allowed.
-  describe("payload version pin — authoredAgainstVersion (S19/AD9)", () => {
+  describe("payload version pin — authoredAgainstVersion (S19a/AD9)", () => {
     const REF = { ref: "slug1", authorId: OWNER, scope: SCOPE };
 
     // Replace the artefact's payload in place (S3), as an edit would.

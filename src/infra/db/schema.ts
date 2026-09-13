@@ -376,7 +376,7 @@ export const dataEntry = sqliteTable(
       .notNull()
       .references(() => user.id),
     blob: text("blob").notNull(),
-    // S19 (AD9) — payload hash at the last write. Nullable: pre-existing rows
+    // S19a (AD9) — payload hash at the last write. Nullable: pre-existing rows
     // keep `null` (no backfill — we can't know which payload they were written
     // against).
     authoredAgainstVersion: text("authored_against_version"),

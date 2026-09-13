@@ -361,7 +361,7 @@ export function registerArtefactTools(
           // pin below is the payload hash the backend stamps on a write, while
           // the schema's own `version` is *semantic* and author-declared.
           currentPayloadVersion: a.payloadHash,
-          // Stamped by every `putOwnDataEntry` write (S19). null ⇒ no entry, or
+          // Stamped by every `putOwnDataEntry` write (S19a). null ⇒ no entry, or
           // one written before the pin existed — unknown, treat as possibly
           // stale; ≠ current ⇒ written against older HTML, migration owed;
           // = current ⇒ matches what is deployed.

@@ -134,10 +134,10 @@ describe("artefact data store — /data/me (S11)", () => {
     expect(((await (await dataMe(slug, { method: "GET", cookie: owner })).json()) as DataEntryResponse).blob).toBeNull();
   });
 
-  // S19 (AD9) — against the real Drizzle adapter, because the upsert is an
+  // S19a (AD9) — against the real Drizzle adapter, because the upsert is an
   // INSERT … ON CONFLICT DO UPDATE whose SET clause must carry the pin too:
   // otherwise it is stamped on the first write and frozen on every later one.
-  describe("payload version pin (S19/AD9)", () => {
+  describe("payload version pin (S19a/AD9)", () => {
     // The owner's pin, read back through the Drizzle adapter.
     async function pinOf(artefactId: string) {
       const { dataRepository } = await import("./adapters");

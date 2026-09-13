@@ -9,6 +9,7 @@
     "src/server/**/*.ts",
     "src/domain/**/*.ts",
     "src/infra/**/*.ts",
-    "src/shared/**/*.ts"
+    "src/shared/**/*.ts",
+    "src/specs/**/*.ts"
   ]
 }

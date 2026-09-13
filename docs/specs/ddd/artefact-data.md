@@ -196,7 +196,7 @@ After a successful agent write, an open tab keeps showing the old data until rel
 next save is refused and the host shell prompts the reload.
 
 **AD9.** Because the tool goes through `putOwnDataEntry`, a connector write stamps
-`authoredAgainstVersion` exactly as a shim write does (S19) — no connector-specific path.
+`authoredAgainstVersion` exactly as a shim write does (S19a) — no connector-specific path.
 
 ## Artefact runtime contract
 
@@ -299,8 +299,8 @@ read-only (AD5).
 
 ## Amendment (post-v0.2) — payload version pin
 
-> **Status:** **implemented** (FDD slice **S19**, AD9 half; the AH15 retention half of S19 is
-> still pending). A small **additive** field on `DataEntry` — harmless in OSS, and the hook a
+> **Status:** **implemented** (FDD slice **S19a — Data version pin**; the AH15 retention seam is
+> the separate slice **S19b — Payload-retention seam**). A small **additive** field on `DataEntry` — harmless in OSS, and the hook a
 > superset's rollback uses to judge data compatibility. It does not weaken opacity.
 
 **Problem.** A `DataEntry.blob` is shaped by whatever artefact payload was live when it was
@@ -330,7 +330,7 @@ That is correct, since the blob matches that HTML. The pin is not exposed on the
   breaking-change signal already exposed to the MCP connector. **S30 reserved this field
   without depending on it**: the snapshot read returned the pair (`currentPayloadVersion`,
   `authoredAgainstVersion`) with the pin `null` before this slice existed. That was sound
-  precisely because AD9 is advisory and gates nothing. S19 populated the pin with no change to
+  precisely because AD9 is advisory and gates nothing. S19a populated the pin with no change to
   the tool's shape and no rewrite of the doctrine written against it (`null` ⇒ no entry, or one
   that predates the pin: unknown, so treat it as possibly stale; ≠ current ⇒ written against
   older HTML, migration owed; = current ⇒ matches what is deployed).

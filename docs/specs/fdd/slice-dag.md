@@ -4,66 +4,35 @@ Each slice is a **vertical cut** through the stack: BFF endpoint (Hono) + domain
 Drizzle persistence + Svelte UI where relevant. Built **test-first** (TDD) against the
 invariants it touches. A slice is only started once its dependencies are done.
 
-## Dependency DAG
-
-```
-S0 Scaffold (Hono + Vite/Svelte + Tailwind + shadcn-svelte + Drizzle/SQLite + Docker)
-        │
-        ▼
-S1 Identity (BetterAuth — email+password for dev; Google OAuth added later)
-        │
-        ├────────────► S2 Create artefact (active/private, manual upload)
-        │                     ├──► S3 Edit artefact (title / kind / payload)
-        │                     ├──► S4 Owner views own artefact
-        │                     ├──► S5 Share / unshare (private↔authenticated↔public; mint+retain slug)
-        │                     │            ├──► S6 Serve artefact by slug (access matrix)
-        │                     │            ├──► S14 Shared with you (others' shared+public, by kind)
-        │                     │            └──► S16 Share with specific people (selected tier + access list UX)
-        │                     ├──► S7 Archive / restore
-        │                     ├──► S10 Your artefacts (list own artefacts)
-        │                     └──► S11 Store: read/write own data blob
-        │                                  ├──► S12 Host UI: data-context switcher (load another author, read-only)
-        │                                  └──► S13 Artefact runtime bootstrap (localStorage hijack, opaque)
-        │
-        └────────────► S18 MCP connector (remote MCP server + OAuth via BetterAuth `mcp` plugin;
-                              wraps the Hosting commands as tools — needs S2, S3, S4, S5, S7, S10)
-                                     │
-                                     └──► S30 Export artefact HTML (GUI download + MCP read-back
-                                                tools — needs S2, S4, S6, S11, S18)
-                                                │  ┊
-                                                │  ┊ (optional sharpener, NOT a dependency)
-                                                │  ┄┄┄ S19 data version pin (AD9 — done;
-                                                │        AH15 retention seam still pending)
-                                                │
-                                                └──► S31 Agent edits data: set_artefact_data
-                                                           (needs S11, S18, S30; S19 likewise
-                                                           an optional sharpener only)
-
-Market-analysis slices (post-S31):
-
-S6 + S11/S12 + S21 + S25 + S30 ──► S32 Link controls (password + expiry; AH22–AH24)
-S1 + S16 + S25 ──────────────────► S33 Share-invitation seam (enabler; EE implements)
-S12 + S18 + S21 + S25 + S32 ─────► S34 Comments + agent feedback loop (FB1–FB7)
-                                        └──► S34b Anchored comments (needs S19)
-
-~~S8 Issue / revoke API key~~ and ~~S9 API push ingestion~~ are **dropped** — the pinned
-better-auth has no api-key plugin and a raw token API was deemed unnecessary; programmatic
-access is the MCP connector (S18), authenticated by OAuth, not API keys.
-~~S17 Data merge-patch~~ is also **dropped** — a backend merge would parse the blob and break
-its opacity; data writes stay whole-blob `PUT`s and the artefact owns shape compatibility.
-```
+**This file is the single source of truth for slice status and dependencies.** Every slice
+heading (`### <id> — <title>`) is followed directly by a metadata block — `Status` (`specced |
+in progress | done | dropped`), `Depends on` (hard edges, bare ids, `—` for none), and the
+optional `Optional` (non-blocking edges) and `Linear` fields. `src/specs/slice-dag.test.ts`
+fails the build when the block is missing or inconsistent (unknown or dropped dependency, a
+cycle, a done slice built on an unfinished one), and `pnpm spec:dag` prints the graph and the
+parallel build waves from it. Format details: [`../README.md`](../README.md).
 
 ## Slices & acceptance criteria
 
 Acceptance criteria are the seed for each slice's unit tests. Invariant numbers reference
 `ddd/artefact-hosting.md` (AH), `ddd/identity-access.md` (IA), and `ddd/artefact-data.md` (AD).
 
-### S0 — Scaffold *(prerequisite, not a domain slice)*
+### S0 — Scaffold
+- **Status:** done
+- **Depends on:** —
+
+*Prerequisite, not a domain slice.*
+
 Monolith builds and runs: Hono serves the Svelte app; Drizzle connected to SQLite with
 migrations; Tailwind + shadcn-svelte wired; pure `domain/` layer + Vitest harness; Docker
 image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.md).**
 
-### S1 — Identity (BetterAuth) — **done** (incl. Google OAuth + domain allowlist)
+### S1 — Identity (BetterAuth)
+- **Status:** done
+- **Depends on:** S0
+
+*Includes Google OAuth + the sign-up domain allowlist.*
+
 - Users sign in with **Google OAuth** (the production method) and, in dev/test only, **email
   + password**. Production disables email+password (`emailAndPassword.enabled = NODE_ENV !==
   "production"`), removing the open unverified sign-up path from prod.
@@ -105,7 +74,10 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.m
   disallowed-domain sign-up (IA 4); pure `email-domain.test.ts` for the allowlist predicate. A
   shared `src/test/setup.ts` points each test run at a temp DB and sets the test allowlist.
 
-### S2 — Create artefact — **done**
+### S2 — Create artefact
+- **Status:** done
+- **Depends on:** S1
+
 - Authenticated owner creates an artefact from title + kind + HTML upload.
 - New artefact is `active` / `private`, `publicSlug = null`. *(AH create)*
 - Rejects empty payload, oversize payload, empty title. *(AH 2, 3)*
@@ -131,7 +103,12 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.m
   invariants and no orphan payload), plus an end-to-end `artefacts.test.ts` (sign-up → upload
   → 201/401/400 + Drizzle round-trip through the `owner_id` FK).
 
-### S3 — Edit artefact — **done** *(shipped with S7)*
+### S3 — Edit artefact
+- **Status:** done
+- **Depends on:** S2
+
+*Shipped with S7.*
+
 - Owner updates title / kind / payload; `updatedAt` bumps.
 - Same payload/title invariants as create. *(AH 2, 3)*
 - Rejected if artefact is archived. *(AH 7)*
@@ -150,7 +127,10 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.m
 - **Client** (`App.svelte` + `UploadModal.svelte`): the same Upload dialog in **edit mode**
   (title / kind / optional replacement `.html`), opened per row → `PATCH` via `api.update`.
 
-### S4 — Owner views own artefact — **done**
+### S4 — Owner views own artefact
+- **Status:** done
+- **Depends on:** S2
+
 - Owner can view their own `active` artefact at any visibility.
 - Archived gets 404 (reached only via "Your artefacts" restore). *(AH 7)*
 
@@ -168,7 +148,10 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.m
   found) and end-to-end (owner detail + raw HTML for a private no-slug artefact, non-owner
   `404`, archived `404`, unauth `401`).
 
-### S5 — Share / unshare — **done**
+### S5 — Share / unshare
+- **Status:** done
+- **Depends on:** S2
+
 - Share raises visibility to `authenticated` or `public`; mints a unique slug on first
   share, reuses the retained slug thereafter; tier can be changed between the two. *(AH 4, 5, 6)*
 - Unshare sets `private`, retains slug. *(AH 5)*
@@ -195,7 +178,10 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.m
   (share mints slug, unshare retains + reshare reuses, invalid tier 400, unauth 401,
   non-owner 404).
 
-### S6 — Serve artefact by slug (access matrix) — **done**
+### S6 — Serve artefact by slug (access matrix)
+- **Status:** done
+- **Depends on:** S5
+
 - Serving an `active` artefact by slug enforces the access matrix: `public` → anyone;
   `authenticated` → any signed-in user; `private` → owner only. *(AH 8)*
 - Wrong-tier viewer, archived, and unknown slug → 404. *(AH 7, 8)*
@@ -220,7 +206,12 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.m
   incl. archived for the owner; unauthenticated deny →`302` sign-in redirect with `returnTo`,
   uniform for unknown slug / private / archived so existence isn't leaked).
 
-### S7 — Archive / restore — **done** *(shipped with S3)*
+### S7 — Archive / restore
+- **Status:** done
+- **Depends on:** S2
+
+*Shipped with S3.*
+
 - Archive hides + un-serves the artefact and its data, sets `archivedAt`. *(AH 7)*
 - Restore returns it to `active` with prior visibility, clears `archivedAt`. Owner-only. *(AH 9)*
 
@@ -245,13 +236,22 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](./s0-scaffold.m
   rejected), and an end-to-end test (archive un-serves the slug + owner view + active list,
   surfaces in `?archived=true`, restore re-serves at the prior tier).
 
-### S8 — API key issue / revoke — **dropped**
-### S9 — API push ingestion — **dropped**
+### S8 — API key issue / revoke
+- **Status:** dropped
+- **Depends on:** S1
+
+### S9 — API push ingestion
+- **Status:** dropped
+- **Depends on:** S2, S8
+
 The pinned `better-auth` (1.6.20) ships no api-key plugin, and a raw token REST API was
 judged unnecessary. Programmatic access is the **MCP connector (S18)**, authenticated by
 OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access").
 
-### S10 — Your artefacts (owner's own list) — **done**
+### S10 — Your artefacts (owner's own list)
+- **Status:** done
+- **Depends on:** S2
+
 - Owner lists their own `active` artefacts (archived hidden by default); shows visibility +
   shareable link when shared, grouped/filterable by kind.
 
@@ -269,7 +269,12 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
   hidden / opt-in) and an end-to-end "Your artefacts" test (fresh user → exact-count list, newest
   first, excludes archived + other owners, 401 unauth).
 
-### S11 — Store: read/write own data blob — **done** *(shipped with S13)*
+### S11 — Store: read/write own data blob
+- **Status:** done
+- **Depends on:** S2
+
+*Shipped with S13.*
+
 - Authenticated viewer upserts their own JSON blob for an artefact (one per author). *(AD 1, 2, 3)*
 - `GET …/data/me` returns the caller's blob; rejects oversize/invalid JSON. *(AD 8)*
 - Unauthenticated write rejected; archived artefact → 404. *(AD 3, 6)*
@@ -300,7 +305,10 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
 - The author-listing + per-author endpoints (S12) and the localStorage runtime shim (S13)
   build on this; no client UI yet (S11 is the API surface they consume).
 
-### S12 — Host UI: data-context switcher — **done**
+### S12 — Host UI: data-context switcher
+- **Status:** done
+- **Depends on:** S11
+
 - A signed-in viewer with read access can list authors who have data and load another
   author's blob into the artefact, **read-only** (re-seed/iframe reload). *(AD 4, 5)*
 - Tiers enforced via the `…/data/authors` + `…/data/:authorId` endpoints: private → owner
@@ -333,7 +341,12 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
   (e2e endpoints incl. anonymous-public, archived→404, `/me` not shadowed), and `serve.test.ts`
   extended for the shell/frame split + the read-only `?author` seed.
 
-### S13 — Artefact runtime bootstrap (localStorage hijack) — **done** *(shipped with S11)*
+### S13 — Artefact runtime bootstrap (localStorage hijack)
+- **Status:** done
+- **Depends on:** S11
+
+*Shipped with S11.*
+
 - Served artefacts get an injected shim that **replaces `window.localStorage`** with a
   backend-backed store, **seeded server-side** with the current data context so reads are
   synchronous; writes are write-through + debounced with a `pagehide` beacon flush. *(AD runtime contract §1)*
@@ -368,7 +381,10 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
   `QuotaExceededError`) plus injection/escaping tests; integration tests assert the bootstrap
   is injected and seeded with the viewer's own data (read-write) vs anonymous (read-only).
 
-### S14 — Shared with you — **done**
+### S14 — Shared with you
+- **Status:** done
+- **Depends on:** S5
+
 - A signed-in user browses artefacts shared to them (`authenticated` + `public`), grouped by
   kind; their own artefacts (in "Your artefacts") and others' private ones never appear. *(AH 8)*
 
@@ -394,7 +410,10 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
   → a signed-in viewer sees others' shared artefacts, never their own nor others' private;
   each enriched with the owner's identity; `401` unauthenticated).
 
-### S15 — Permanent delete (archived only) — **done**
+### S15 — Permanent delete (archived only)
+- **Status:** done
+- **Depends on:** S7
+
 - The owner permanently deletes an **archived** artefact, confirmed via a modal dialog; an
   active artefact must be archived first. Deletion removes the row, its payload file, and all
   its data entries. *(AH 11)*
@@ -420,7 +439,10 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
   `ArtefactNotFound`); end-to-end (`active → 400`, `archive → delete → 204` then gone
   everywhere + second delete 404, non-owner 404 / anonymous 401).
 
-### S16 — Share with specific people (`selected` tier + access list) — **done**
+### S16 — Share with specific people (`selected` tier + access list)
+- **Status:** done
+- **Depends on:** S5
+
 - A 4th visibility tier `selected` shares the artefact with an explicit set of registered
   users. It is a *shared* tier: minting/retaining a slug exactly like `authenticated`/`public`
   (AH 4, 5, 12), but the access matrix grants view only to the owner + members of `sharedWith`
@@ -459,7 +481,10 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
   command (grant/revoke owner-only, idempotency), end-to-end (selected mints slug; member can
   view + non-member 404 + anonymous 404; member sees it in "Shared with you"; user search).
 
-### S17 — Data merge-patch — **dropped**
+### S17 — Data merge-patch
+- **Status:** dropped
+- **Depends on:** S11
+
 A partial-update (RFC 7396 merge) endpoint would force the backend to parse and transform the
 data blob, breaking its opacity invariant (`ddd/artefact-data.md`). Data writes stay
 whole-blob `PUT`s; an artefact owns its own data-shape compatibility (versioned `localStorage`
@@ -467,7 +492,12 @@ keys), and a breaking shape change is published as a new artefact. The MCP conne
 exposes **no data-write tool** — it surfaces `dataAuthorCount` so a breaking HTML update can be
 flagged (see S18).
 
-### S18 — MCP connector (remote MCP server + OAuth) — **done**
+### S18 — MCP connector (remote MCP server + OAuth)
+- **Status:** done
+- **Depends on:** S2, S3, S4, S5, S7, S10
+
+S18's tools wrap the existing Hosting commands, including the S4 single-artefact read and the
+S10 owner list.
 - Artefactor exposes a **remote MCP server** at `POST /mcp` (Streamable HTTP) that Claude
   (claude.ai / Claude design) connects to as a custom connector. *(IA 2)*
 - **OAuth 2.1** via BetterAuth's `mcp` plugin: discovery (`.well-known/oauth-*`), dynamic
@@ -504,21 +534,19 @@ flagged (see S18).
   with `ddd/artefact-data.md`, the tools in `src/server/mcp/`, and the `instructions` summary in
   `src/server/mcp/authoring-guide.ts` — same no-drift rule as specs).
 
-### S19 — Payload-retention seam + data version pin *(enabler; behaviour-preserving)* — **data pin done; retention seam pending**
-The single core change that makes artefact **history / rollback** buildable by a superset,
-without adding versioning to OSS. (DDD amendments: `ddd/artefact-hosting.md` AH15,
-`ddd/artefact-data.md` AD9.) The two halves are independent and **ship apart**: the AD9 data
-pin is **done** (ALI-269); the AH15 retention seam is **pending**. The EE *Artefact History*
-context needs **both**, so the pin alone doesn't unblock E1.
-- **Hosting — retention seam** *(pending)*. Replace the unconditional delete of the superseded
-  payload in `edit-artefact.command.ts` with a **`PayloadRetentionPolicy`** port. OSS wires the
-  default `DiscardSupersededPayload` (deletes — **byte-identical behaviour**); the seam is the one
-  place a superset swaps in a retaining policy. The artefact still has exactly one head payload.
-  *(AH 15)*
-  - **Acceptance:** edit still leaves exactly one payload file under the default policy (no
-    orphan, no retained file); permanent delete still erases payload + data, and the policy gets
-    the chance to purge anything it retained.
-- **Data — version pin** *(done)*. `DataEntry` gains `authoredAgainstVersion`. `upsertDataEntry`
+### S19a — Data version pin
+- **Status:** done
+- **Depends on:** S3, S11
+- **Linear:** ALI-269
+
+*Enabler; behaviour-preserving.*
+
+One half of the core change that makes artefact **history / rollback** buildable by a superset
+without adding versioning to OSS; the other half is **S19b — Payload-retention seam**. (DDD
+amendment: `ddd/artefact-data.md` AD9.) The halves are independent and ship apart. The EE
+*Artefact History* context needs **both**, so this pin alone doesn't unblock it. The pin is
+stamped at the S11 write site; the S3 payload edit is what makes a pin stale.
+- **Data — version pin.** `DataEntry` gains `authoredAgainstVersion`. `upsertDataEntry`
   requires it, so no write path can skip it, and `putOwnDataEntry` stamps it with the resolved
   artefact's `payloadHash`. That one site covers `PUT …/data/me` **and** `set_artefact_data`
   (S31), with no connector-specific path. Advisory only: opacity and the read/write access rules
@@ -526,22 +554,45 @@ context needs **both**, so the pin alone doesn't unblock E1.
   **re-stamps** on update and doesn't freeze at the first write. `get_artefact_data` now returns
   the entry's pin in the field S30 reserved (same shape). Not exposed on the BFF
   `DataEntryResponse` or the S12 author list (no consumer). *(AD 9)*
-  - **Acceptance:** a fresh data write records the current payload hash; an entry written before
-    a subsequent payload edit reads back a pin ≠ the new hash (the staleness signal), and the
-    next write re-stamps it; an entry predating the column reads `null` and is still read and
-    written normally (its next write stamps it); the pin never grants or refuses access (a stale
-    pin doesn't block its author; a current one doesn't admit a non-viewer); the Drizzle adapter
-    re-stamps on update; `get_artefact_data` returns `null` with no entry, `= currentPayloadVersion`
-    after a write, and `≠` after `update_artefact` replaces the HTML; `set_artefact_data` and a
-    direct `putOwnDataEntry` stamp the same pin.
-  - **Persistence:** migration `0008` adds the nullable `authored_against_version` column (no
-    backfill). The EE Postgres mirror (`pg-schema.ts` + `PgDataRepository`) carries the same
-    column and mapping (P3 parity).
-- **Boundary:** this slice is **OSS** (the seam must live where the deletion does, and the pin
-  where the write does). The retaining policy, the version store, and rollback are the **EE**
-  *Artefact History* context — see `ee/docs/specs/`.
+- **Acceptance:** a fresh data write records the current payload hash; an entry written before
+  a subsequent payload edit reads back a pin ≠ the new hash (the staleness signal), and the
+  next write re-stamps it; an entry predating the column reads `null` and is still read and
+  written normally (its next write stamps it); the pin never grants or refuses access (a stale
+  pin doesn't block its author; a current one doesn't admit a non-viewer); the Drizzle adapter
+  re-stamps on update. Because S30 and S31 had already shipped, the connector is covered too:
+  `get_artefact_data` returns `null` with no entry, `= currentPayloadVersion` after a write, and
+  `≠` after `update_artefact` replaces the HTML; `set_artefact_data` and a direct
+  `putOwnDataEntry` stamp the same pin.
+- **Persistence:** migration `0008` adds the nullable `authored_against_version` column (no
+  backfill). The EE Postgres mirror (`pg-schema.ts` + `PgDataRepository`) carries the same
+  column and mapping (P3 parity).
+- **Boundary:** **OSS** (the pin must live where the write does). The version store and
+  rollback are the **EE** *Artefact History* context — see `ee/docs/specs/`.
+
+### S19b — Payload-retention seam
+- **Status:** specced
+- **Depends on:** S3, S15
+
+*Enabler; behaviour-preserving.*
+
+The other half of the history enabler (see **S19a — Data version pin**). (DDD amendment:
+`ddd/artefact-hosting.md` AH15.) The seam replaces a deletion in the S3 edit command, and the
+S15 permanent delete must give the policy its chance to purge.
+- **Hosting — retention seam.** Replace the unconditional delete of the superseded payload in
+  `edit-artefact.command.ts` with a **`PayloadRetentionPolicy`** port. OSS wires the default
+  `DiscardSupersededPayload` (deletes — **byte-identical behaviour**); the seam is the one place
+  a superset swaps in a retaining policy. The artefact still has exactly one head payload.
+  *(AH 15)*
+- **Acceptance:** edit still leaves exactly one payload file under the default policy (no
+  orphan, no retained file); permanent delete still erases payload + data, and the policy gets
+  the chance to purge anything it retained.
+- **Boundary:** **OSS** (the seam must live where the deletion does). The retaining policy, the
+  version store, and rollback are the **EE** *Artefact History* context — see `ee/docs/specs/`.
 
 ### S20 — Hide the data-context switcher for non-persisting artefacts
+- **Status:** done
+- **Depends on:** S2, S3, S12
+
 Stop showing the "Data context" picker (S12 chrome) on artefacts that can't usefully use it.
 (DDD amendment: `ddd/artefact-hosting.md` AH16.)
 - **Domain** — a pure `detectUsesStorage(html)` (word-boundary `localStorage` match; excludes
@@ -567,6 +618,9 @@ Stop showing the "Data context" picker (S12 chrome) on artefacts that can't usef
 - **Boundary:** **OSS** (benefits self-hosters; pure chrome/UX). No `ee/` involvement.
 
 ### S21 — Who has viewed
+- **Status:** done
+- **Depends on:** S6, S12, S15
+
 Record when a signed-in viewer opens an artefact, and surface a "viewed by" list in the host
 chrome. (New DDD bounded context: `ddd/artefact-views.md`, invariants VT1–VT5; amends
 `ddd/artefact-hosting.md` AH11 — permanent delete also removes view entries.)
@@ -602,7 +656,12 @@ chrome. (New DDD bounded context: `ddd/artefact-views.md`, invariants VT1–VT5;
 - **Boundary:** **OSS** (a general hosting feature; pure additive context + chrome). No `ee/`
   involvement.
 
-### S22 — Tenant scope + access-policy seam — **done** *(enabler; behaviour-preserving)*
+### S22 — Tenant scope + access-policy seam
+- **Status:** done
+- **Depends on:** S6, S10, S14
+
+*Enabler; behaviour-preserving.*
+
 Two thin core seams that let a superset be **multi-tenant**, byte-identical in OSS. (DDD amendments:
 `ddd/artefact-hosting.md` AH17/AH18, `ddd/identity-access.md` IA5. EE context:
 `ee/docs/specs/ddd/tenancy.md`.)
@@ -650,7 +709,12 @@ Two thin core seams that let a superset be **multi-tenant**, byte-identical in O
 - **Boundary:** **OSS** (the scope + policy must live in the repo/serving/access path). The org
   model, the real scope, and the org-aware policy are the **EE Tenancy/Organizations** context.
 
-### S23 — EE enforcement policy seams (quota / payload-size / branding) *(enabler; behaviour-preserving)*
+### S23 — EE enforcement policy seams (quota / payload-size / branding)
+- **Status:** specced
+- **Depends on:** S2, S3, S12
+
+*Enabler; behaviour-preserving.*
+
 The core seams the **EE Usage & Quota** context plugs into — all **no-op in OSS**. (DDD:
 `ee/docs/specs/ddd/usage-quota.md`; size-cap amendment `ddd/artefact-hosting.md` AH19.)
 - **QuotaPolicy.** A `QuotaPolicy` port consulted at `createArtefactCommand` (+ payload-replacing
@@ -665,7 +729,12 @@ The core seams the **EE Usage & Quota** context plugs into — all **no-op in OS
 - **Boundary:** **OSS** (the seams sit at the create/edit commands and the S12 shell). The metering,
   plan-aware policy, entitlements, and soft fences are the **EE Usage & Quota** context (EQ1–EQ5).
 
-### S24 — Inject persistence ports into the composition — **done** *(enabler; behaviour-preserving)*
+### S24 — Inject persistence ports into the composition
+- **Status:** done
+- **Depends on:** S2, S11, S12, S21
+
+*Enabler; behaviour-preserving.*
+
 Make the BFF composition accept the domain-port adapters as **injected dependencies**, so a
 superset can wire a different backend (Postgres) without forking the composition. (EE context:
 `ee/docs/specs/ddd/postgres-persistence.md`.)
@@ -689,6 +758,9 @@ superset can wire a different backend (Postgres) without forking the composition
   preserving; also a testability win for OSS.
 
 ### S25 — Collections (folder tree + inherited access)
+- **Status:** done
+- **Depends on:** S2, S5, S6, S10, S16, S22
+
 Nestable, owner-only collections whose access the contained artefacts inherit. (New DDD
 bounded context: `ddd/artefact-collections.md`, invariants CL1–CL10; amends
 `ddd/artefact-hosting.md` AH20/AH21 — `Artefact.collectionId`, effective access, slug on
@@ -732,7 +804,10 @@ effective share.)
   scope-aware reads); the EE pg schema mirrors the new tables (parity check).
 
 ### S26 — Collection lifecycle (cascade archive / restore / delete + Archive view)
-Deps: **S25, S15.** (CL7/CL8.)
+- **Status:** done
+- **Depends on:** S15, S25
+
+(CL7/CL8.)
 - **Commands** — `archiveCollectionCommand` (archive every descendant collection + active
   artefact in the subtree; returns cascade counts for the toast), `restoreCollectionCommand`
   (restores the subtree, including previously individually-archived artefacts — documented
@@ -754,7 +829,10 @@ Deps: **S25, S15.** (CL7/CL8.)
 - **Boundary:** **OSS**.
 
 ### S27 — Bookmarks (per-user pins)
-Deps: **S25** (bookmarkable collections; artefact bookmarks alone would only need S10). (BM1–4.)
+- **Status:** done
+- **Depends on:** S25
+
+The S25 edge is for bookmarkable collections; artefact bookmarks alone would only need S10. (BM1–4.)
 - **Domain** — a thin per-user store mirroring the S21 pattern: `Bookmark` records
   (`userId`, artefact **or** collection target), `BookmarkRepository` port (`listByUser`,
   `add`, `remove`, `deleteByArtefact`, `deleteByCollection`) + in-memory double. Set
@@ -778,7 +856,10 @@ Deps: **S25** (bookmarkable collections; artefact bookmarks alone would only nee
 - **Boundary:** **OSS**.
 
 ### S28 — Shared collections are viewer-facing (read-only)
-Deps: **S25.** (CL11; relaxes CL10's audience.)
+- **Status:** done
+- **Depends on:** S25
+
+(CL11; relaxes CL10's audience.)
 - **Query** — `listSharedCollections(viewerId, scope)`: the shared roots
   (`listSharedRoots`) expanded to full trees (`listByRoots`); every node returned with the
   root owner's display identity and a `canContribute` flag (CL12) — never the grantee list.
@@ -796,7 +877,10 @@ Deps: **S25.** (CL11; relaxes CL10's audience.)
 - **Boundary:** **OSS**.
 
 ### S29 — Contributors + evict-on-cascade
-Deps: **S28.** (CL1 relaxed; CL12/CL13/CL14.)
+- **Status:** done
+- **Depends on:** S28
+
+(CL1 relaxed; CL12/CL13/CL14.)
 - **Domain** — pure `canViewCollection(root, viewerId)` (matrix semantics, signed-in only,
   archived → no one) and `canContributeToTree(root, userId)` (owner, or listed **and**
   viewing); `moveArtefactToCollection` drops the same-owner requirement (tenant + active
@@ -824,7 +908,11 @@ Deps: **S28.** (CL1 relaxed; CL12/CL13/CL14.)
 - **Boundary:** **OSS**. No schema change (contributors ride `collection_access`).
 
 ### S30 — Export artefact HTML (GUI download + MCP read-back tools)
-Deps: **S2, S4, S6, S11, S18.** (AH7/AH8/AH9 for the export read path; AD2/AD4/AD8 for the
+- **Status:** done
+- **Depends on:** S2, S4, S6, S11, S18
+- **Optional:** S19a
+
+(AH7/AH8/AH9 for the export read path; AD2/AD4/AD8 for the
 data snapshot.) Artefactor could take HTML in but never give it back: the client had no
 download affordance, and an agent on the connector could `create`/`update` an artefact but
 never *read* one — so it could neither derive a new artefact from an existing one (A) nor
@@ -874,18 +962,20 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
   **never** an error; a blob is never validated against a declared schema (AD8 holds); an
   artefact with a declared schema survives export → re-upload intact; `currentPayloadVersion`
   equals `payloadHash`, and `authoredAgainstVersion` is present with its shape asserted (its
-  value was `null` until the S19 data pin; S19's own acceptance now covers the populated value).
+  value was `null` until **S19a — Data version pin**, whose own acceptance now covers the
+  populated value).
 - **Archived stays inert (AH7)** — no owner carve-out. Restore → download → re-archive is one
   click, which is not worth an exception in AH7 for an escape hatch.
-- **On S19/AD9 — reserve, don't depend.** `get_artefact_data` returns the version-pin **pair**
-  but S19 is **not** a dependency edge, and the missing edge is deliberate, not an oversight:
+- **On S19a/AD9 — reserve, don't depend.** `get_artefact_data` returns the version-pin **pair**
+  but S19a is **not** a hard dependency edge (only `Optional`), and the missing edge is deliberate, not an oversight:
   AD9 is *advisory by spec* and never gates a read or write, so nothing here is incorrect while
-  the pin is `null`; and S19 also carries the unrelated AH15 `PayloadRetentionPolicy` port in
-  the edit command, which read-back has no business pulling in. `currentPayloadVersion` is free
-  today (`payloadHash` is already on the aggregate). When S19 lands, the pin populates with
+  the pin is `null`; and the pin was first specced together with the unrelated AH15
+  `PayloadRetentionPolicy` port in the edit command (now S19b), which read-back has no business
+  pulling in. `currentPayloadVersion` is free
+  today (`payloadHash` is already on the aggregate). When S19a lands, the pin populates with
   **no tool-shape change and no doctrine rewrite** — the rule "pin present and ≠ current ⇒ that
-  user's data predates this payload" is written now and becomes true then. *(Borne out: the
-  S19 data pin shipped on its own, ahead of AH15, as a one-line change to this tool.)*
+  user's data predates this payload" is written now and becomes true then. *(Borne out: S19a
+  shipped on its own, ahead of S19b, as a one-line change to this tool.)*
 - **Out of scope:** the download affordance for "shared with you" (`GalleryCard`/`GalleryRow`)
   and the `/a/:slug` shell toolbar (the endpoint already honours the matrix — widening is
   client-only); baking a data snapshot into the downloaded file; any data **write** tool (S31);
@@ -894,7 +984,12 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
 - **Boundary:** **OSS**. No schema change.
 
 ### S31 — Agent edits data: `set_artefact_data` MCP tool
-Deps: **S11, S18, S30.** (AD1/AD2/AD3/AD6/AD8; AH7.) A user's saved data could only change by
+- **Status:** done
+- **Depends on:** S11, S18, S30
+- **Optional:** S19a
+- **Linear:** ALI-268
+
+(AD1/AD2/AD3/AD6/AD8; AH7.) A user's saved data could only change by
 opening the artefact and editing by hand. With the S30 snapshot read, an agent can close the
 loop: read the whole blob, transform it in the session ("add these six rows", "reset last
 quarter"), write the whole blob back.
@@ -946,8 +1041,8 @@ quarter"), write the whole blob back.
   data tests green; non-owner (even on a shared artefact) / unknown / archived / out-of-scope →
   not found; a tool-written blob — including one built from the declared schema's `example`
   into an empty entry — is what the served artefact's localStorage shim seeds.
-- **On S19/AD9 — sharpener, not dependency** (as S30). The write path stamps the pin for free
-  once S19 exists, because it is the same `putOwnDataEntry`; S19's own tests assert it
+- **On S19a/AD9 — sharpener, not dependency** (as S30). The write path stamps the pin for free
+  once S19a exists, because it is the same `putOwnDataEntry`; S19a's own tests assert it
   (`set_artefact_data` stamps exactly as `PUT …/data/me` does, and this tool needed no change).
   The doctrine holds either way.
 - **Open question, decided: owner-scoped v1.** `putOwnDataEntry` already permits writing your
@@ -959,7 +1054,11 @@ quarter"), write the whole blob back.
 - **Boundary:** **OSS**. No schema change.
 
 ### S32 — Link controls: password + expiry
-Deps: **S6, S11/S12, S21, S25, S30.** (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24.)
+- **Status:** specced
+- **Depends on:** S6, S11, S12, S21, S25, S30
+
+It depends on every non-owner read path it gates (S6, S11, S12, S21, S30) and on S25, because a
+root's gate governs its contained artefacts. (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24.)
 An owner-set **link gate** that narrows access after the matrix grants it — the password and
 expiry every competing host offers, without a fifth tier. (Rationale: market analysis gap #4.)
 - **Domain** — `LinkGate` value object `{ passwordHash, expiresAt, version }` on `Artefact` and
@@ -1000,8 +1099,13 @@ expiry every competing host offers, without a fifth tier. (Rationale: market ana
   password typed into an agent transcript is the wrong habit).
 - **Boundary:** **OSS**.
 
-### S33 — Share-invitation seam *(enabler; behaviour-preserving)*
-Deps: **S1, S16, S25.** The core hook a superset uses to let an owner share with an **email that
+### S33 — Share-invitation seam
+- **Status:** specced
+- **Depends on:** S1, S16, S25
+
+*Enabler; behaviour-preserving.*
+
+The core hook a superset uses to let an owner share with an **email that
 has no Account yet** (market analysis gap #1). **OSS does not invite anyone:** it has no
 transactional email, and its sign-up allowlist (IA4) stays the only way in. The invitation
 aggregate, magic-link sign-in, mail delivery and cross-org grants are the EE **Share
@@ -1031,7 +1135,10 @@ invitation is an ordinary AH14 grant.
   invitation domain, persistence, mail and sign-in are **EE** (Share invitations, EI1–EI3).
 
 ### S34 — Comments + agent feedback loop (MCP)
-Deps: **S12, S18, S21, S25, S32** (gate composition). (New DDD bounded context: `ddd/artefact-feedback.md`, FB1–FB7; amends
+- **Status:** specced
+- **Depends on:** S12, S18, S21, S25, S32
+
+The S32 edge is for its composed read authorization (gate composition). (New DDD bounded context: `ddd/artefact-feedback.md`, FB1–FB7; amends
 `ddd/artefact-hosting.md` AH11.) Threaded comments in the host chrome, read and answered by the
 owner's agent through the connector. (Market analysis gap #3 — the most differentiating slice.)
 - **Domain** — `CommentThread` aggregate with `Comment` entities; pure `startThread`, `reply`,
@@ -1072,42 +1179,15 @@ owner's agent through the connector. (Market analysis gap #3 — the most differ
   anchoring (**S34b**).
 - **Boundary:** **OSS**.
 
-#### S34b — Anchored comments *(follow-on; not yet specced in detail)*
-Deps: **S34, S19** (payload version). Attach a thread to a text quote in the payload
+### S34b — Anchored comments
+- **Status:** specced
+- **Depends on:** S19a, S34
+
+*Follow-on; not yet specced in detail.*
+
+The S19a edge is for the payload version (content hash as version identity, advisory staleness).
+Attach a thread to a text quote in the payload
 (`Anchor` = TextQuoteSelector + `payloadVersion`, reserved in FB7) via an annotation layer
 injected alongside the S13 runtime; threads whose `payloadVersion` ≠ the current payload hash
 show as "on an earlier version" instead of mis-anchoring. Governing invariants to be written
 before the slice starts.
-
-## Build order
-
-Topological: **S0 → S1 → S2 → {S3, S4, S5, S7, S10, S11}**, **S5 → {S6, S14, S16}**,
-**S7 → S15**, **S11 → {S12, S13}**, **{S2, S3, S4, S5, S7, S10} → S18** (S18's tools expose the
-S4 single-artefact read and the S10 owner list). S10 can land early (right after
-S2) to give a working surface to iterate against. The data-store branch (S11–S13) is
-independent of the sharing branch and can proceed in parallel once S2 exists. ~~S8/S9~~ (API
-keys) and ~~S17~~ (data merge-patch) are dropped — see the DAG note. S18 is the programmatic
-surface. **S19** (retention seam + data pin) depends only on **S3** (the edit/replace path) and
-**S11** (`DataEntry`); it is behaviour-preserving in OSS and is the sole core dependency of the
-EE *Artefact History* context. Its halves ship apart: the **S11**-side data pin is done, and the
-**S3**-side retention seam is pending. **S22** (tenant scope + access-policy seam) depends on the repo +
-serving/access path (**S6/S10/S14**) and **S23** (EE policy seams) on the create/edit commands
-(**S2/S3**) + the S12 shell; both are behaviour-preserving enablers and the sole core dependencies
-of the EE **Tenancy/Organizations** and **Usage & Quota** contexts respectively. **S24** (inject
-persistence ports) refactors the composition (**S2 onward**); behaviour-preserving and the sole core
-dependency of the EE **Postgres persistence** context. **S25** (collections) depends on the
-hosting core + sharing (**S2/S5/S6/S10/S16**); **S26** (collection lifecycle) on **S25 + S15**;
-**S27** (bookmarks) on **S25**; **S28** (viewer-facing shared collections) on **S25** and
-**S29** (contributors + evict-on-cascade) on **S28**. All five are OSS feature slices
-(context `ddd/artefact-collections.md`). **S30** (export HTML) depends on the hosting read
-path + the data store + the connector (**S2/S4/S6/S11/S18**); **S19** is an *optional
-sharpener* of S30's staleness signal, **not** a dependency edge (see the slice's
-reserve-don't-depend note). **S31** (agent data write) depends on **S11/S18/S30**, with S19
-again an optional sharpener only. **S32** (link controls) depends on every non-owner read path it
-gates (**S6/S11/S12/S21/S30**) and on **S25** (the root's gate governs contained artefacts).
-**S33** (share-invitation seam) depends on `/api/config` (**S1**) and the access-list modal for
-artefacts and collection roots (**S16/S25**); it is behaviour-preserving and the sole core
-dependency of the EE **Share invitations** context. **S34** (comments) depends on the shell
-(**S12**), the connector (**S18**), the S21 chrome pattern, **S25** (effective access) and **S32**
-(its composed read authorization). **S34b** (anchors) needs **S34 + S19**. S32, S33 and S34's
-prerequisites are independent, so S32 and S33 can proceed in parallel. All are OSS.
