@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "description": "Hosts and serves trusted HTML artefacts produced by claude.ai / Claude design.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "dev": "concurrently -k -n client,server -c cyan,magenta \"vite\" \"tsx watch src/server/index.ts\"",
     "build": "pnpm build:client && pnpm build:server",
