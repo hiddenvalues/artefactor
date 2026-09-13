@@ -71,7 +71,7 @@ addresses a never-shared private artefact; see the S11 implementation notes).
 | `GET` | `/api/artefacts/:ref/data/authors` | List authors who have an entry (id + `updatedAt`) | host UI; per access matrix |
 | `GET` | `/api/artefacts/:ref/data/:authorId` | Load one author's blob (for seeding/switching) | host UI; per access matrix |
 | `GET` | `/api/artefacts/:ref/data/me` | The caller's own entry | host/runtime; authenticated |
-| `PUT` | `/api/artefacts/:ref/data/me` | Upsert the caller's blob (full replace) | runtime (shim write-through); authenticated |
+| `PUT` | `/api/artefacts/:ref/data/me` | Upsert the caller's blob (full replace); optionally conditional (`If-Match` / `If-None-Match: *` → 412, S31) | runtime (shim write-through); authenticated |
 | `DELETE` | `/api/artefacts/:ref/data/me` | Remove the caller's entry | authenticated |
 
 The author-listing and per-author endpoints exist **only** to power the host switcher; the
@@ -141,6 +141,63 @@ answer different questions and must not be conflated:
 They are complementary: the pin is *mechanical* and per-entry (is this user's data stale?), the
 declared version is *semantic* and per-payload (what shape does this HTML expect?). Keep both.
 
+### Connector write (S31)
+
+An agent on the MCP connector may **write** the caller's own blob — `set_artefact_data`. It is
+the same whole-blob upsert as `PUT …/data/me`, through the same `putOwnDataEntry` command, so
+AD1 (one per pair, upsert), AD2 (author = the token's user), AD3 (authenticated) and AD8 (valid
+JSON ≤ 5 MB, parsed only to check) hold unchanged.
+
+**Why this is not the dropped merge-patch.** A merge-patch put the merge *in the backend*: the
+server would have had to parse the blob to fold a fragment into it, breaking AD8. Here the
+transform happens **agent-side** — the agent reads the whole blob (the S30 snapshot read),
+transforms it in its session, and writes the whole blob back. The server still never interprets
+it and the artefact still owns its shape. There is no partial write: a key the agent leaves out
+is gone.
+
+**Hard boundary — own entry only.** The tool can only ever name the caller's own entry. Writing
+another author's entry is forbidden by AD2/AD5; an owner curating other users' saved data is
+**outside this domain**, not a missing permission.
+
+**Owner-scoped (v1).** Like the snapshot read, the tool reaches only artefacts the caller owns
+and that are active (unknown / not owned / archived / out of tenant scope → not found, AD6/AH7),
+even though AD2/AD5 would allow writing one's own entry on any viewable artefact (as `PUT
+…/data/me` does). A write reaching further than its read would break the read-modify-write loop
+for exactly the artefacts the wider reach was for; widening **both** together is one deliberate
+follow-up.
+
+**Optimistic pin — `DataConflict`.** A data write is otherwise a blind overwrite of a single
+mutable blob with no versioning or undo, and the user very likely has the artefact open in a
+browser while talking to the agent. That open tab is a hazard in **both** directions: its
+saves can race the agent's write, and — worse — its in-memory copy, written back on the next
+save, would silently revert the agent's change. So **both writers pin** (the tab's side is
+described under the runtime contract below), and `putOwnDataEntry` takes an optional
+`ifUnmodifiedSince`:
+
+| Pin | Stored entry | Result |
+|-----|--------------|--------|
+| absent | any | write unconditionally (the `PUT …/data/me` behaviour, unchanged) |
+| a timestamp | none, or `updatedAt` ≤ pin | write |
+| a timestamp | `updatedAt` > pin | **`DataConflict`** — nothing written |
+| `null` ("I read no entry") | none | write (create) |
+| `null` | exists | **`DataConflict`** — nothing written |
+
+The connector passes the `updatedAt` its snapshot read returned; on conflict the agent re-reads
+and re-applies. `PUT …/data/me` maps `If-Match: "<updatedAt>"` → a timestamp pin and
+`If-None-Match: *` → `null`, answers a conflict with **412**, rejects an unparseable
+`If-Match` with 400 (never an unconditional write), and without either header writes
+unconditionally as before. The served shim always sends one. The check is best-effort
+(read-then-save, not a transaction) — it closes the realistic human-scale race, not a
+same-millisecond one.
+
+Because an idle open tab never writes, a conflict for the agent means the user **actually
+saved** in the seconds between its read and its write — not merely that the artefact is open.
+After a successful agent write, an open tab keeps showing the old data until reloaded; its
+next save is refused and the host shell prompts the reload.
+
+**AD9.** Because the tool goes through `putOwnDataEntry`, once S19 lands a connector write
+stamps `authoredAgainstVersion` exactly as a shim write does — no connector-specific path.
+
 ## Artefact runtime contract
 
 **Design principle: the artefact only knows about `localStorage`.** Artefacts are written to
@@ -164,8 +221,23 @@ that replaces `window.localStorage` with a backend-backed shim:
   is populated before the artefact runs. No client round-trip on first read.
 - **Writes are write-through + debounced**: `setItem`/`removeItem`/`clear` update the
   in-memory map synchronously, then schedule a debounced `PUT …/data/me` of the whole blob.
-  A flush on `pagehide`/`visibilitychange` (via `navigator.sendBeacon`) avoids losing the
-  last edit.
+  A keepalive flush on `pagehide`/`visibilitychange` avoids losing the last edit.
+- **Only changes are written, and every write is pinned (S31).** Because the saved data can
+  also be replaced from outside the tab (the connector's `set_artefact_data`), a tab must not
+  act on a stale copy:
+  - a flush sends **only when the artefact changed something** since the last save — an open,
+    idle tab never writes (hiding or closing it sends nothing);
+  - each `PUT` is conditioned on the `updatedAt` the tab last knew — `If-Match:
+    "<updatedAt>"`, or `If-None-Match: *` when it was seeded with no entry — seeded
+    server-side with the blob and advanced by each successful save's response;
+  - saves never overlap (an edit made while one is in flight goes out after it, with the new
+    pin), except the forced `pagehide` flush;
+  - a **412** means the data was replaced since the tab loaded: the tab **stops writing** (it
+    keeps running on its in-memory copy, so the artefact doesn't break) and posts
+    `{ type: "artefactor:data-conflict" }` to the host shell, which shows a banner offering a
+    reload (re-seeding the latest data). A tab can therefore never silently revert a newer
+    write. The one residual loss: unsaved in-tab edits when the tab is closed right after a
+    conflicting write — the keepalive response can't be acted on.
 - **Quota maps to the cap**: a write that would push the blob over `MAX_BLOB_BYTES` (5 MB)
   throws `QuotaExceededError`, mirroring native `localStorage` (and 5 MB is itself a typical
   localStorage budget, so artefacts already tolerate it).
@@ -220,6 +292,10 @@ read-only (AD5).
 - **A snapshot may be read, never interpreted (S30).** The connector can return the caller's
   own blob verbatim and forward the artefact's declared schema block, but the backend neither
   summarises the blob nor validates it against that schema — AD8 is unchanged.
+- **The agent may write its own blob, whole (S31).** `set_artefact_data` is the same
+  whole-blob upsert as `PUT …/data/me`, transformed agent-side, optionally pinned against a
+  prior read (`DataConflict`). Merge-patch stays dropped; another author's entry is never
+  writable.
 
 ## Amendment (post-v0.2) — payload version pin
 

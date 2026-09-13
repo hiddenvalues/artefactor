@@ -43,6 +43,8 @@ export async function renderServedArtefact(
     : null;
   return renderArtefactHtml(html, {
     seedBlob: entry?.blob ?? "{}",
+    // S31 — the shim's writes are conditioned on the entry it was seeded with.
+    seedUpdatedAt: entry?.updatedAt.toISOString() ?? null,
     writable,
     endpoint: `/api/artefacts/${ref}/data/me`,
     maxBytes: MAX_BLOB_BYTES,

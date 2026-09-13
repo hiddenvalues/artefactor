@@ -10,12 +10,23 @@
 // read-only context (logged-out viewer, or another author's data via S12) throws
 // on write while seeded reads still work. No `window.ARTEFACTOR` is exposed.
 //
+// S31 — because the saved data can also be replaced from outside the tab (an
+// agent's `set_artefact_data`), a tab must not act on a stale copy: it writes
+// only when the artefact actually changed something (an idle open tab never
+// writes), each write is pinned to the `updatedAt` it last knew (`If-Match`, or
+// `If-None-Match: *` when it was seeded with no entry), saves never overlap, and
+// a 412 makes the tab stop writing and tell the host shell
+// (`postMessage({ type: "artefactor:data-conflict" })`) so it can offer a reload.
+//
 // See docs/specs/ddd/artefact-data.md §"Artefact runtime contract".
 
 export interface BootstrapContext {
   // The seed blob: a JSON object string `{ [key]: stringValue }`. "{}" when the
   // viewer has no entry yet.
   seedBlob: string;
+  // The seeded entry's `updatedAt` (ISO), or null when there is no entry — the
+  // pin the first write is conditioned on (S31).
+  seedUpdatedAt: string | null;
   // Whether the served context may persist writes (authenticated viewer of their
   // own entry). Read-only contexts throw on write.
   writable: boolean;
@@ -33,6 +44,7 @@ export interface BootstrapContext {
 export function bootstrapInnerJs(ctx: BootstrapContext): string {
   const cfg = {
     seed: ctx.seedBlob,
+    pin: ctx.seedUpdatedAt,
     writable: ctx.writable,
     endpoint: ctx.endpoint,
     maxBytes: ctx.maxBytes,
@@ -53,21 +65,58 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
   function quota(){ var e = new Error("localStorage quota exceeded"); e.name = "QuotaExceededError"; return e; }
   function denyIfReadOnly(){ if (!cfg.writable) throw quota(); }
 
-  function flush(){
-    timer = null;
-    if (!cfg.writable) return;
+  // S31 write discipline: the updatedAt this tab last knew, whether it holds
+  // unsaved changes, whether a save is in flight, and whether the saved data was
+  // replaced elsewhere (after which this tab never writes again).
+  var pin = cfg.pin;
+  var dirty = false;
+  var inflight = false;
+  var stale = false;
+
+  function notifyConflict(){
     try {
-      fetch(cfg.endpoint, {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "artefactor:data-conflict" }, window.location.origin);
+      }
+    } catch (e) {}
+  }
+
+  // \`force\` is for pagehide: the page may be gone before an in-flight save
+  // settles, so send now rather than wait.
+  function flush(force){
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!cfg.writable || stale || !dirty) return;
+    if (inflight && force !== true) return; // resumes when the in-flight save settles
+    dirty = false;
+    var headers = { "Content-Type": "application/json" };
+    if (pin) headers["If-Match"] = '"' + pin + '"';
+    else headers["If-None-Match"] = "*";
+    var failed = false;
+    inflight = true;
+    var req;
+    try {
+      req = fetch(cfg.endpoint, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: headers,
         body: serialize(),
         keepalive: true,
         credentials: "same-origin"
       });
-    } catch (e) {}
+    } catch (e) { inflight = false; dirty = true; return; }
+    Promise.resolve(req).then(function(r){
+      if (r && r.status === 412) { stale = true; notifyConflict(); return; }
+      if (!r || !r.ok) { failed = true; return; }
+      return r.json().then(function(d){ if (d && d.updatedAt) pin = d.updatedAt; });
+    }).catch(function(){ failed = true; }).then(function(){
+      inflight = false;
+      // A failed save stays dirty for the next opportunity, without a retry loop.
+      if (failed) { dirty = true; return; }
+      if (dirty) schedule();
+    });
   }
   function schedule(){
     if (!cfg.writable) return;
+    dirty = true;
     if (timer) clearTimeout(timer);
     timer = setTimeout(flush, cfg.debounceMs);
   }
@@ -114,7 +163,7 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
     try { window.localStorage = shim; } catch (e2) {}
   }
 
-  window.addEventListener("pagehide", flush);
+  window.addEventListener("pagehide", function(){ flush(true); });
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState === "hidden") flush();
   });

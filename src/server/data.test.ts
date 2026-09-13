@@ -134,4 +134,51 @@ describe("artefact data store — /data/me (S11)", () => {
     expect(((await (await dataMe(slug, { method: "GET", cookie: owner })).json()) as DataEntryResponse).blob).toBeNull();
   });
 
+  // S31 — the served tab's shim pins its writes so a stale tab cannot silently
+  // overwrite data replaced elsewhere (e.g. by an agent). Unpinned PUTs are
+  // unchanged (every test above).
+  describe("conditional PUT (S31)", () => {
+    function pinnedPut(slug: string, body: string, headers: Record<string, string>) {
+      return app.request(`/api/artefacts/${slug}/data/me`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", cookie: owner, ...headers },
+        body,
+      });
+    }
+
+    it("If-Match the current updatedAt → 200", async () => {
+      const { slug } = await makeShared(owner);
+      const first = (await (
+        await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner })
+      ).json()) as DataEntryResponse;
+      const res = await pinnedPut(slug, '{"v":2}', { "If-Match": `"${first.updatedAt}"` });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as DataEntryResponse).blob).toBe('{"v":2}');
+    });
+
+    it("If-Match a stale updatedAt → 412, nothing written", async () => {
+      const { slug } = await makeShared(owner);
+      await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
+      const res = await pinnedPut(slug, '{"v":"stale-tab"}', {
+        "If-Match": '"2000-01-01T00:00:00.000Z"',
+      });
+      expect(res.status).toBe(412);
+      const get = (await (await dataMe(slug, { method: "GET", cookie: owner })).json()) as DataEntryResponse;
+      expect(get.blob).toBe('{"v":1}');
+    });
+
+    it("If-None-Match: * → 200 when there is no entry, 412 once one exists", async () => {
+      const { slug } = await makeShared(owner);
+      expect((await pinnedPut(slug, '{"v":1}', { "If-None-Match": "*" })).status).toBe(200);
+      expect((await pinnedPut(slug, '{"v":2}', { "If-None-Match": "*" })).status).toBe(412);
+    });
+
+    it("an unparseable If-Match → 400, never an unconditional write", async () => {
+      const { slug } = await makeShared(owner);
+      await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
+      expect((await pinnedPut(slug, '{"v":2}', { "If-Match": '"not-a-date"' })).status).toBe(400);
+      const get = (await (await dataMe(slug, { method: "GET", cookie: owner })).json()) as DataEntryResponse;
+      expect(get.blob).toBe('{"v":1}');
+    });
+  });
 });

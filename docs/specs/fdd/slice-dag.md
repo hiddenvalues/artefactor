@@ -30,11 +30,15 @@ S1 Identity (BetterAuth — email+password for dev; Google OAuth added later)
                                      │
                                      └──► S30 Export artefact HTML (GUI download + MCP read-back
                                                 tools — needs S2, S4, S6, S11, S18)
-                                                ┊
-                                                ┊ (optional sharpener, NOT a dependency)
-                                                ┄┄┄ S19 data version pin (AD9)
+                                                │  ┊
+                                                │  ┊ (optional sharpener, NOT a dependency)
+                                                │  ┄┄┄ S19 data version pin (AD9)
+                                                │
+                                                └──► S31 Agent edits data: set_artefact_data
+                                                           (needs S11, S18, S30; S19 likewise
+                                                           an optional sharpener only)
 
-Market-analysis slices (post-S30; S31 is reserved for the data-write tool):
+Market-analysis slices (post-S31):
 
 S6 + S11/S12 + S21 + S25 + S30 ──► S32 Link controls (password + expiry; AH22–AH24)
 S1 + S16 + S25 ──────────────────► S33 Share-invitation seam (enabler; EE implements)
@@ -332,6 +336,8 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
 - Served artefacts get an injected shim that **replaces `window.localStorage`** with a
   backend-backed store, **seeded server-side** with the current data context so reads are
   synchronous; writes are write-through + debounced with a `pagehide` beacon flush. *(AD runtime contract §1)*
+  *(Amended by S31: writes only when dirty, pinned with `If-Match`/`If-None-Match: *`, and a
+  412 stops the tab writing and prompts a reload in the host shell.)*
 - The artefact needs **zero code changes** and sees **one opaque dataset** — `localStorage`
   only, no `ARTEFACTOR` helper.
 - Over-cap write throws `QuotaExceededError`; a read-only context (logged-out public viewer,
@@ -867,6 +873,70 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
   view-source anyway).
 - **Boundary:** **OSS**. No schema change.
 
+### S31 — Agent edits data: `set_artefact_data` MCP tool
+Deps: **S11, S18, S30.** (AD1/AD2/AD3/AD6/AD8; AH7.) A user's saved data could only change by
+opening the artefact and editing by hand. With the S30 snapshot read, an agent can close the
+loop: read the whole blob, transform it in the session ("add these six rows", "reset last
+quarter"), write the whole blob back.
+
+- **Not S17.** The dropped merge-patch put the merge in the backend (parsing the blob, breaking
+  AD8). S31 transforms **agent-side** and writes through the existing `putOwnDataEntry`, which
+  parses only to enforce AD8 — the server still never interprets the blob. See "Connector write
+  (S31)" in `ddd/artefact-data.md`.
+- **Domain / command** — `DataConflict` (new `DataError`). `putOwnDataEntry` gains an optional
+  `{ ifUnmodifiedSince?: Date | null }`: a timestamp refuses the write if the stored entry's
+  `updatedAt` is newer; `null` ("I read no entry") refuses if an entry now exists; absent writes
+  unconditionally.
+- **BFF** — `PUT …/data/me` optionally conditional: `If-Match: "<updatedAt ISO>"` → timestamp
+  pin, `If-None-Match: *` → `null`; conflict → **412**; unparseable `If-Match` → 400 (never an
+  unconditional write). No header → unconditional, as before.
+- **Runtime (amends S13)** — the open tab is the likeliest concurrent writer and, unguarded,
+  would silently revert an agent's write by saving its stale in-memory copy. The shim now
+  writes **only when dirty** (an idle open tab never writes — hide/close sends nothing), pins
+  every `PUT` to the `updatedAt` it was seeded with / last saved (`seedUpdatedAt` inlined by
+  `render.ts`), never overlaps saves (except the forced `pagehide` flush), and on 412 stops
+  writing and posts `artefactor:data-conflict` to the parent.
+- **Host shell (amends S12)** — a signed-in-only banner ("changed elsewhere … Reload") revealed
+  by that message, accepted only from its own same-origin frame; Reload re-seeds the current
+  data context.
+- **MCP** — `set_artefact_data { id, blob, if_unmodified_since? }` → `{ id, bytes, updatedAt }`.
+  **Whole-blob replacement only**, stated outright in the description (a model assuming merge
+  semantics would silently delete every key it didn't send). Owner-scoped via
+  `loadOwnActiveArtefact`, matching the S30 reads. `InvalidBlob` → error carrying the JSON
+  parser's message; `BlobTooLarge` → error naming the actual size against the 5 MB cap;
+  `DataConflict` → error directing a re-read via `get_artefact_data`. All leave the entry
+  untouched.
+- **Doctrine** — `skills/artefactor/SKILL.md` + `PERSISTENCE_CONTRACT_SUMMARY`: read before
+  write, always, pinned with the read's `updatedAt`; use the declared schema (its `example` is
+  what makes a write into an empty blob possible) but verify an inferred shape against
+  `get_artefact_html`; check the version pin (`≠ current` or `null` ⇒ transform to the live
+  shape, don't write back as found); keep the pre-write blob to revert; say what will change
+  before writing.
+- **Acceptance:** round-trip get → transform → set → re-read returns the blob verbatim with
+  `updatedAt` bumped and `createdAt` + entry id preserved; first write creates, second updates
+  (never two entries); another author's entry untouched; invalid JSON → error naming the parse
+  failure; over 5 MB → error naming the actual size; HTTP `If-Match` current → 200, stale → 412
+  with nothing written, `If-None-Match: *` → 200 then 412, malformed → 400; the shim sends
+  nothing from an idle tab (hide/close), doesn't re-send after a completed save, pins with
+  `If-Match`/`If-None-Match: *`, adopts its own save's `updatedAt`, serialises overlapping
+  saves, and on 412 stops writing + notifies the shell; the served frame inlines the entry's
+  `updatedAt` as the pin; the shell renders the banner for signed-in viewers only and accepts
+  the message only from its own frame; stale pin (timestamp or `null`) →
+  conflict, nothing written, message directs a re-read; no pin → unconditional write, existing
+  data tests green; non-owner (even on a shared artefact) / unknown / archived / out-of-scope →
+  not found; a tool-written blob — including one built from the declared schema's `example`
+  into an empty entry — is what the served artefact's localStorage shim seeds.
+- **On S19/AD9 — sharpener, not dependency** (as S30). The write path stamps the pin for free
+  once S19 exists, because it is the same `putOwnDataEntry`; S19's own tests assert it. The
+  doctrine holds either way.
+- **Open question, decided: owner-scoped v1.** `putOwnDataEntry` already permits writing your
+  own blob on any viewable artefact, but a write reaching further than the owner-scoped read
+  would break read-modify-write exactly where the reach was wanted. Widening read + write
+  together (addressed by slug or id) is one deliberate follow-up.
+- **Out of scope:** a delete tool (write `{}`); merge-patch (S17 stays dropped); writing another
+  author's blob (a domain no, not a follow-up); any GUI equivalent.
+- **Boundary:** **OSS**. No schema change.
+
 ### S32 — Link controls: password + expiry
 Deps: **S6, S11/S12, S21, S25, S30.** (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24.)
 An owner-set **link gate** that narrows access after the matrix grants it — the password and
@@ -1010,7 +1080,8 @@ hosting core + sharing (**S2/S5/S6/S10/S16**); **S26** (collection lifecycle) on
 (context `ddd/artefact-collections.md`). **S30** (export HTML) depends on the hosting read
 path + the data store + the connector (**S2/S4/S6/S11/S18**); **S19** is an *optional
 sharpener* of S30's staleness signal, **not** a dependency edge (see the slice's
-reserve-don't-depend note). **S32** (link controls) depends on every non-owner read path it
+reserve-don't-depend note). **S31** (agent data write) depends on **S11/S18/S30**, with S19
+again an optional sharpener only. **S32** (link controls) depends on every non-owner read path it
 gates (**S6/S11/S12/S21/S30**) and on **S25** (the root's gate governs contained artefacts).
 **S33** (share-invitation seam) depends on `/api/config` (**S1**) and the access-list modal for
 artefacts and collection roots (**S16/S25**); it is behaviour-preserving and the sole core
