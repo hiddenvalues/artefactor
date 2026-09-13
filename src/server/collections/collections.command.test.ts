@@ -470,7 +470,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     await bookmarkRepo.addArtefact(OWNER, "a2");
     const now = new Date();
     await dataRepo.save({
-      id: "d1", artefactId: "a2", authorId: OWNER, blob: "[1]",
+      id: "d1", artefactId: "a2", authorId: OWNER, blob: "[1]", authoredAgainstVersion: null,
       createdAt: now, updatedAt: now,
     });
 

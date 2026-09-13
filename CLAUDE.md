@@ -11,8 +11,10 @@ points that let a closed superset extend the core without forking it** (each shi
 that keeps OSS behaviour byte-identical). **S24** (inject persistence ports into the composition)
 and **S22** (tenant scope + access-policy seams — scope-aware repo reads, the `AccessPolicy` port
 deciding the one overridable `authenticated`-tier cell, and the allow-all sign-up option) are
-**done**; **S19** (payload-retention seam) and **S23** (quota / payload-size / branding policies)
-are **specced but not yet implemented**. **S25–S27**
+**done**; **S19** is **half done** — its **data version pin** (AD9: every `putOwnDataEntry`
+write stamps `DataEntry.authoredAgainstVersion` with the artefact's payload hash; advisory,
+surfaced by `get_artefact_data`) has shipped, while its **payload-retention seam** (AH15) and
+**S23** (quota / payload-size / branding policies) are **specced but not yet implemented**. **S25–S27**
 (**Collections & Bookmarks**) are **done**: an owner-only nestable folder tree whose **root's**
 access (all four tiers incl. `selected`) the contained artefacts **inherit at read time**
 (AH20/AH21 — own tier dormant, slug minted on effective share), archive/restore/permanent-delete
@@ -66,8 +68,8 @@ registration, authorize/consent/token under `/api/auth/mcp/*`, OIDC tables
 existing Hosting commands (create/update/list/get/set-visibility/archive/restore), the S31 `set_artefact_data` write, plus the
 **S30 read-back pair** — `get_artefact_html` (the stored HTML) and `get_artefact_data` (the
 caller's **own** blob verbatim + the artefact's declared schema + the
-`currentPayloadVersion`/`authoredAgainstVersion` pin, the latter reserved and `null` until
-S19) — each attributed to the token's Account. Both read-back tools hard-error above a context
+`currentPayloadVersion`/`authoredAgainstVersion` pin — the latter stamped on every data write by
+S19, `null` for no entry or a pre-pin entry) — each attributed to the token's Account. Both read-back tools hard-error above a context
 cap (~1 MB HTML / 256 KB blob) instead of truncating, pointing at the GUI download. Because connector-only clients (e.g. Claude design) **can't
 load the `artefactor` Agent Skill**, the connector self-describes its authoring contract: the
 MCP server's `instructions` carry a compact persistence summary (ambient, present before any

@@ -134,6 +134,66 @@ describe("artefact data store — /data/me (S11)", () => {
     expect(((await (await dataMe(slug, { method: "GET", cookie: owner })).json()) as DataEntryResponse).blob).toBeNull();
   });
 
+  // S19 (AD9) — against the real Drizzle adapter, because the upsert is an
+  // INSERT … ON CONFLICT DO UPDATE whose SET clause must carry the pin too:
+  // otherwise it is stamped on the first write and frozen on every later one.
+  describe("payload version pin (S19/AD9)", () => {
+    // The owner's pin, read back through the Drizzle adapter.
+    async function pinOf(artefactId: string) {
+      const { dataRepository } = await import("./adapters");
+      const { db } = await import("../infra/db/client");
+      const { user } = await import("../infra/db/schema");
+      const { eq } = await import("drizzle-orm");
+      const [u] = await db
+        .select({ id: user.id })
+        .from(user)
+        .where(eq(user.email, "data-owner@example.com"));
+      return (await dataRepository.findByArtefactAndAuthor(artefactId, u!.id))
+        ?.authoredAgainstVersion;
+    }
+
+    async function payloadHashOf(artefactId: string) {
+      const { artefactRepository } = await import("./adapters");
+      const { SINGLETON_SCOPE } = await import("../domain/artefact/tenant-scope");
+      return (await artefactRepository.findById(artefactId, SINGLETON_SCOPE))!.payloadHash;
+    }
+
+    it("stamps the payload hash on write and re-stamps it after a payload edit", async () => {
+      const { id, slug } = await makeShared(owner);
+      await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
+      const first = await payloadHashOf(id);
+      expect(await pinOf(id)).toBe(first);
+
+      const form = new FormData();
+      form.set("payload", new File(["<h1>f, reshaped</h1>"], "f.html"));
+      expect(
+        (await app.request(`/api/artefacts/${id}`, { method: "PATCH", body: form, headers: { cookie: owner } }))
+          .status,
+      ).toBe(200);
+      const second = await payloadHashOf(id);
+      expect(second).not.toBe(first);
+      // Written before the edit → the staleness signal.
+      expect(await pinOf(id)).toBe(first);
+
+      await dataMe(slug, { method: "PUT", body: '{"v":2}', cookie: owner });
+      expect(await pinOf(id)).toBe(second);
+    });
+
+    it("an entry predating the column reads null and is served normally", async () => {
+      const { id, slug } = await makeShared(owner);
+      await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
+      const { db } = await import("../infra/db/client");
+      const { dataEntry } = await import("../infra/db/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.update(dataEntry).set({ authoredAgainstVersion: null }).where(eq(dataEntry.artefactId, id));
+
+      expect(await pinOf(id)).toBeNull();
+      const get = await dataMe(slug, { method: "GET", cookie: owner });
+      expect(get.status).toBe(200);
+      expect(((await get.json()) as DataEntryResponse).blob).toBe('{"v":1}');
+    });
+  });
+
   // S31 — the served tab's shim pins its writes so a stale tab cannot silently
   // overwrite data replaced elsewhere (e.g. by an agent). Unpinned PUTs are
   // unchanged (every test above).

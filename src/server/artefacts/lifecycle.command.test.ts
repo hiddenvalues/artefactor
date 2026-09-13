@@ -106,11 +106,11 @@ describe("delete command (S15, AH11)", () => {
     await repo.save({ ...base(), status: "archived", archivedAt: new Date() });
     const now = new Date();
     await dataRepo.save({
-      id: "d1", artefactId: "a1", authorId: OWNER, blob: "[1]",
+      id: "d1", artefactId: "a1", authorId: OWNER, blob: "[1]", authoredAgainstVersion: null,
       createdAt: now, updatedAt: now,
     });
     await dataRepo.save({
-      id: "d2", artefactId: "a1", authorId: "viewer-2", blob: "[2]",
+      id: "d2", artefactId: "a1", authorId: "viewer-2", blob: "[2]", authoredAgainstVersion: null,
       createdAt: now, updatedAt: now,
     });
     // A view entry too — permanent delete must remove these as well (VT5).

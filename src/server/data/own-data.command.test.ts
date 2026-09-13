@@ -9,6 +9,7 @@ import {
   createArtefact,
   shareArtefact,
   archiveArtefact,
+  editArtefact,
   type Artefact,
 } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
@@ -202,6 +203,85 @@ describe("own-data commands (S11)", () => {
       await putOwnDataEntry(REF, '{"v":1}', at(T1));
       await putOwnDataEntry(REF, '{"v":2}', at(T2));
       expect((await getOwnDataEntry(REF, deps))?.blob).toBe('{"v":2}');
+    });
+  });
+
+  // S19 (AD9) — every write stamps the payload hash it was written against.
+  // Advisory only: the pin never decides whether a read or write is allowed.
+  describe("payload version pin — authoredAgainstVersion (S19/AD9)", () => {
+    const REF = { ref: "slug1", authorId: OWNER, scope: SCOPE };
+
+    // Replace the artefact's payload in place (S3), as an edit would.
+    async function editPayload(hash: string) {
+      const current = (await artefactRepo.findById("a1", SCOPE))!;
+      await artefactRepo.save(
+        editArtefact(current, { payload: { ref: `r-${hash}`, bytes: 10, hash } }),
+      );
+    }
+
+    it("a fresh write records the artefact's current payload hash", async () => {
+      await seed();
+      const saved = await putOwnDataEntry(REF, '{"v":1}', deps);
+      expect(saved.authoredAgainstVersion).toBe("h");
+      expect((await getOwnDataEntry(REF, deps))?.authoredAgainstVersion).toBe("h");
+    });
+
+    it("an entry written before a payload edit reads back a pin ≠ the new hash", async () => {
+      await seed();
+      await putOwnDataEntry(REF, '{"v":1}', deps);
+      await editPayload("h2");
+      const stale = await getOwnDataEntry(REF, deps);
+      expect(stale?.authoredAgainstVersion).toBe("h");
+      expect(stale?.authoredAgainstVersion).not.toBe("h2");
+
+      // The next write re-stamps against the live payload.
+      await putOwnDataEntry(REF, '{"v":2}', deps);
+      expect((await getOwnDataEntry(REF, deps))?.authoredAgainstVersion).toBe("h2");
+    });
+
+    it("an entry predating the pin reads null, and is still readable and writable", async () => {
+      await seed();
+      await dataRepo.save({
+        id: "legacy",
+        artefactId: "a1",
+        authorId: OWNER,
+        blob: '{"old":1}',
+        authoredAgainstVersion: null,
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+        updatedAt: new Date("2026-01-01T00:00:00Z"),
+      });
+      const legacy = await getOwnDataEntry(REF, deps);
+      expect(legacy?.blob).toBe('{"old":1}');
+      expect(legacy?.authoredAgainstVersion).toBeNull();
+
+      const saved = await putOwnDataEntry(REF, '{"new":1}', deps);
+      expect(saved.id).toBe("legacy");
+      expect(saved.authoredAgainstVersion).toBe("h");
+    });
+
+    it("never gates access: a stale pin doesn't block the owner, a matching one doesn't admit a non-viewer (AD3–AD5)", async () => {
+      const shared = await seed("public");
+      await putOwnDataEntry(REF, '{"v":1}', deps);
+      await putOwnDataEntry({ ...REF, authorId: "user-2" }, '{"v":1}', deps);
+      await editPayload("h2");
+
+      // Stale pins: both authors still read and write their own entry.
+      await expect(getOwnDataEntry(REF, deps)).resolves.not.toBeNull();
+      await expect(putOwnDataEntry(REF, '{"v":2}', deps)).resolves.toBeDefined();
+      await expect(
+        putOwnDataEntry({ ...REF, authorId: "user-2" }, '{"v":2}', deps),
+      ).resolves.toBeDefined();
+
+      // Unshare → private. user-2's pin now matches the live payload, but that
+      // doesn't reach past the access matrix.
+      const current = (await artefactRepo.findById("a1", SCOPE))!;
+      await artefactRepo.save({ ...current, visibility: "private", publicSlug: shared.publicSlug });
+      await expect(
+        getOwnDataEntry({ ...REF, authorId: "user-2" }, deps),
+      ).rejects.toBeInstanceOf(ArtefactNotFound);
+      await expect(
+        putOwnDataEntry({ ...REF, authorId: "user-2" }, "{}", deps),
+      ).rejects.toBeInstanceOf(ArtefactNotFound);
     });
   });
 });
