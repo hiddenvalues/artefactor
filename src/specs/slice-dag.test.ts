@@ -88,6 +88,21 @@ describe("parseSliceDag", () => {
     const [slice] = parseSliceDag(dag("### S5 — Share\nBody without a block.\n"));
     expect(slice).toMatchObject({ id: "S5", status: null, hasMetadata: false });
   });
+
+  it("records a slice heading indented by up to three spaces, flagged as indented", () => {
+    const slices = parseSliceDag(
+      dag(
+        section("S0", "done"),
+        "  ### S1 — Indented\n- **Status:** specced\n- **Depends on:** S0\n",
+        "    ### S2 — Four spaces is a code block, not a slice\n",
+      ),
+    );
+    expect(slices.map((s) => [s.id, s.indented])).toEqual([
+      ["S0", false],
+      ["S1", true],
+    ]);
+    expect(slices[1]).toMatchObject({ title: "Indented", status: "specced", dependsOn: ["S0"] });
+  });
 });
 
 describe("validateSliceDag", () => {
@@ -102,6 +117,13 @@ describe("validateSliceDag", () => {
         ),
       ),
     ).toEqual([]);
+  });
+
+  it("fails when a slice heading is indented instead of starting at column 0", () => {
+    const v = violationsOf(
+      dag(section("S0", "done"), " ### S1 — Indented\n- **Status:** done\n- **Depends on:** S0\n"),
+    );
+    expect(v).toEqual([expect.stringMatching(/S1.*indented/)]);
   });
 
   it("fails when a slice heading lacks the metadata block", () => {

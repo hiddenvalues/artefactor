@@ -46,8 +46,9 @@ metadata block follows it directly:
 The *why* of an edge belongs in the slice body. Other headings (`## Context: …`,
 `### Out of scope`, …) are ignored, so a DAG file can keep prose sections.
 
-**Drift test.** `src/specs/slice-dag.test.ts` runs in `pnpm test` and fails when a slice lacks
-the block or has an invalid Status; ids are duplicated; a dependency or optional id doesn't
+**Drift test.** `src/specs/slice-dag.test.ts` runs in `pnpm test` and fails when a slice heading
+is indented instead of starting at column 0, lacks the block, or has a missing or invalid Status
+or no `Depends on` field; ids are duplicated; a dependency or optional id doesn't
 exist, or a hard dependency is `dropped`; the hard-dependency graph has a cycle; a `done` or
 `in progress` slice depends on one that isn't `done`; or the root `CLAUDE.md` carries slice
 status again — a `## Status` section, bold markers like `**done**`, or a slice heading or

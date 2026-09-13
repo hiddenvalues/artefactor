@@ -9,8 +9,9 @@
 //   - **Optional:** S19a
 //   - **Linear:** ALI-268
 //
-// Any other heading (`## Context: …`, `### Out of scope`, …) is ignored, so a DAG file may keep
-// prose sections. Pure: no filesystem access here (see `spec-dag.ts` for the CLI).
+// The heading starts at column 0; one indented by 1–3 spaces still renders as a heading, so it is
+// parsed but reported rather than silently skipped. Any other heading (`## Context: …`,
+// `### Out of scope`, …) is ignored, so a DAG file may keep prose sections. Pure: no filesystem access here (see `spec-dag.ts` for the CLI).
 
 export const SLICE_STATUSES = ["specced", "in progress", "done", "dropped"] as const;
 export type SliceStatus = (typeof SLICE_STATUSES)[number];
@@ -29,11 +30,15 @@ export interface Slice {
   linear: string | null;
   /** Whether any metadata field directly follows the heading. */
   hasMetadata: boolean;
+  /** Whether the heading is indented (1–3 spaces) instead of starting at column 0. */
+  indented: boolean;
   /** 1-indexed line of the heading, for messages. */
   line: number;
 }
 
 const SLICE_HEADING = /^### ([A-Z]{1,3}\d+[a-z]?) — (.+)$/;
+/** Up to three leading spaces, which CommonMark still renders as a heading (four is code). */
+const HEADING_INDENT = /^ {0,3}(?! )/;
 const METADATA_FIELD = /^- \*\*(Status|Depends on|Optional|Linear):\*\*\s*(.*)$/;
 const NONE = "—";
 
@@ -52,7 +57,8 @@ export function parseSliceDag(markdown: string): Slice[] {
   const lines = markdown.split(/\r?\n/);
   const slices: Slice[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const heading = SLICE_HEADING.exec(lines[i]!);
+    const unindented = lines[i]!.replace(HEADING_INDENT, "");
+    const heading = SLICE_HEADING.exec(unindented);
     if (!heading) continue;
     const slice: Slice = {
       id: heading[1]!,
@@ -63,6 +69,7 @@ export function parseSliceDag(markdown: string): Slice[] {
       optional: [],
       linear: null,
       hasMetadata: false,
+      indented: unindented !== lines[i],
       line: i + 1,
     };
     for (let j = i + 1; j < lines.length; j++) {
@@ -115,6 +122,9 @@ export function validateSliceDag(slices: Slice[], options: ValidateOptions = {})
   }
 
   for (const s of slices) {
+    if (s.indented) {
+      violations.push(`${label(s)} has an indented heading — start it at column 0`);
+    }
     if (!s.hasMetadata) {
       violations.push(`${label(s)} lacks the metadata block directly under its heading`);
       continue;
@@ -229,8 +239,7 @@ export function checkClaudeMd(markdown: string): string[] {
   markdown.split(/\r?\n/).forEach((text, i) => {
     const line = i + 1;
     const at = `CLAUDE.md line ${line}`;
-    // A heading may be indented up to three spaces (CommonMark); four is an indented code block.
-    const heading = text.replace(/^ {0,3}(?! )/, "");
+    const heading = text.replace(HEADING_INDENT, "");
     if (STATUS_SECTION.test(heading)) {
       violations.push({ line, message: `${at}: a Status section — ${WHERE}` });
     }
