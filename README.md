@@ -92,4 +92,4 @@ the SQLite database and artefact payloads (the entire state of the monolith).
 
 ## License
 
-[MIT](LICENSE.md) © Oskar Hagberg
+[MIT](LICENSE.md) © Hidden Value AB
