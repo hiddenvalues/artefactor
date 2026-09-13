@@ -32,7 +32,8 @@ S1 Identity (BetterAuth — email+password for dev; Google OAuth added later)
                                                 tools — needs S2, S4, S6, S11, S18)
                                                 │  ┊
                                                 │  ┊ (optional sharpener, NOT a dependency)
-                                                │  ┄┄┄ S19 data version pin (AD9)
+                                                │  ┄┄┄ S19 data version pin (AD9 — done;
+                                                │        AH15 retention seam still pending)
                                                 │
                                                 └──► S31 Agent edits data: set_artefact_data
                                                            (needs S11, S18, S30; S19 likewise
@@ -503,24 +504,42 @@ flagged (see S18).
   with `ddd/artefact-data.md`, the tools in `src/server/mcp/`, and the `instructions` summary in
   `src/server/mcp/authoring-guide.ts` — same no-drift rule as specs).
 
-### S19 — Payload-retention seam + data version pin *(enabler; behaviour-preserving)*
+### S19 — Payload-retention seam + data version pin *(enabler; behaviour-preserving)* — **data pin done; retention seam pending**
 The single core change that makes artefact **history / rollback** buildable by a superset,
 without adding versioning to OSS. (DDD amendments: `ddd/artefact-hosting.md` AH15,
-`ddd/artefact-data.md` AD9.)
-- **Hosting — retention seam.** Replace the unconditional delete of the superseded payload in
-  `edit-artefact.command.ts` with a **`PayloadRetentionPolicy`** port. OSS wires the default
-  `DiscardSupersededPayload` (deletes — **byte-identical behaviour**); the seam is the one place
-  a superset swaps in a retaining policy. The artefact still has exactly one head payload. *(AH 15)*
-- **Data — version pin.** `DataEntry` gains `authoredAgainstVersion`; every `PUT …/data/me`
-  stamps it with the artefact's current payload content hash. Advisory only — opacity and the
-  read/write access rules are unchanged. *(AD 9)*
-- **Acceptance:** edit still leaves exactly one payload file under the default policy (no orphan,
-  no retained file); a fresh data write records the current payload hash; an entry written before
-  a subsequent edit reads back a pin ≠ the new hash (the staleness signal); permanent delete still
-  erases payload + data, and the policy is given the chance to purge anything it retained.
-- **Boundary:** this slice is **OSS** (the seam must live where the deletion does). The retaining
-  policy, the version store, and rollback are the **EE** *Artefact History* context — see
-  `ee/docs/specs/`. Migration adds the nullable `authoredAgainstVersion` column.
+`ddd/artefact-data.md` AD9.) The two halves are independent and **ship apart**: the AD9 data
+pin is **done** (ALI-269); the AH15 retention seam is **pending**. The EE *Artefact History*
+context needs **both**, so the pin alone doesn't unblock E1.
+- **Hosting — retention seam** *(pending)*. Replace the unconditional delete of the superseded
+  payload in `edit-artefact.command.ts` with a **`PayloadRetentionPolicy`** port. OSS wires the
+  default `DiscardSupersededPayload` (deletes — **byte-identical behaviour**); the seam is the one
+  place a superset swaps in a retaining policy. The artefact still has exactly one head payload.
+  *(AH 15)*
+  - **Acceptance:** edit still leaves exactly one payload file under the default policy (no
+    orphan, no retained file); permanent delete still erases payload + data, and the policy gets
+    the chance to purge anything it retained.
+- **Data — version pin** *(done)*. `DataEntry` gains `authoredAgainstVersion`. `upsertDataEntry`
+  requires it, so no write path can skip it, and `putOwnDataEntry` stamps it with the resolved
+  artefact's `payloadHash`. That one site covers `PUT …/data/me` **and** `set_artefact_data`
+  (S31), with no connector-specific path. Advisory only: opacity and the read/write access rules
+  are unchanged. The Drizzle upsert's `ON CONFLICT DO UPDATE SET` carries the pin, so it
+  **re-stamps** on update and doesn't freeze at the first write. `get_artefact_data` now returns
+  the entry's pin in the field S30 reserved (same shape). Not exposed on the BFF
+  `DataEntryResponse` or the S12 author list (no consumer). *(AD 9)*
+  - **Acceptance:** a fresh data write records the current payload hash; an entry written before
+    a subsequent payload edit reads back a pin ≠ the new hash (the staleness signal), and the
+    next write re-stamps it; an entry predating the column reads `null` and is still read and
+    written normally (its next write stamps it); the pin never grants or refuses access (a stale
+    pin doesn't block its author; a current one doesn't admit a non-viewer); the Drizzle adapter
+    re-stamps on update; `get_artefact_data` returns `null` with no entry, `= currentPayloadVersion`
+    after a write, and `≠` after `update_artefact` replaces the HTML; `set_artefact_data` and a
+    direct `putOwnDataEntry` stamp the same pin.
+  - **Persistence:** migration `0008` adds the nullable `authored_against_version` column (no
+    backfill). The EE Postgres mirror (`pg-schema.ts` + `PgDataRepository`) carries the same
+    column and mapping (P3 parity).
+- **Boundary:** this slice is **OSS** (the seam must live where the deletion does, and the pin
+  where the write does). The retaining policy, the version store, and rollback are the **EE**
+  *Artefact History* context — see `ee/docs/specs/`.
 
 ### S20 — Hide the data-context switcher for non-persisting artefacts
 Stop showing the "Data context" picker (S12 chrome) on artefacts that can't usefully use it.
@@ -854,8 +873,8 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
   `schema` is parsed JSON when present and `null` when absent, malformed, or not valid JSON —
   **never** an error; a blob is never validated against a declared schema (AD8 holds); an
   artefact with a declared schema survives export → re-upload intact; `currentPayloadVersion`
-  equals `payloadHash` and `authoredAgainstVersion` is `null` while S19 is unbuilt (both
-  fields' presence and shape asserted).
+  equals `payloadHash`, and `authoredAgainstVersion` is present with its shape asserted (its
+  value was `null` until the S19 data pin; S19's own acceptance now covers the populated value).
 - **Archived stays inert (AH7)** — no owner carve-out. Restore → download → re-archive is one
   click, which is not worth an exception in AH7 for an escape hatch.
 - **On S19/AD9 — reserve, don't depend.** `get_artefact_data` returns the version-pin **pair**
@@ -865,7 +884,8 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
   the edit command, which read-back has no business pulling in. `currentPayloadVersion` is free
   today (`payloadHash` is already on the aggregate). When S19 lands, the pin populates with
   **no tool-shape change and no doctrine rewrite** — the rule "pin present and ≠ current ⇒ that
-  user's data predates this payload" is written now and becomes true then.
+  user's data predates this payload" is written now and becomes true then. *(Borne out: the
+  S19 data pin shipped on its own, ahead of AH15, as a one-line change to this tool.)*
 - **Out of scope:** the download affordance for "shared with you" (`GalleryCard`/`GalleryRow`)
   and the `/a/:slug` shell toolbar (the endpoint already honours the matrix — widening is
   client-only); baking a data snapshot into the downloaded file; any data **write** tool (S31);
@@ -927,8 +947,9 @@ quarter"), write the whole blob back.
   not found; a tool-written blob — including one built from the declared schema's `example`
   into an empty entry — is what the served artefact's localStorage shim seeds.
 - **On S19/AD9 — sharpener, not dependency** (as S30). The write path stamps the pin for free
-  once S19 exists, because it is the same `putOwnDataEntry`; S19's own tests assert it. The
-  doctrine holds either way.
+  once S19 exists, because it is the same `putOwnDataEntry`; S19's own tests assert it
+  (`set_artefact_data` stamps exactly as `PUT …/data/me` does, and this tool needed no change).
+  The doctrine holds either way.
 - **Open question, decided: owner-scoped v1.** `putOwnDataEntry` already permits writing your
   own blob on any viewable artefact, but a write reaching further than the owner-scoped read
   would break read-modify-write exactly where the reach was wanted. Widening read + write
@@ -1068,7 +1089,8 @@ independent of the sharing branch and can proceed in parallel once S2 exists. ~~
 keys) and ~~S17~~ (data merge-patch) are dropped — see the DAG note. S18 is the programmatic
 surface. **S19** (retention seam + data pin) depends only on **S3** (the edit/replace path) and
 **S11** (`DataEntry`); it is behaviour-preserving in OSS and is the sole core dependency of the
-EE *Artefact History* context. **S22** (tenant scope + access-policy seam) depends on the repo +
+EE *Artefact History* context. Its halves ship apart: the **S11**-side data pin is done, and the
+**S3**-side retention seam is pending. **S22** (tenant scope + access-policy seam) depends on the repo +
 serving/access path (**S6/S10/S14**) and **S23** (EE policy seams) on the create/edit commands
 (**S2/S3**) + the S12 shell; both are behaviour-preserving enablers and the sole core dependencies
 of the EE **Tenancy/Organizations** and **Usage & Quota** contexts respectively. **S24** (inject

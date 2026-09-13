@@ -9,6 +9,7 @@ import { SINGLETON_SCOPE, type TenantScope } from "../../domain/artefact/tenant-
 import { InMemoryDataRepository } from "../../domain/data/in-memory-data-repository";
 import { MAX_BLOB_BYTES, upsertDataEntry } from "../../domain/data/data-entry";
 import { renderServedArtefact } from "../runtime/render";
+import { putOwnDataEntry } from "../data/own-data.command";
 import type { PayloadStore, StoredPayload } from "../../domain/artefact/ports";
 
 // S18 — the MCP tool surface, exercised through a real in-memory MCP
@@ -209,10 +210,10 @@ describe("MCP artefact tools (S18)", () => {
 
     // Two users save data (the opaque blobs the running artefact persists).
     await deps.dataRepo.save(
-      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: "{}" }),
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: "{}", authoredAgainstVersion: null }),
     );
     await deps.dataRepo.save(
-      upsertDataEntry({ id: "d2", artefactId: a.id, authorId: "u2", blob: "{}" }),
+      upsertDataEntry({ id: "d2", artefactId: a.id, authorId: "u2", blob: "{}", authoredAgainstVersion: null }),
     );
 
     expect(json(await call(client, "get_artefact", { id: a.id })).dataAuthorCount).toBe(2);
@@ -259,7 +260,7 @@ describe("MCP artefact tools (S18)", () => {
       await call(client, "create_artefact", { title: "Counter", kind: "form", html }),
     );
     await deps.dataRepo.save(
-      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u2", blob: "{}" }),
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u2", blob: "{}", authoredAgainstVersion: null }),
     );
 
     const r = json(await call(client, "get_artefact_html", { id: a.id }));
@@ -301,6 +302,7 @@ describe("MCP artefact tools (S18)", () => {
         artefactId: a.id,
         authorId: "u1",
         blob,
+        authoredAgainstVersion: null,
         now: new Date("2026-09-12T10:00:00.000Z"),
       }),
     );
@@ -318,7 +320,7 @@ describe("MCP artefact tools (S18)", () => {
       await call(client, "create_artefact", { title: "Tracker", kind: "form", html: "<i>t</i>" }),
     );
     await deps.dataRepo.save(
-      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u2", blob: '{"theirs":1}' }),
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u2", blob: '{"theirs":1}', authoredAgainstVersion: null }),
     );
 
     const r = json(await call(client, "get_artefact_data", { id: a.id }));
@@ -337,7 +339,7 @@ describe("MCP artefact tools (S18)", () => {
     );
     const blob = JSON.stringify({ big: "a".repeat(MAX_MCP_BLOB_BYTES) });
     await deps.dataRepo.save(
-      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob }),
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob, authoredAgainstVersion: null }),
     );
 
     const r = await call(client, "get_artefact_data", { id: a.id });
@@ -404,7 +406,7 @@ describe("MCP artefact tools (S18)", () => {
     // A blob that contradicts the declaration entirely.
     const blob = '{"something-else":"[1,2,3]"}';
     await deps.dataRepo.save(
-      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob }),
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob, authoredAgainstVersion: null }),
     );
 
     const r = await call(client, "get_artefact_data", { id: a.id });
@@ -412,19 +414,65 @@ describe("MCP artefact tools (S18)", () => {
     expect(json(r).blob).toBe(blob);
   });
 
-  it("get_artefact_data reports the payload version pin (AD9 reserved)", async () => {
+  it("get_artefact_data reports the payload version pin (AD9)", async () => {
     const client = await clientFor("u1");
     const a = json(
       await call(client, "create_artefact", { title: "Pinned", kind: "form", html: "<i>p</i>" }),
     );
     const stored = (await deps.repo.findById(a.id, SINGLETON_SCOPE))!;
 
-    const r = json(await call(client, "get_artefact_data", { id: a.id }));
-    expect(r.currentPayloadVersion).toBe(stored.payloadHash);
-    // Reserved, not yet populated: S19 (ALI-269) sets the pin on every write.
-    // The field's presence and shape are asserted now so S19 needs no tool change.
-    expect(r).toHaveProperty("authoredAgainstVersion");
-    expect(r.authoredAgainstVersion).toBeNull();
+    // No entry → no pin. The field's presence and shape are unchanged from S30.
+    const none = json(await call(client, "get_artefact_data", { id: a.id }));
+    expect(none.currentPayloadVersion).toBe(stored.payloadHash);
+    expect(none).toHaveProperty("authoredAgainstVersion");
+    expect(none.authoredAgainstVersion).toBeNull();
+
+    // A write stamps the live payload hash → pin = current.
+    await call(client, "set_artefact_data", { id: a.id, blob: '{"v":"1"}' });
+    const fresh = json(await call(client, "get_artefact_data", { id: a.id }));
+    expect(fresh.authoredAgainstVersion).toBe(stored.payloadHash);
+    expect(fresh.authoredAgainstVersion).toBe(fresh.currentPayloadVersion);
+
+    // The HTML changes under the saved data → pin ≠ current (the staleness signal).
+    await call(client, "update_artefact", { id: a.id, html: "<i>p, reshaped</i>" });
+    const stale = json(await call(client, "get_artefact_data", { id: a.id }));
+    expect(stale.currentPayloadVersion).not.toBe(stored.payloadHash);
+    expect(stale.authoredAgainstVersion).toBe(stored.payloadHash);
+  });
+
+  it("an entry predating the pin reads authoredAgainstVersion null, never an error (AD9)", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", { title: "Legacy", kind: "form", html: "<i>l</i>" }),
+    );
+    await deps.dataRepo.save(
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: "{}", authoredAgainstVersion: null }),
+    );
+    const r = await call(client, "get_artefact_data", { id: a.id });
+    expect(r.isError).toBeFalsy();
+    expect(json(r).blob).toBe("{}");
+    expect(json(r).authoredAgainstVersion).toBeNull();
+  });
+
+  it("set_artefact_data stamps the pin exactly as PUT …/data/me does (AD9)", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", { title: "Same path", kind: "form", html: "<i>s</i>" }),
+    );
+    const stored = (await deps.repo.findById(a.id, SINGLETON_SCOPE))!;
+    await call(client, "set_artefact_data", { id: a.id, blob: '{"via":"agent"}' });
+    const viaTool = (await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))!;
+
+    // The `PUT …/data/me` route's write, which is this command.
+    await putOwnDataEntry(
+      { ref: a.id, authorId: "u1", scope: SINGLETON_SCOPE },
+      '{"via":"http"}',
+      { artefactRepo: deps.repo, collectionRepo: deps.collectionRepo, dataRepo: deps.dataRepo },
+    );
+    const viaCommand = (await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))!;
+
+    expect(viaTool.authoredAgainstVersion).toBe(stored.payloadHash);
+    expect(viaCommand.authoredAgainstVersion).toBe(viaTool.authoredAgainstVersion);
   });
 
   it("both read-back tools are owner-scoped: unknown, another user's, and archived all -> not found", async () => {
@@ -470,7 +518,7 @@ describe("MCP artefact tools (S18)", () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       await deps.dataRepo.save(
-        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"k":"old"}', now: PAST }),
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"k":"old"}', authoredAgainstVersion: null, now: PAST }),
       );
 
       const read = json(await call(client, "get_artefact_data", { id: a.id }));
@@ -513,7 +561,7 @@ describe("MCP artefact tools (S18)", () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       await deps.dataRepo.save(
-        upsertDataEntry({ id: "d2", artefactId: a.id, authorId: "u2", blob: '{"theirs":1}', now: PAST }),
+        upsertDataEntry({ id: "d2", artefactId: a.id, authorId: "u2", blob: '{"theirs":1}', authoredAgainstVersion: null, now: PAST }),
       );
       await call(client, "set_artefact_data", { id: a.id, blob: '{"mine":1}' });
 
@@ -553,7 +601,7 @@ describe("MCP artefact tools (S18)", () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       await deps.dataRepo.save(
-        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"read"}', now: PAST }),
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"read"}', authoredAgainstVersion: null, now: PAST }),
       );
       const read = json(await call(client, "get_artefact_data", { id: a.id }));
       // The user's open tab saves between the agent's read and its write.
@@ -580,7 +628,7 @@ describe("MCP artefact tools (S18)", () => {
       const read = json(await call(client, "get_artefact_data", { id: a.id }));
       expect(read.updatedAt).toBeNull();
       await deps.dataRepo.save(
-        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"tab"}' }),
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"tab"}', authoredAgainstVersion: null }),
       );
 
       const r = await call(client, "set_artefact_data", {
@@ -596,7 +644,7 @@ describe("MCP artefact tools (S18)", () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       await deps.dataRepo.save(
-        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"tab"}' }),
+        upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"v":"tab"}', authoredAgainstVersion: null }),
       );
       const r = await call(client, "set_artefact_data", { id: a.id, blob: '{"v":"agent"}' });
       expect(r.isError).toBeFalsy();

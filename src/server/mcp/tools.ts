@@ -361,13 +361,11 @@ export function registerArtefactTools(
           // pin below is the payload hash the backend stamps on a write, while
           // the schema's own `version` is *semantic* and author-declared.
           currentPayloadVersion: a.payloadHash,
-          // Reserved by S30, populated by S19 (ALI-269) — which is an optional
-          // sharpener of this staleness signal, not a dependency: AD9 is advisory
-          // and never gates a read or write, so `null` is correct until then.
-          // The doctrine is written now and becomes exact then: null ⇒ unknown,
-          // treat as possibly stale; ≠ current ⇒ written against older HTML,
-          // migration owed; = current ⇒ matches what is deployed.
-          authoredAgainstVersion: null as string | null,
+          // Stamped by every `putOwnDataEntry` write (S19). null ⇒ no entry, or
+          // one written before the pin existed — unknown, treat as possibly
+          // stale; ≠ current ⇒ written against older HTML, migration owed;
+          // = current ⇒ matches what is deployed.
+          authoredAgainstVersion: entry?.authoredAgainstVersion ?? null,
         };
       }),
   );

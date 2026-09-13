@@ -104,7 +104,8 @@ export interface PutOwnDataOptions {
   ifUnmodifiedSince?: Date | null;
 }
 
-// PUT own entry — validate + upsert the caller's blob (AD1, AD2, AD8).
+// PUT own entry — validate + upsert the caller's blob (AD1, AD2, AD8), pinned
+// to the payload it was written against (AD9).
 export async function putOwnDataEntry(
   ref: OwnDataRef,
   blob: string,
@@ -136,6 +137,9 @@ export async function putOwnDataEntry(
     artefactId: artefact.id,
     authorId: ref.authorId,
     blob,
+    // AD9 — stamped here, so `PUT …/data/me` and `set_artefact_data` pin
+    // identically. Advisory: nothing above reads it.
+    authoredAgainstVersion: artefact.payloadHash,
     existing,
     now: (deps.now ?? (() => new Date()))(),
   });

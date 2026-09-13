@@ -39,7 +39,12 @@ export class DrizzleDataRepository implements DataRepository {
       .values(row)
       .onConflictDoUpdate({
         target: [dataEntry.artefactId, dataEntry.authorId],
-        set: { blob: row.blob, updatedAt: row.updatedAt },
+        // The pin re-stamps on every write (AD9), not only on insert.
+        set: {
+          blob: row.blob,
+          authoredAgainstVersion: row.authoredAgainstVersion,
+          updatedAt: row.updatedAt,
+        },
       });
   }
 
@@ -76,6 +81,7 @@ function toRow(e: DataEntry): DataEntryRow {
     artefactId: e.artefactId,
     authorId: e.authorId,
     blob: e.blob,
+    authoredAgainstVersion: e.authoredAgainstVersion,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -87,6 +93,7 @@ function toEntry(row: DataEntryRow): DataEntry {
     artefactId: row.artefactId,
     authorId: row.authorId,
     blob: row.blob,
+    authoredAgainstVersion: row.authoredAgainstVersion,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

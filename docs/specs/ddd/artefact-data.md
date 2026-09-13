@@ -195,8 +195,8 @@ saved** in the seconds between its read and its write — not merely that the ar
 After a successful agent write, an open tab keeps showing the old data until reloaded; its
 next save is refused and the host shell prompts the reload.
 
-**AD9.** Because the tool goes through `putOwnDataEntry`, once S19 lands a connector write
-stamps `authoredAgainstVersion` exactly as a shim write does — no connector-specific path.
+**AD9.** Because the tool goes through `putOwnDataEntry`, a connector write stamps
+`authoredAgainstVersion` exactly as a shim write does (S19) — no connector-specific path.
 
 ## Artefact runtime contract
 
@@ -299,9 +299,9 @@ read-only (AD5).
 
 ## Amendment (post-v0.2) — payload version pin
 
-> **Status:** DDD amendment (FDD slice **S19**). A small **additive** field on `DataEntry` —
-> harmless in OSS, and the hook a superset's rollback uses to judge data compatibility. It does
-> not weaken opacity.
+> **Status:** **implemented** (FDD slice **S19**, AD9 half; the AH15 retention half of S19 is
+> still pending). A small **additive** field on `DataEntry` — harmless in OSS, and the hook a
+> superset's rollback uses to judge data compatibility. It does not weaken opacity.
 
 **Problem.** A `DataEntry.blob` is shaped by whatever artefact payload was live when it was
 written. When the payload later changes shape — edited in place, or (in the superset) rolled
@@ -313,22 +313,27 @@ host can detect the mismatch.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `authoredAgainstVersion` | ContentHash \| null | The artefact's **payload content hash** at the moment of the (upsert) write. `null` for entries written before this field existed. Opaque — it names a payload, never describes the blob. |
+| `authoredAgainstVersion` | ContentHash \| null | The artefact's **payload content hash** at the moment of the (upsert) write, re-stamped on every write. `null` for entries written before this field existed (no backfill — which payload they were written against is unknowable). Opaque — it names a payload, never describes the blob. |
 
-**AD9 — pin on write.** Every `PUT …/data/me` sets `authoredAgainstVersion` to the artefact's
-*current* payload content hash. It is **advisory metadata only**: it never gates a read or write
-(AD3–AD5 unchanged) and the backend still never interprets the blob (AD8 holds).
+**AD9 — pin on write.** Every write through `putOwnDataEntry` — `PUT …/data/me` (the served
+shim) and, identically, the connector's `set_artefact_data` (S31) — sets
+`authoredAgainstVersion` to the artefact's *current* payload content hash. There is no
+connector-specific path. It is **advisory metadata only**: it never gates a read or write
+(AD3–AD5 unchanged), and the backend still never interprets the blob (AD8 holds). Because it is
+a **content** hash, an edit that restores byte-identical HTML makes an older pin current again.
+That is correct, since the blob matches that HTML. The pin is not exposed on the BFF
+`DataEntryResponse` or the S12 author list; today only the connector's snapshot read consumes it.
 
 **Use.**
 - **OSS:** even with a single mutable payload, the host can tell whether a viewer's saved data
   **predates the current payload** (pin ≠ current hash) — a sharper form of the `dataAuthorCount`
-  breaking-change signal already exposed to the MCP connector. **S30 reserves this field
-  without depending on it**: the snapshot read already returns the pair
-  (`currentPayloadVersion`, `authoredAgainstVersion`), with the pin `null` until this slice
-  lands. That is sound precisely because AD9 is advisory and gates nothing — when S19 ships,
-  the pin populates with no change to the tool's shape and no rewrite of the doctrine written
-  against it (`null` ⇒ unknown, treat as possibly stale; ≠ current ⇒ written against older
-  HTML, migration owed; = current ⇒ matches what is deployed).
+  breaking-change signal already exposed to the MCP connector. **S30 reserved this field
+  without depending on it**: the snapshot read returned the pair (`currentPayloadVersion`,
+  `authoredAgainstVersion`) with the pin `null` before this slice existed. That was sound
+  precisely because AD9 is advisory and gates nothing. S19 populated the pin with no change to
+  the tool's shape and no rewrite of the doctrine written against it (`null` ⇒ no entry, or one
+  that predates the pin: unknown, so treat it as possibly stale; ≠ current ⇒ written against
+  older HTML, migration owed; = current ⇒ matches what is deployed).
 
   Do not conflate this pin with the **declared schema's** `version` (see "Declared data schema"
   above): this one is mechanical and backend-set, that one semantic and author-set.

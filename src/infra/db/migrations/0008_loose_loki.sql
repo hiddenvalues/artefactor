@@ -1,0 +1,1 @@
+ALTER TABLE `data_entry` ADD `authored_against_version` text;
