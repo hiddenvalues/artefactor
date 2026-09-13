@@ -22,6 +22,8 @@ export interface Slice {
   status: string | null;
   /** Hard edges — this slice can't start before these are done. */
   dependsOn: string[];
+  /** Whether the required Depends on field is present (`—` counts; an omitted field doesn't). */
+  hasDependsOn: boolean;
   /** Non-blocking edges — recorded, never scheduled against. */
   optional: string[];
   linear: string | null;
@@ -57,6 +59,7 @@ export function parseSliceDag(markdown: string): Slice[] {
       title: heading[2]!.trim(),
       status: null,
       dependsOn: [],
+      hasDependsOn: false,
       optional: [],
       linear: null,
       hasMetadata: false,
@@ -73,6 +76,7 @@ export function parseSliceDag(markdown: string): Slice[] {
           break;
         case "Depends on":
           slice.dependsOn = parseIdList(value);
+          slice.hasDependsOn = true;
           break;
         case "Optional":
           slice.optional = parseIdList(value);
@@ -121,6 +125,9 @@ export function validateSliceDag(slices: Slice[], options: ValidateOptions = {})
       violations.push(
         `${label(s)} has invalid Status "${s.status}" (expected one of ${SLICE_STATUSES.join(" | ")})`,
       );
+    }
+    if (!s.hasDependsOn) {
+      violations.push(`${label(s)} is missing its Depends on field (use — for none)`);
     }
 
     for (const id of s.optional) {
@@ -177,14 +184,17 @@ function findCycles(slices: Slice[]): string[] {
 
 /**
  * Parallel build waves: each wave holds the not-done, not-dropped slices whose hard dependencies
- * are all done or scheduled in an earlier wave. Slices that can never be scheduled (an unknown or
- * dropped dependency, or a cycle) are left out — `validateSliceDag` reports those.
+ * are all done or scheduled in an earlier wave. Slices that can't be scheduled (no Depends on
+ * field, an unknown or dropped dependency, or a cycle) are left out — `validateSliceDag` reports
+ * those.
  */
 export function computeWaves(slices: Slice[], options: ValidateOptions = {}): Slice[][] {
   const resolved = new Set(
     [...(options.external ?? []), ...slices].filter((s) => s.status === "done").map((s) => s.id),
   );
-  let pending = slices.filter((s) => s.status !== "done" && s.status !== "dropped");
+  let pending = slices.filter(
+    (s) => s.hasDependsOn && s.status !== "done" && s.status !== "dropped",
+  );
   const waves: Slice[][] = [];
   for (;;) {
     const wave = pending.filter((s) => s.dependsOn.every((id) => resolved.has(id)));

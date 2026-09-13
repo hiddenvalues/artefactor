@@ -114,6 +114,11 @@ describe("validateSliceDag", () => {
     expect(v).toEqual([expect.stringMatching(/S0.*Status/)]);
   });
 
+  it("fails when the Depends on field is omitted (`—` is how to say none)", () => {
+    const v = violationsOf(dag("### S0 — Scaffold\n- **Status:** done\nBody.\n"));
+    expect(v).toEqual([expect.stringMatching(/S0.*Depends on/)]);
+  });
+
   it("fails when the Status is not a known value", () => {
     const v = violationsOf(dag(section("S0", "half done")));
     expect(v).toEqual([expect.stringMatching(/S0.*invalid Status "half done"/)]);
@@ -201,6 +206,7 @@ describe("computeWaves", () => {
         section("S4", "specced", "S3", ["- **Optional:** S5"]),
         section("S5", "specced", "S0"),
         section("S6", "dropped", "S0"),
+        "### S7 — No Depends on field\n- **Status:** specced\n",
       ),
     );
     expect(computeWaves(slices).map((w) => w.map((s) => s.id))).toEqual([

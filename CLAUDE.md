@@ -219,7 +219,7 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
   reversal — slice status belongs in `docs/specs/fdd/slice-dag.md`, in-flight work in Linear.
 - **Slice naming:** in all human-facing text a session writes (chat, Linear, PR titles and
   bodies, commit messages), refer to a slice by its **full title** — e.g. "S31 — Agent edits
-  data", never "S31". The machine-parsed metadata fields in `slice-dag.md` keep bare ids.
+  data: `set_artefact_data` MCP tool", never "S31". The machine-parsed metadata fields in `slice-dag.md` keep bare ids.
 
 ## Commands
 
