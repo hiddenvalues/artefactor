@@ -229,7 +229,9 @@ export function checkClaudeMd(markdown: string): string[] {
   markdown.split(/\r?\n/).forEach((text, i) => {
     const line = i + 1;
     const at = `CLAUDE.md line ${line}`;
-    if (STATUS_SECTION.test(text)) {
+    // A heading may be indented up to three spaces (CommonMark); four is an indented code block.
+    const heading = text.replace(/^ {0,3}(?! )/, "");
+    if (STATUS_SECTION.test(heading)) {
       violations.push({ line, message: `${at}: a Status section — ${WHERE}` });
     }
     for (const marker of text.matchAll(STATUS_MARKER)) {
@@ -254,7 +256,7 @@ export function checkClaudeMd(markdown: string): string[] {
     }
 
     let message: string | null = null;
-    if (SLICE_HEADING.test(text)) {
+    if (SLICE_HEADING.test(heading)) {
       message = `${at}: slice heading outside a code block — ${WHERE}`;
     } else if (INDENTED_METADATA_FIELD.test(text)) {
       message = `${at}: slice metadata field outside a code block — ${WHERE}`;

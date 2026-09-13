@@ -272,6 +272,20 @@ describe("checkClaudeMd", () => {
     expect(checkClaudeMd(documented)).toEqual([]);
   });
 
+  it("matches a Status section or slice heading indented by up to three spaces", () => {
+    expect(checkClaudeMd("   ## Status: shipped\n   ### S40 — Pasted")).toEqual([
+      expect.stringMatching(/line 1: a Status section/),
+      expect.stringMatching(/line 2: slice heading/),
+    ]);
+    expect(checkClaudeMd(" ### S40 — Pasted")).toEqual([
+      expect.stringMatching(/line 1: slice heading/),
+    ]);
+  });
+
+  it("leaves a four-space-indented heading alone (an indented code block)", () => {
+    expect(checkClaudeMd("    ## Status: shipped\n    ### S40 — Pasted")).toEqual([]);
+  });
+
   it("does not treat an over-indented fence-like line (an indented code block) as a fence", () => {
     const md = ["    ```", "### S40 — Pasted", "- **Depends on:** S31", "    ```"].join("\n");
     expect(checkClaudeMd(md)).toEqual([
