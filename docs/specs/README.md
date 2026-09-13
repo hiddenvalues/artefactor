@@ -50,7 +50,9 @@ The *why* of an edge belongs in the slice body. Other headings (`## Context: …
 the block or has an invalid Status; ids are duplicated; a dependency or optional id doesn't
 exist, or a hard dependency is `dropped`; the hard-dependency graph has a cycle; a `done` or
 `in progress` slice depends on one that isn't `done`; or the root `CLAUDE.md` carries slice
-status again (a `## Status` section or bold markers like `**done**`).
+status again — a `## Status` section, bold markers like `**done**`, or a slice heading or
+metadata field (`- **Status:**`, `- **Depends on:**`, …) copied out of the DAG. Headings and
+fields inside a fenced code block are allowed, so the format can be documented by example.
 
 **`pnpm spec:dag [file]`** prints a mermaid graph of a DAG file (dropped slices omitted) and
 its parallel build waves — the not-done slices whose hard dependencies are done or in an

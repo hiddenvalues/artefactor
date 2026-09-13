@@ -207,23 +207,36 @@ export function computeWaves(slices: Slice[], options: ValidateOptions = {}): Sl
 
 const STATUS_SECTION = /^## Status\b/;
 const STATUS_MARKER = /\*\*(done|pending|specced|in progress|dropped|half done)\*\*/gi;
+const INDENTED_METADATA_FIELD = /^\s*- \*\*(Status|Depends on|Optional|Linear):\*\*/;
+const CODE_FENCE = /^\s*(```|~~~)/;
+const WHERE = "slice status lives in docs/specs/fdd/slice-dag.md";
 
 /**
  * `CLAUDE.md` holds only what's true between slices, so it must not carry slice status: no
- * `## Status` section and no bold per-slice status markers (`**done**`, `**pending**`, …).
+ * `## Status` section, no bold per-slice status markers (`**done**`, `**pending**`, …), and no
+ * slice heading or metadata field copied out of the DAG. Headings and fields inside a fenced
+ * code block are allowed, so the metadata format can be documented by example.
  */
 export function checkClaudeMd(markdown: string): string[] {
   const violations: string[] = [];
+  let inFence = false;
   markdown.split(/\r?\n/).forEach((line, i) => {
+    const at = `CLAUDE.md line ${i + 1}`;
     if (STATUS_SECTION.test(line)) {
-      violations.push(
-        `CLAUDE.md line ${i + 1}: a Status section — slice status lives in docs/specs/fdd/slice-dag.md`,
-      );
+      violations.push(`${at}: a Status section — ${WHERE}`);
     }
     for (const marker of line.matchAll(STATUS_MARKER)) {
-      violations.push(
-        `CLAUDE.md line ${i + 1}: status marker ${marker[0]} — slice status lives in docs/specs/fdd/slice-dag.md`,
-      );
+      violations.push(`${at}: status marker ${marker[0]} — ${WHERE}`);
+    }
+    if (CODE_FENCE.test(line)) {
+      inFence = !inFence;
+      return;
+    }
+    if (inFence) return;
+    if (SLICE_HEADING.test(line)) {
+      violations.push(`${at}: slice heading outside a code block — ${WHERE}`);
+    } else if (INDENTED_METADATA_FIELD.test(line)) {
+      violations.push(`${at}: slice metadata field outside a code block — ${WHERE}`);
     }
   });
   return violations;

@@ -234,6 +234,52 @@ describe("checkClaudeMd", () => {
     expect(checkClaudeMd("S19 is **half done**; S23 is **pending**.")).toHaveLength(2);
     expect(checkClaudeMd("S0 is **done**.")).toHaveLength(1);
   });
+
+  it("fails on a slice heading or metadata fields copied out of the DAG", () => {
+    const pasted = [
+      "## Architecture",
+      "",
+      "### S40 — Some slice",
+      "- **Status:** specced",
+      "- **Depends on:** S31",
+      "  - **Optional:** S19a",
+      "- **Linear:** ALI-999",
+    ].join("\n");
+    expect(checkClaudeMd(pasted)).toEqual([
+      expect.stringMatching(/line 3: slice heading/),
+      expect.stringMatching(/line 4: slice metadata field/),
+      expect.stringMatching(/line 5: slice metadata field/),
+      expect.stringMatching(/line 6: slice metadata field/),
+      expect.stringMatching(/line 7: slice metadata field/),
+    ]);
+  });
+
+  it("accepts the metadata format documented inside a fenced code block", () => {
+    const documented = [
+      "- The DAG records each slice like this:",
+      "",
+      "  ```markdown",
+      "  ### S31 — Agent edits data: `set_artefact_data` MCP tool",
+      "  - **Status:** done",
+      "  - **Depends on:** S11, S18, S30",
+      "  ```",
+      "",
+      "~~~",
+      "### S0 — Scaffold",
+      "- **Depends on:** —",
+      "~~~",
+    ].join("\n");
+    expect(checkClaudeMd(documented)).toEqual([]);
+  });
+
+  it("accepts prose and non-slice headings about dependencies and build order", () => {
+    const prose = [
+      "### Architecture at a glance",
+      "- **Depends on the adapter set:** routes take injected ports.",
+      "Slices depend on each other; build order follows the DAG topologically.",
+    ].join("\n");
+    expect(checkClaudeMd(prose)).toEqual([]);
+  });
 });
 
 describe("the real specs", () => {
