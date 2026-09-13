@@ -46,13 +46,13 @@ VPS's public IP), `<app-uuid>` (assigned when the Coolify app is created).
 
 ## 1. Fork the repo to `humlytech`
 
-Production deploys from **`humlytech/artefactor`**, not the personal `oskarhagberg/artefactor`.
+Production deploys from **`humlytech/artefactor`**, not the upstream `hiddenvalues/artefactor`.
 
-1. GitHub → `oskarhagberg/artefactor` → **Fork** → owner **humlytech**, name `artefactor`.
+1. GitHub → `hiddenvalues/artefactor` → **Fork** → owner **humlytech**, name `artefactor`.
    (The fork copies `main`, including `.github/workflows/` and this runbook.)
 2. **Enable Actions on the fork:** the fork's **Actions** tab → *I understand my workflows,
    go ahead and enable them*. Forks ship with workflows disabled until you opt in.
-3. Decide how `main` advances on the fork. Simplest: develop on `oskarhagberg`, and when ready
+3. Decide how `main` advances on the fork. Simplest: develop on `hiddenvalues`, and when ready
    to ship, push/merge into `humlytech`'s `main` (e.g. add it as a second remote:
    `git remote add humly git@github.com:humlytech/artefactor.git` and `git push humly main`).
    Every push to the fork's `main` triggers a deploy.
@@ -80,7 +80,7 @@ before creating the app so Let's Encrypt validation succeeds on the first deploy
 
 How much work this is depends on the **fork's visibility**:
 
-- **Public fork → public package (simplest).** `oskarhagberg/artefactor` is public today; if
+- **Public fork → public package (simplest).** `hiddenvalues/artefactor` is public today; if
   the `humlytech` fork is also public, the GHCR package is public and the VPS pulls with no
   credentials. **Skip the rest of this step.**
 - **Private fork → private package.** The VPS must authenticate to pull. Reuse the
@@ -107,7 +107,7 @@ How much work this is depends on the **fork's visibility**:
      ```
 
 > Recommendation: keep the fork (and thus the package) **public** unless there's a reason not
-> to — the source is already public on the personal repo, and it removes this whole step.
+> to — the source is already public on the upstream repo, and it removes this whole step.
 
 ## 5. Create the Coolify project + application
 

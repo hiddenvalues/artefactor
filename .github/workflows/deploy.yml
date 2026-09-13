@@ -34,7 +34,7 @@ jobs:
     # The gate itself is the reusable ci.yml — the same one every PR runs — so what
     # PRs check and what deploys gate on can never drift.
     # Owner guard: production deploys only from the humlytech fork, so a push to the
-    # personal repo's main never deploys (nor pushes a stray image to its GHCR).
+    # upstream repo's main never deploys (nor pushes a stray image to its GHCR).
     if: github.ref == 'refs/heads/main' && github.repository == 'humlytech/artefactor'
     permissions:
       contents: read # the called ci.yml inherits at most this
