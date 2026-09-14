@@ -86,8 +86,10 @@ export async function deleteArtefactCommand(
     scope: input.scope,
   });
   assertDeletable(existing);
+  // Derived thumbnails first (AH11, S35): if their cleanup fails, the artefact
+  // is still whole — a missing thumbnail is recoverable, a missing payload not.
+  await deps.thumbnailStore.deleteAll(existing.id);
   await deps.payloadStore.delete(existing.payloadRef);
-  await deps.thumbnailStore.deleteAll(existing.id); // AH11 (S35)
   await deps.dataRepo.deleteByArtefact(existing.id);
   await deps.viewRepo.deleteByArtefact(existing.id);
   await deps.bookmarkRepo.deleteByArtefact(existing.id); // BM4

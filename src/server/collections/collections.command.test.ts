@@ -458,6 +458,24 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     expect((await artefactRepo.findById("a1", SCOPE))?.status).toBe("active");
   });
 
+  it("delete cascade removes an artefact's thumbnails before its payload (S35)", async () => {
+    const { root } = await seedTree();
+    await archiveCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
+      { collectionRepo, artefactRepo },
+    );
+    thumbnailStore.deleteAll = async () => {
+      throw new Error("disk error");
+    };
+    await expect(
+      deleteCollectionCommand(
+        { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
+        { collectionRepo, artefactRepo, dataRepo, viewRepo, payloadStore, bookmarkRepo, thumbnailStore },
+      ),
+    ).rejects.toThrow("disk error");
+    expect(payloadStore.deleted).toEqual([]);
+  });
+
   it("delete is archived-only and erases the subtree fully (CL8)", async () => {
     const { root, child } = await seedTree();
     const deps = {

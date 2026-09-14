@@ -197,8 +197,8 @@ export async function deleteCollectionCommand(
       evicted += 1;
       continue;
     }
+    await deps.thumbnailStore.deleteAll(artefact.id); // derived data first (S35)
     await deps.payloadStore.delete(artefact.payloadRef);
-    await deps.thumbnailStore.deleteAll(artefact.id);
     await deps.dataRepo.deleteByArtefact(artefact.id);
     await deps.viewRepo.deleteByArtefact(artefact.id);
     await deps.bookmarkRepo.deleteByArtefact(artefact.id);

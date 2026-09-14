@@ -169,4 +169,20 @@ describe("delete command (S15, AH11)", () => {
     expect(thumbnailStore.hashesOf("a1")).toEqual([]);
     expect(thumbnailStore.hashesOf("other")).toEqual(["h"]);
   });
+
+  it("a failing thumbnail cleanup leaves the payload in place (derived data goes first)", async () => {
+    await seedArchivedWithData();
+    const thumbnailStore = new InMemoryThumbnailStore();
+    thumbnailStore.deleteAll = async () => {
+      throw new Error("disk error");
+    };
+    await expect(
+      deleteArtefactCommand(
+        { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+        { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore, thumbnailStore },
+      ),
+    ).rejects.toThrow("disk error");
+    expect(payloadStore.deleted).toEqual([]);
+    expect(await repo.findById("a1", SCOPE)).not.toBeNull();
+  });
 });
