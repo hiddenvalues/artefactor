@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright-core";
 import { ThumbnailRendererUnavailable } from "../../domain/artefact/errors";
-import { PlaywrightThumbnailRenderer } from "./playwright-thumbnail-renderer";
+import { PlaywrightThumbnailRenderer, captureWebp } from "./playwright-thumbnail-renderer";
 
 // S35 (AH26) — the Playwright renderer against a real headless Chromium. CI
 // installs `chromium-headless-shell` first, so these always run there; locally
@@ -152,6 +152,30 @@ describe.skipIf(!runBrowserTests)("PlaywrightThumbnailRenderer (S35)", () => {
 });
 
 describe("PlaywrightThumbnailRenderer without a browser (S35, AH25)", () => {
+  it("retries a capture Chromium rejects before its first frame exists", async () => {
+    const calls: string[] = [];
+    let attempts = 0;
+    const bytes = await captureWebp(async (method) => {
+      calls.push(method);
+      attempts++;
+      if (attempts === 1) throw new Error("Protocol error (Page.captureScreenshot): Unable to capture screenshot");
+      return { data: Buffer.from("RIFFxxxxWEBP").toString("base64") };
+    }, 0);
+    expect(new TextDecoder().decode(bytes)).toBe("RIFFxxxxWEBP");
+    expect(calls).toEqual(["Page.captureScreenshot", "Page.captureScreenshot"]);
+  });
+
+  it("gives up after the last capture attempt", async () => {
+    let attempts = 0;
+    await expect(
+      captureWebp(async () => {
+        attempts++;
+        throw new Error("Unable to capture screenshot");
+      }, 0),
+    ).rejects.toThrow("Unable to capture screenshot");
+    expect(attempts).toBe(3);
+  });
+
   it("reports itself unavailable when Chromium cannot launch", async () => {
     const renderer = new PlaywrightThumbnailRenderer({
       launch: (): Promise<Browser> => Promise.reject(new Error("Executable doesn't exist")),

@@ -24,6 +24,37 @@ export interface PlaywrightThumbnailRendererOptions {
 
 class RenderTimedOut extends Error {}
 
+type CaptureSend = (
+  method: "Page.captureScreenshot",
+  params: {
+    format: "webp";
+    quality: number;
+    clip: { x: number; y: number; width: number; height: number; scale: number };
+  },
+) => Promise<{ data: string }>;
+
+// The CDP WebP capture (Playwright's own screenshot() has no WebP). Chromium
+// rejects a capture made before its first compositor frame exists ("Unable to
+// capture screenshot") — `load` doesn't guarantee one — so a rejected capture
+// is retried after a short pause, a bounded number of times. Retrying from here
+// needs nothing from the page, which a hostile artefact could stall.
+export async function captureWebp(send: CaptureSend, retryDelayMs = 250): Promise<Uint8Array> {
+  const attempts = 3;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const { data } = await send("Page.captureScreenshot", {
+        format: "webp",
+        quality: 80,
+        clip: { x: 0, y: 0, ...VIEWPORT, scale: SCALE },
+      });
+      return new Uint8Array(Buffer.from(data, "base64"));
+    } catch (err) {
+      if (attempt >= attempts) throw err;
+      await new Promise((r) => setTimeout(r, retryDelayMs));
+    }
+  }
+}
+
 // S35 (AH26) — renders a pristine thumbnail of an artefact's stored HTML in
 // headless Chromium: the payload alone, in a fresh context with no cookies,
 // storage, credentials, service workers or WebSockets, at a synthetic origin.
@@ -47,13 +78,7 @@ export class PlaywrightThumbnailRenderer implements ThumbnailRenderer {
   async render(html: Uint8Array): Promise<Uint8Array> {
     return this.withPage(html, async (page) => {
       const cdp = await page.context().newCDPSession(page);
-      // Playwright's own screenshot() has no WebP; the CDP capture does.
-      const { data } = await cdp.send("Page.captureScreenshot", {
-        format: "webp",
-        quality: 80,
-        clip: { x: 0, y: 0, ...VIEWPORT, scale: SCALE },
-      });
-      return new Uint8Array(Buffer.from(data, "base64"));
+      return captureWebp((method, params) => cdp.send(method, params));
     });
   }
 
