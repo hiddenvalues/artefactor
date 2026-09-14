@@ -233,11 +233,13 @@ manage who it belongs to.
 
 2. **Keep one JSON object under one (versioned) key.** Serialize your whole state to a single
    object and store it as JSON. Version the key so you can migrate later.
+
    ```js
    var STORAGE_KEY = "my-artefact-v1";
    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
    var saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
    ```
+
    (Multiple keys also work — the whole localStorage namespace is saved — but one object is
    clearer and easier to version.)
 
@@ -246,6 +248,7 @@ manage who it belongs to.
    - opened as a bare file with storage disabled / private mode;
    - Artefactor has loaded the data **read-only**, so writes are rejected;
    - the 5 MB budget is exceeded (throws `QuotaExceededError`).
+
    ```js
    function save(state) {
      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }

@@ -1,4 +1,4 @@
-# The quality gate: tests + typecheck (svelte-check + tsc).
+# The quality gate: tests + typecheck (svelte-check + tsc) + markdown lint.
 #
 # Runs in two contexts with ONE definition (so they can never drift):
 #   - pull_request: every PR shows the gate before merge
@@ -36,3 +36,4 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - run: pnpm check
+      - run: pnpm lint:md

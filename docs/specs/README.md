@@ -28,15 +28,17 @@ else (not `CLAUDE.md`, not a diagram, not prose) records them. It is split in tw
 - **The catalog** — `fdd/slice-dag.md`. Intro prose, a `## Contexts` table and the
   `## High-water marks`. It holds no slice headings.
 - **Context files** — `fdd/slices/<context>.md`, one per context. Each opens with a
-  `# <Context>` H1 and holds that context's slices in id order. A dependency may name a slice in
-  any context file.
+  `# <Context>` H1 and holds that context's slices in id order under a `## Slices` heading (so
+  heading levels step `#` → `##` → `###`). A dependency may name a slice in any context file.
 
 A slice is a heading matching `### <id> — <title>`, where `<id>` is 1–3 capital letters, a
 number and an optional lowercase suffix (`S19a`, `S34b`, `E1`, `ET2`). The heading is the title
-only; a fixed metadata block follows it directly:
+only; a fixed metadata block of contiguous fields follows it after one blank line (the blank line
+may be omitted, but never doubled):
 
 ```markdown
 ### S31 — Agent edits data: `set_artefact_data` MCP tool
+
 - **Status:** done
 - **Depends on:** S11, S18, S30
 - **Optional:** S19a
@@ -95,7 +97,8 @@ the context files; a dependency or optional id doesn't exist, or a hard dependen
 the hard-dependency graph has a cycle; or a `done` or `in progress` slice depends on one that
 isn't `done`.
 
-**Catalog.** It fails when a File cell isn't a Markdown link; a catalogued file doesn't exist; a `.md` file in `slices/` is missing
+**Catalog.** It fails when a File cell isn't a Markdown link; a catalogued file doesn't exist; a
+`.md` file in `slices/` is missing
 from the catalog; a file sits in two rows; a Slices cell and its file disagree on ids or their
 order; a Context cell differs from the file's H1; the catalog itself holds a slice heading; or a
 high-water mark is malformed, duplicated, below a slice's number, or missing for a prefix in use

@@ -16,7 +16,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/infra/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "spec:dag": "tsx src/specs/spec-dag.ts"
+    "spec:dag": "tsx src/specs/spec-dag.ts",
+    "lint:md": "markdownlint-cli2",
+    "lint:md:fix": "markdownlint-cli2 --fix"
   },
   "devEngines": {
     "packageManager": {
@@ -46,6 +48,7 @@
     "concurrently": "^10.0.3",
     "drizzle-kit": "^0.31.10",
     "esbuild": "^0.28.1",
+    "markdownlint-cli2": "^0.23.2",
     "node-gyp": "^13.0.0",
     "svelte": "^5.56.4",
     "svelte-check": "^4.7.1",

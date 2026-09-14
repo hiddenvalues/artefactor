@@ -1,7 +1,7 @@
 # Deployment — production on UpCloud via Coolify
 
 The production setup, end to end. Following this document from top to bottom takes Artefactor
-from "code on `main`" to "running at **https://<domain>** with durable storage,
+from "code on `main`" to "running at **`https://<domain>`** with durable storage,
 HTTPS, and automatic deploys on every push to `main`."
 
 ```text
@@ -137,7 +137,7 @@ How much work this is depends on the **fork's visibility**:
 5. **Environment variables** (Coolify → app → Environment Variables; mark secrets as such):
 
    | Variable | Value | Notes |
-   |---|---|---|
+   | --- | --- | --- |
    | `BETTER_AUTH_SECRET` | `openssl rand -hex 32` | **Secret. Required in prod** — the BFF refuses to boot with the dev placeholder. Rotating it signs everyone out. |
    | `BETTER_AUTH_URL` | `https://<domain>` | Public base URL BetterAuth issues session cookies/callbacks against. |
    | `GOOGLE_CLIENT_ID` | from the Google OAuth client | **Required in prod** (Google-only auth). See §5a. |
@@ -196,7 +196,7 @@ two repository secrets **on the `humlytech` fork** (Settings → Secrets and var
 Actions):
 
 | Secret | Where to get it |
-|---|---|
+| --- | --- |
 | `COOLIFY_WEBHOOK` | Coolify → the application → **Webhooks** → Deploy Webhook URL (looks like `<coolify-url>/api/v1/deploy?uuid=…&force=false`). |
 | `COOLIFY_TOKEN` | Coolify → **Keys & Tokens → API tokens** → create one with deploy permission. |
 

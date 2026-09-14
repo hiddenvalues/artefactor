@@ -1,13 +1,16 @@
 # Identity & Access
 
+## Slices
+
 ### S1 — Identity (BetterAuth)
+
 - **Status:** done
 - **Depends on:** S0
 
 *Includes Google OAuth + the sign-up domain allowlist.*
 
 - Users sign in with **Google OAuth** (the production method) and, in dev/test only, **email
-  + password**. Production disables email+password (`emailAndPassword.enabled = NODE_ENV !==
+  - password**. Production disables email+password (`emailAndPassword.enabled = NODE_ENV !==
   "production"`), removing the open unverified sign-up path from prod.
 - Account creation is restricted to allowed email domains (`AUTH_ALLOWED_EMAIL_DOMAINS`,
   default `example.com` for dev; org domains set in prod), enforced for every provider via the
@@ -16,6 +19,7 @@
 - Protected endpoints reject unauthenticated requests. *(IA 1)*
 
 **Implementation notes (from building S1):**
+
 - **BetterAuth instance** in `src/server/auth.ts` — `betterAuth()` with the **Drizzle
   adapter** (`provider: "sqlite"`) over the shared `db`, `emailAndPassword.enabled` (gated to
   non-production), `socialProviders.google` (configured when `GOOGLE_CLIENT_ID` +
@@ -48,10 +52,12 @@
   shared `src/test/setup.ts` points each test run at a temp DB and sets the test allowlist.
 
 ### S8 — API key issue / revoke
+
 - **Status:** dropped
 - **Depends on:** S1
 
 ### S9 — API push ingestion
+
 - **Status:** dropped
 - **Depends on:** S2, S8
 

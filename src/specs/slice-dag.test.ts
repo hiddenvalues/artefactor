@@ -92,6 +92,24 @@ describe("parseSliceDag", () => {
     expect(slices.map((s) => s.id)).toEqual(["E1"]);
   });
 
+  it("reads the metadata block after one blank line under the heading, or none", () => {
+    const block = "- **Status:** done\n- **Depends on:** S11, S18\nBody.\n";
+    for (const gap of ["\n", ""]) {
+      const [slice] = parseSliceDag(dag(`### S31 — Title\n${gap}${block}`));
+      expect(slice).toMatchObject({
+        id: "S31",
+        status: "done",
+        dependsOn: ["S11", "S18"],
+        hasMetadata: true,
+      });
+    }
+  });
+
+  it("ends the metadata block at a blank line between its fields", () => {
+    const [slice] = parseSliceDag(dag("### S5 — Title\n\n- **Status:** done\n\n- **Depends on:** —\n"));
+    expect(slice).toMatchObject({ status: "done", hasDependsOn: false });
+  });
+
   it("records a slice with no metadata block as status null", () => {
     const [slice] = parseSliceDag(dag("### S5 — Share\nBody without a block.\n"));
     expect(slice).toMatchObject({ id: "S5", status: null, hasMetadata: false });
@@ -137,6 +155,11 @@ describe("validateSliceDag", () => {
   it("fails when a slice heading lacks the metadata block", () => {
     const v = violationsOf(dag("### S0 — Scaffold\nNo block.\n"));
     expect(v).toEqual([expect.stringMatching(/S0.*metadata block/)]);
+  });
+
+  it("fails when two blank lines separate a slice heading from its metadata block", () => {
+    const v = violationsOf(dag("### S0 — Scaffold\n\n\n- **Status:** done\n- **Depends on:** —\n"));
+    expect(v).toEqual([expect.stringMatching(/S0 .*lacks the metadata block/)]);
   });
 
   it("fails when the Status field is missing", () => {

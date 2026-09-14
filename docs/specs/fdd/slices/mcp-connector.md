@@ -1,11 +1,15 @@
 # MCP connector
 
+## Slices
+
 ### S18 — MCP connector (remote MCP server + OAuth)
+
 - **Status:** done
 - **Depends on:** S2, S3, S4, S5, S7, S10
 
 S18's tools wrap the existing Hosting commands, including the S4 single-artefact read and the
 S10 owner list.
+
 - Artefactor exposes a **remote MCP server** at `POST /mcp` (Streamable HTTP) that Claude
   (claude.ai / Claude design) connects to as a custom connector. *(IA 2)*
 - **OAuth 2.1** via BetterAuth's `mcp` plugin: discovery (`.well-known/oauth-*`), dynamic
@@ -43,6 +47,7 @@ S10 owner list.
   `src/server/mcp/authoring-guide.ts` — same no-drift rule as specs).
 
 ### S30 — Export artefact HTML (GUI download + MCP read-back tools)
+
 - **Status:** done
 - **Depends on:** S2, S4, S6, S11, S18
 - **Optional:** S19a
@@ -102,7 +107,8 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
 - **Archived stays inert (AH7)** — no owner carve-out. Restore → download → re-archive is one
   click, which is not worth an exception in AH7 for an escape hatch.
 - **On S19a/AD9 — reserve, don't depend.** `get_artefact_data` returns the version-pin **pair**
-  but S19a is **not** a hard dependency edge (only `Optional`), and the missing edge is deliberate, not an oversight:
+  but S19a is **not** a hard dependency edge (only `Optional`), and the missing edge is deliberate,
+  not an oversight:
   AD9 is *advisory by spec* and never gates a read or write, so nothing here is incorrect while
   the pin is `null`; and the pin was first specced together with the unrelated AH15
   `PayloadRetentionPolicy` port in the edit command (now S19b), which read-back has no business
@@ -119,6 +125,7 @@ and the backend treats blobs as opaque (AD8), so it cannot migrate them.
 - **Boundary:** **OSS**. No schema change.
 
 ### S31 — Agent edits data: `set_artefact_data` MCP tool
+
 - **Status:** done
 - **Depends on:** S11, S18, S30
 - **Optional:** S19a

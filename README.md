@@ -28,7 +28,7 @@ built next, test-first, per the spec.
 ## Tech stack
 
 | Layer | Choice |
-|-------|--------|
+| ------- | -------- |
 | Backend / BFF | [Hono](https://hono.dev/) on Node |
 | Frontend | [Svelte 5](https://svelte.dev/) (Vite SPA) |
 | Design system | [shadcn-svelte](https://www.shadcn-svelte.com/) + [Tailwind CSS v4](https://tailwindcss.com/) |
@@ -69,7 +69,7 @@ pnpm build && pnpm start      # production build, then run the bundled server
 
 ## Project layout
 
-```
+```text
 src/
   domain/     pure domain model — aggregates, invariants, ports (no framework imports)
   infra/      adapters: Drizzle/SQLite (db/), filesystem payload store (storage/)

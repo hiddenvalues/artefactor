@@ -1,6 +1,9 @@
 # Artefact Data
 
+## Slices
+
 ### S11 — Store: read/write own data blob
+
 - **Status:** done
 - **Depends on:** S2
 
@@ -11,6 +14,7 @@
 - Unauthenticated write rejected; archived artefact → 404. *(AD 3, 6)*
 
 **Implementation notes (from building S11):**
+
 - **New bounded context** `src/domain/data/`: the `DataEntry` aggregate (opaque `blob` text,
   `MAX_BLOB_BYTES = 5 MB`), `assertBlobWithinBounds` (size-then-`JSON.parse`, AD8),
   `upsertDataEntry` (one per `(artefact, author)`, preserves id/createdAt, bumps updatedAt),
@@ -37,6 +41,7 @@
   build on this; no client UI yet (S11 is the API surface they consume).
 
 ### S12 — Host UI: data-context switcher
+
 - **Status:** done
 - **Depends on:** S11
 
@@ -47,6 +52,7 @@
 - This lives entirely in the host (BFF + chrome); the artefact stays opaque.
 
 **Implementation notes (from building S12):**
+
 - **`/a/:slug` now returns a host *shell*** (`src/server/runtime/shell.ts`) — a thin toolbar
   with the data-context `<select>` wrapping an `<iframe>`. The artefact itself moved to
   **`/a/:slug/frame`** (`?author=<id>` selects the context). Both routes resolve the slug and
@@ -73,6 +79,7 @@
   extended for the shell/frame split + the read-only `?author` seed.
 
 ### S13 — Artefact runtime bootstrap (localStorage hijack)
+
 - **Status:** done
 - **Depends on:** S11
 
@@ -80,15 +87,18 @@
 
 - Served artefacts get an injected shim that **replaces `window.localStorage`** with a
   backend-backed store, **seeded server-side** with the current data context so reads are
-  synchronous; writes are write-through + debounced with a `pagehide` beacon flush. *(AD runtime contract §1)*
+  synchronous; writes are write-through + debounced with a `pagehide` beacon flush.
+  *(AD runtime contract §1)*
   *(Amended by S31: writes only when dirty, pinned with `If-Match`/`If-None-Match: *`, and a
   412 stops the tab writing and prompts a reload in the host shell.)*
 - The artefact needs **zero code changes** and sees **one opaque dataset** — `localStorage`
   only, no `ARTEFACTOR` helper.
 - Over-cap write throws `QuotaExceededError`; a read-only context (logged-out public viewer,
-  or another author's data loaded via S12) throws on write while seeded reads still work. *(AD 3, 5, 8)*
+  or another author's data loaded via S12) throws on write while seeded reads still work.
+  *(AD 3, 5, 8)*
 
 **Implementation notes (from building S13):**
+
 - **Shim** (`src/server/runtime/localstorage-bootstrap.ts`): an inline IIFE that models the
   whole localStorage keyspace as one JSON object (= the `DataEntry.blob`), exposes the full
   synchronous `localStorage` API (`getItem`/`setItem`/`removeItem`/`clear`/`key`/`length`),
@@ -113,6 +123,7 @@
   is injected and seeded with the viewer's own data (read-write) vs anonymous (read-only).
 
 ### S17 — Data merge-patch
+
 - **Status:** dropped
 - **Depends on:** S11
 
@@ -124,6 +135,7 @@ exposes **no data-write tool** — it surfaces `dataAuthorCount` so a breaking H
 flagged (see S18).
 
 ### S19a — Data version pin
+
 - **Status:** done
 - **Depends on:** S3, S11
 - **Linear:** ALI-269
@@ -135,6 +147,7 @@ without adding versioning to OSS; the other half is **S19b — Payload-retention
 amendment: `ddd/artefact-data.md` AD9.) The halves are independent and ship apart. The EE
 *Artefact History* context needs **both**, so this pin alone doesn't unblock it. The pin is
 stamped at the S11 write site; the S3 payload edit is what makes a pin stale.
+
 - **Data — version pin.** `DataEntry` gains `authoredAgainstVersion`. `upsertDataEntry`
   requires it, so no write path can skip it, and `putOwnDataEntry` stamps it with the resolved
   artefact's `payloadHash`. That one site covers `PUT …/data/me` **and** `set_artefact_data`
@@ -159,11 +172,13 @@ stamped at the S11 write site; the S3 payload edit is what makes a pin stale.
   rollback are the **EE** *Artefact History* context — see `ee/docs/specs/`.
 
 ### S20 — Hide the data-context switcher for non-persisting artefacts
+
 - **Status:** done
 - **Depends on:** S2, S3, S12
 
 Stop showing the "Data context" picker (S12 chrome) on artefacts that can't usefully use it.
 (DDD amendment: `ddd/artefact-hosting.md` AH16.)
+
 - **Domain** — a pure `detectUsesStorage(html)` (word-boundary `localStorage` match; excludes
   `sessionStorage`). `Artefact` gains `usesStorage`, set by `createArtefact` and recomputed by
   `editArtefact` only when the payload is replaced. *(AH 16)*

@@ -18,7 +18,7 @@ viewer and is **always rendered escaped**. Nothing in a comment is ever interpre
 Aggregate root. One discussion on one artefact; owns its comments.
 
 | Field | Type | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | `id` | ThreadId (uuid) | Identity. |
 | `artefactId` | ArtefactId | Immutable. |
 | `tenantId` | TenantId | The artefact's tenant (AH17). Immutable. |
@@ -32,7 +32,7 @@ Aggregate root. One discussion on one artefact; owns its comments.
 ### Entity: `Comment`
 
 | Field | Type | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | `id` | CommentId (uuid) | Identity. |
 | `authorId` | UserId | The Account that wrote it (via UI or MCP). Immutable. |
 | `body` | CommentBody | Plain text. |
@@ -78,7 +78,7 @@ Aggregate root. One discussion on one artefact; owns its comments.
 `:ref` is the artefact's slug or id, resolved as for Artefact Data and Artefact Views.
 
 | Method | Path | Purpose | Access |
-|--------|------|---------|--------|
+| -------- | ------ | --------- | -------- |
 | `GET` | `/api/artefacts/:ref/threads?status=open\|resolved\|all` | List threads with comments, author display identity, `viaConnector` | signed-in viewer (FB3) |
 | `POST` | `/api/artefacts/:ref/threads` | Create a thread (first comment body) | signed-in viewer (FB3) |
 | `POST` | `/api/threads/:id/comments` | Reply | signed-in viewer of the thread's artefact |
@@ -97,7 +97,7 @@ out-of-scope artefact is not found. Every write is attributed to the token's Acc
 `viaConnector = true`.
 
 | Tool | Does |
-|------|------|
+| ------ | ------ |
 | `list_feedback({ artefactId, status? })` | Returns threads (default `open`) with comments, author names, timestamps, `viaConnector` — the agent's review inbox. |
 | `reply_to_feedback({ threadId, body })` | Posts a reply (e.g. "Fixed in this update"). |
 | `resolve_feedback({ threadId })` | Resolves a thread. |

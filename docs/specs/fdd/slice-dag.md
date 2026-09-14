@@ -6,13 +6,13 @@ invariants it touches. A slice is only started once its dependencies are done.
 
 **This catalog and the context files it lists are the single source of truth for slice status
 and dependencies.** The slices live in [`slices/`](slices/), one file per context; this file
-holds none. Every slice heading (`### <id> — <title>`) is followed directly by a metadata block —
-`Status` (`specced | in progress | done | dropped`), `Depends on` (hard edges, bare ids, `—` for
-none), and the optional `Optional` (non-blocking edges) and `Linear` fields. A dependency may
-name a slice in any context file. `src/specs/slice-dag.test.ts` fails the build when a block is
-missing or inconsistent (unknown or dropped dependency, a cycle, a done slice built on an
-unfinished one) or when this catalog and the context files drift apart, and `pnpm spec:dag`
-prints the graph, the parallel build waves and the next free id. Format details:
+holds none. Every slice heading (`### <id> — <title>`) is followed, after one blank line, by a
+metadata block — `Status` (`specced | in progress | done | dropped`), `Depends on` (hard edges,
+bare ids, `—` for none), and the optional `Optional` (non-blocking edges) and `Linear` fields. A
+dependency may name a slice in any context file. `src/specs/slice-dag.test.ts` fails the build
+when a block is missing or inconsistent (unknown or dropped dependency, a cycle, a done slice
+built on an unfinished one) or when this catalog and the context files drift apart, and
+`pnpm spec:dag` prints the graph, the parallel build waves and the next free id. Format details:
 [`../README.md`](../README.md).
 
 Acceptance criteria are the seed for each slice's unit tests. Invariant numbers reference
@@ -21,7 +21,7 @@ Acceptance criteria are the seed for each slice's unit tests. Invariant numbers 
 ## Contexts
 
 | Context | File | Slices |
-|---|---|---|
+| --- | --- | --- |
 | Platform & enabler seams | [platform.md](slices/platform.md) | S0, S22, S23, S24 |
 | Identity & Access | [identity-access.md](slices/identity-access.md) | S1, S8, S9 |
 | Artefact Hosting | [artefact-hosting.md](slices/artefact-hosting.md) | S2, S3, S4, S5, S6, S7, S10, S14, S15, S16, S19b, S32, S33 |

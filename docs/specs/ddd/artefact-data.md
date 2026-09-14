@@ -22,7 +22,7 @@ One entry per **(artefact, author)** pair. The whole stored object is a single o
 blob, mirroring how artefacts already keep one JSON object under one storage key.
 
 | Field | Type | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | `id` | DataEntryId (uuid) | Identity. |
 | `artefactId` | ArtefactId | The artefact this data belongs to. Immutable. |
 | `authorId` | UserId | The Account that wrote it. Immutable. |
@@ -67,7 +67,7 @@ Consumed by **two different clients** — keep them distinct:
 addresses a never-shared private artefact; see the S11 implementation notes).
 
 | Method | Path | Purpose | Consumer / access |
-|--------|------|---------|-------------------|
+| -------- | ------ | --------- | ------------------- |
 | `GET` | `/api/artefacts/:ref/data/authors` | List authors who have an entry (id + `updatedAt`) | host UI; per access matrix |
 | `GET` | `/api/artefacts/:ref/data/:authorId` | Load one author's blob (for seeding/switching) | host UI; per access matrix |
 | `GET` | `/api/artefacts/:ref/data/me` | The caller's own entry | host/runtime; authenticated |
@@ -134,7 +134,7 @@ regardless.
 answer different questions and must not be conflated:
 
 | | Says | Set by |
-|--|------|--------|
+| -- | ------ | -------- |
 | `authoredAgainstVersion` (AD9) | this blob was written against payload hash X | the **backend**, on every write |
 | schema `version` | this HTML expects shape v2 | the **authoring agent**, by hand |
 
@@ -175,7 +175,7 @@ described under the runtime contract below), and `putOwnDataEntry` takes an opti
 `ifUnmodifiedSince`:
 
 | Pin | Stored entry | Result |
-|-----|--------------|--------|
+| ----- | -------------- | -------- |
 | absent | any | write unconditionally (the `PUT …/data/me` behaviour, unchanged) |
 | a timestamp | none, or `updatedAt` ≤ pin | write |
 | a timestamp | `updatedAt` > pin | **`DataConflict`** — nothing written |
@@ -300,7 +300,8 @@ read-only (AD5).
 ## Amendment (post-v0.2) — payload version pin
 
 > **Status:** **implemented** (FDD slice **S19a — Data version pin**; the AH15 retention seam is
-> the separate slice **S19b — Payload-retention seam**). A small **additive** field on `DataEntry` — harmless in OSS, and the hook a
+> the separate slice **S19b — Payload-retention seam**). A small **additive** field on `DataEntry` —
+> harmless in OSS, and the hook a
 > superset's rollback uses to judge data compatibility. It does not weaken opacity.
 
 **Problem.** A `DataEntry.blob` is shaped by whatever artefact payload was live when it was
@@ -312,7 +313,7 @@ host can detect the mismatch.
 **Field.** `DataEntry` gains:
 
 | Field | Type | Notes |
-|-------|------|-------|
+| --- | --- | --- |
 | `authoredAgainstVersion` | ContentHash \| null | The artefact's **payload content hash** at the moment of the (upsert) write, re-stamped on every write. `null` for entries written before this field existed (no backfill — which payload they were written against is unknowable). Opaque — it names a payload, never describes the blob. |
 
 **AD9 — pin on write.** Every write through `putOwnDataEntry` — `PUT …/data/me` (the served
@@ -325,6 +326,7 @@ That is correct, since the blob matches that HTML. The pin is not exposed on the
 `DataEntryResponse` or the S12 author list; today only the connector's snapshot read consumes it.
 
 **Use.**
+
 - **OSS:** even with a single mutable payload, the host can tell whether a viewer's saved data
   **predates the current payload** (pin ≠ current hash) — a sharper form of the `dataAuthorCount`
   breaking-change signal already exposed to the MCP connector. **S30 reserved this field

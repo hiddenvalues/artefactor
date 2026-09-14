@@ -19,7 +19,7 @@ One entry per **(artefact, viewer)** pair. A thin record — identity plus the l
 timestamp; it carries no blob.
 
 | Field | Type | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | `id` | ViewEntryId (uuid) | Identity. |
 | `artefactId` | ArtefactId | The artefact that was viewed. Immutable. |
 | `viewerId` | UserId | The signed-in Account that viewed it. Immutable. |
@@ -52,7 +52,7 @@ timestamp; it carries no blob.
 the Artefact Data endpoints do.
 
 | Method | Path | Purpose | Consumer / access |
-|--------|------|---------|-------------------|
+| --- | --- | --- | --- |
 | `GET` | `/api/artefacts/:ref/viewers` | List viewers who have opened the artefact (id + name/email + `viewedAt`), **excluding the caller** | host UI; signed-in; per access matrix |
 
 There is **no view-record endpoint**: a view is recorded server-side as a side effect of

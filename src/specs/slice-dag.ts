@@ -2,9 +2,11 @@
 // context files (`docs/specs/fdd/slices/*.md`) that hold the slices. Together they are the single
 // source of truth for slice status and dependencies.
 //
-// Every slice is a `### <id> — <title>` heading followed directly by a fixed metadata block:
+// Every slice is a `### <id> — <title>` heading followed, after at most one blank line, by a fixed
+// metadata block of contiguous fields:
 //
 //   ### S31 — Agent edits data: `set_artefact_data` MCP tool
+//
 //   - **Status:** done
 //   - **Depends on:** S11, S18, S30
 //   - **Optional:** S19a
@@ -42,7 +44,7 @@ export interface Slice {
   /** Non-blocking edges — recorded, never scheduled against. */
   optional: string[];
   linear: string | null;
-  /** Whether any metadata field directly follows the heading. */
+  /** Whether any metadata field follows the heading, directly or after one blank line. */
   hasMetadata: boolean;
   /** Whether the heading is indented (1–3 spaces) instead of starting at column 0. */
   indented: boolean;
@@ -89,7 +91,9 @@ export function parseSliceDag(markdown: string, file = ""): Slice[] {
       line: i + 1,
       file,
     };
-    for (let j = i + 1; j < lines.length; j++) {
+    // At most one blank line separates the heading from the block (markdownlint's MD022 wants it).
+    const first = lines[i + 1]?.trim() === "" ? i + 2 : i + 1;
+    for (let j = first; j < lines.length; j++) {
       const field = METADATA_FIELD.exec(lines[j]!);
       if (!field) break;
       slice.hasMetadata = true;
@@ -137,7 +141,9 @@ export function validateSliceDag(slices: Slice[], options: ValidateOptions = {})
       violations.push(`${label(s)} has an indented heading — start it at column 0`);
     }
     if (!s.hasMetadata) {
-      violations.push(`${label(s)} lacks the metadata block directly under its heading`);
+      violations.push(
+        `${label(s)} lacks the metadata block under its heading (at most one blank line between)`,
+      );
       continue;
     }
     if (s.status === null) {

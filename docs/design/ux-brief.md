@@ -38,7 +38,7 @@ upload as a prominent primary action (modal or dedicated panel), rather than eve
 Attached screenshots:
 
 | File | Screen |
-|------|--------|
+| ------ | -------- |
 | `01-dashboard-full.png` | The entire signed-in page, top to bottom (all sections stacked) |
 | `02-your-artefacts.png` | "Your artefacts" list, grouped by kind, with inline controls |
 | `03-archived.png` | The archived section |
@@ -47,6 +47,7 @@ Attached screenshots:
 | `06-auth-signin.png` | Signed-out auth screen (context only; out of scope) |
 
 **What's wrong with it today (please fix):**
+
 - Everything is jammed into a ~448px centered column; tons of wasted screen on desktop.
 - Actions are tiny blue/red **text links** (`open`, `link`, `edit`, `archive`, `restore`) with
   no hierarchy or affordance; destructive and benign actions look identical.
@@ -70,6 +71,7 @@ public `slug` (the share link), `payloadBytes` (size of the stored HTML), `creat
 
 **Visibility — 3 tiers** (this is the sharing model; the labels in the current UI are clumsy —
 feel free to relabel):
+
 - `private` — only the owner. *(current label: "Private")*
 - `authenticated` — any signed-in user. *(current label: "Other users" — weak; consider
   "Signed-in users" or "Members")*
@@ -84,12 +86,14 @@ this" and "copy share link" first-class, legible affordances.
 drop out of the main list into an "Archived" area.
 
 **Two distinct surfaces, same artefact card:**
+
 - **Your artefacts** = artefacts *you own* (full management: open, share/visibility, edit, archive).
 - **Shared with you** = *others'* artefacts shared with you (read/open only — you don't manage others').
 
 ## 5. Data & actions available per screen (so mockups stay realistic)
 
 **Your artefacts** (per artefact card):
+
 - Show: title, kind, visibility tier, share-link presence, size (`payloadBytes`), last updated.
 - Actions: **Open** (preview the artefact), **change visibility** (the 3 tiers), **copy share
   link** (when shared), **Edit** (title / kind / replace the HTML file), **Archive**.

@@ -1,6 +1,9 @@
 # Platform & enabler seams
 
+## Slices
+
 ### S0 — Scaffold
+
 - **Status:** done
 - **Depends on:** —
 
@@ -11,6 +14,7 @@ migrations; Tailwind + shadcn-svelte wired; pure `domain/` layer + Vitest harnes
 image builds and runs locally. **Full detail: [`s0-scaffold.md`](../s0-scaffold.md).**
 
 ### S22 — Tenant scope + access-policy seam
+
 - **Status:** done
 - **Depends on:** S6, S10, S14
 
@@ -19,7 +23,8 @@ image builds and runs locally. **Full detail: [`s0-scaffold.md`](../s0-scaffold.
 Two thin core seams that let a superset be **multi-tenant**, byte-identical in OSS. (DDD amendments:
 `ddd/artefact-hosting.md` AH17/AH18, `ddd/identity-access.md` IA5. EE context:
 `ee/docs/specs/ddd/tenancy.md`.)
-> **Progress:** **done — A1 + A2 + B + C.** A1 — `Artefact.tenantId` + the `tenant_id` column (both schemas,
+> **Progress:** **done — A1 + A2 + B + C.** A1 — `Artefact.tenantId` + the `tenant_id` column
+> (both schemas,
 > migration `0006`) default to `DEFAULT_TENANT` and are stamped at create. A2 — `findById`,
 > `listByOwner`, and `listShared` are now **scope-aware** (take a `TenantScope`,
 > `domain/artefact/tenant-scope.ts`); `findBySlug` stays **tenant-global** because a slug is a
@@ -46,6 +51,7 @@ Two thin core seams that let a superset be **multi-tenant**, byte-identical in O
 > `"*"` allow-all sentinel (IA5). Route-level tests (`server/access-policy.test.ts`) prove a stub
 > co-member policy grants a member, denies a signed-in non-member with a flat 404 (AH8), keeps the
 > anonymous redirect uniform, never denies the owner, and leaves `public` untouched.
+
 - **Scope.** `Artefact` gains `tenantId` (immutable; migration defaults existing + new rows to
   `DEFAULT_TENANT`). `ArtefactRepository` list/find take a **`TenantScope`**; OSS wires the singleton
   scope, so listing/serving is unchanged. Subordinate reads (data, views, versions) inherit the
@@ -64,6 +70,7 @@ Two thin core seams that let a superset be **multi-tenant**, byte-identical in O
   model, the real scope, and the org-aware policy are the **EE Tenancy/Organizations** context.
 
 ### S23 — EE enforcement policy seams (quota / payload-size / branding)
+
 - **Status:** specced
 - **Depends on:** S2, S3, S12
 
@@ -71,6 +78,7 @@ Two thin core seams that let a superset be **multi-tenant**, byte-identical in O
 
 The core seams the **EE Usage & Quota** context plugs into — all **no-op in OSS**. (DDD:
 `ee/docs/specs/ddd/usage-quota.md`; size-cap amendment `ddd/artefact-hosting.md` AH19.)
+
 - **QuotaPolicy.** A `QuotaPolicy` port consulted at `createArtefactCommand` (+ payload-replacing
   edit for the storage fence). OSS default = **allow / unlimited**. *(usage-quota Q1)*
 - **Payload-size policy.** Extract `MAX_PAYLOAD_BYTES` into a policy; **OSS default keeps 100 MB**.
@@ -84,6 +92,7 @@ The core seams the **EE Usage & Quota** context plugs into — all **no-op in OS
   plan-aware policy, entitlements, and soft fences are the **EE Usage & Quota** context (EQ1–EQ5).
 
 ### S24 — Inject persistence ports into the composition
+
 - **Status:** done
 - **Depends on:** S2, S11, S12, S21
 
@@ -92,6 +101,7 @@ The core seams the **EE Usage & Quota** context plugs into — all **no-op in OS
 Make the BFF composition accept the domain-port adapters as **injected dependencies**, so a
 superset can wire a different backend (Postgres) without forking the composition. (EE context:
 `ee/docs/specs/ddd/postgres-persistence.md`.)
+
 - Today `src/server/adapters.ts` builds the SQLite/filesystem adapters as module singletons and
   `createApiRoutes()` imports them directly. Refactor `createApiRoutes()` and the `/api` route
   modules to **take the adapter set** (`{ artefactRepository, dataRepository, viewRepository,

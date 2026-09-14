@@ -1,0 +1,19 @@
+// markdownlint-cli2 config for every tracked Markdown file: `pnpm lint:md` (`lint:md:fix` applies
+// the fixable rules). Pinned by `src/specs/markdown-lint.test.ts`.
+{
+  "config": {
+    "default": true,
+    // Prose wraps at 100 columns. A GFM table row can't wrap, and a command in a code block shouldn't.
+    "MD013": { "line_length": 100, "tables": false, "code_blocks": false }
+  },
+  // Dot directories aren't matched by `**`, so `.claude/` is named explicitly.
+  "globs": ["**/*.md", ".claude/**/*.md"],
+  "ignores": [
+    "**/node_modules/**",
+    "dist/**",
+    // Other worktrees' checkouts.
+    ".claude/worktrees/**",
+    // Verbatim legal text.
+    "LICENSE.md"
+  ]
+}

@@ -165,11 +165,12 @@ sync with implementation and tests at all times.
   dependencies are in place. Build order follows the DAG topologically.
   The DAG is a catalog, `docs/specs/fdd/slice-dag.md` (a context table + the high-water mark per
   id prefix), and one context file per context under `docs/specs/fdd/slices/` holding the
-  slices. In a context file, each `### <id> — <title>` slice heading is followed directly by a
-  metadata block —
+  slices. In a context file, each `### <id> — <title>` slice heading is followed, after one blank
+  line, by a metadata block —
 
   ```markdown
   ### S31 — Agent edits data: `set_artefact_data` MCP tool
+
   - **Status:** done
   - **Depends on:** S11, S18, S30
   - **Optional:** S19a
@@ -226,7 +227,8 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
   reversal — slice status belongs in the slice DAG (`docs/specs/fdd/`), in-flight work in Linear.
 - **Slice naming:** in all human-facing text a session writes (chat, Linear, PR titles and
   bodies, commit messages), refer to a slice by its **full title** — e.g. "S31 — Agent edits
-  data: `set_artefact_data` MCP tool", never "S31". The machine-parsed metadata fields and catalog cells keep bare ids.
+  data: `set_artefact_data` MCP tool", never "S31". The machine-parsed metadata fields and catalog
+  cells keep bare ids.
 
 ## Commands
 
@@ -241,6 +243,8 @@ pnpm db:generate               # drizzle-kit: generate a migration from src/infr
 pnpm db:migrate                # apply migrations (tsx src/infra/db/migrate.ts)
 pnpm db:studio                 # drizzle studio
 pnpm spec:dag [catalog]        # slice DAG → mermaid graph + build waves + next free id (default: core catalog)
+pnpm lint:md                   # markdownlint-cli2 over every tracked .md (.markdownlint-cli2.jsonc); CI gate
+pnpm lint:md:fix               # apply markdownlint's auto-fixes (over-long prose lines still rewrap by hand)
 
 # Identity (S1): regenerate BetterAuth's Drizzle tables after changing src/server/auth.ts
 # (e.g. the mcp/OIDC plugin tables added in S18), then re-run db:generate to emit the migration.

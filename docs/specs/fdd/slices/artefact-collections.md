@@ -1,6 +1,9 @@
 # Artefact Collections
 
+## Slices
+
 ### S25 — Collections (folder tree + inherited access)
+
 - **Status:** done
 - **Depends on:** S2, S5, S6, S10, S16, S22
 
@@ -8,6 +11,7 @@ Nestable, owner-only collections whose access the contained artefacts inherit. (
 bounded context: `ddd/artefact-collections.md`, invariants CL1–CL10; amends
 `ddd/artefact-hosting.md` AH20/AH21 — `Artefact.collectionId`, effective access, slug on
 effective share.)
+
 - **Domain** — new `Collection` aggregate (`id`, `ownerId`, `tenantId`, `name`, immutable
   `parentId`/`rootId`, `visibility` + `sharedWith` consulted on roots only, `status`,
   timestamps) with pure transitions `createCollection` (CL1–3; `rootId` = own id or parent's),
@@ -34,7 +38,7 @@ effective share.)
   page (breadcrumb, access control with inheritance note, `⋯` menu, sub-collection cards,
   scoped sort/kind-chips/density artefact list), add/move-to-collection modal (tree picker +
   inline create + top-level option), create/edit editor, "Inherited" read-only access control
-  + "in \<Collection\>" chip on artefact cards.
+  - "in \<Collection\>" chip on artefact cards.
 - **Acceptance:** a private artefact moved into an `authenticated`-root tree is viewable by
   another signed-in user (and got a slug); moved back to top level it is private again (own
   tier resurfaces, slug retained); an artefact whose *own* tier is `public` inside a `private`
@@ -47,10 +51,12 @@ effective share.)
   scope-aware reads); the EE pg schema mirrors the new tables (parity check).
 
 ### S26 — Collection lifecycle (cascade archive / restore / delete + Archive view)
+
 - **Status:** done
 - **Depends on:** S15, S25
 
 (CL7/CL8.)
+
 - **Commands** — `archiveCollectionCommand` (archive every descendant collection + active
   artefact in the subtree; returns cascade counts for the toast), `restoreCollectionCommand`
   (restores the subtree, including previously individually-archived artefacts — documented
@@ -72,10 +78,12 @@ effective share.)
 - **Boundary:** **OSS**.
 
 ### S27 — Bookmarks (per-user pins)
+
 - **Status:** done
 - **Depends on:** S25
 
 The S25 edge is for bookmarkable collections; artefact bookmarks alone would only need S10. (BM1–4.)
+
 - **Domain** — a thin per-user store mirroring the S21 pattern: `Bookmark` records
   (`userId`, artefact **or** collection target), `BookmarkRepository` port (`listByUser`,
   `add`, `remove`, `deleteByArtefact`, `deleteByCollection`) + in-memory double. Set
@@ -99,10 +107,12 @@ The S25 edge is for bookmarkable collections; artefact bookmarks alone would onl
 - **Boundary:** **OSS**.
 
 ### S28 — Shared collections are viewer-facing (read-only)
+
 - **Status:** done
 - **Depends on:** S25
 
 (CL11; relaxes CL10's audience.)
+
 - **Query** — `listSharedCollections(viewerId, scope)`: the shared roots
   (`listSharedRoots`) expanded to full trees (`listByRoots`); every node returned with the
   root owner's display identity and a `canContribute` flag (CL12) — never the grantee list.
@@ -120,10 +130,12 @@ The S25 edge is for bookmarkable collections; artefact bookmarks alone would onl
 - **Boundary:** **OSS**.
 
 ### S29 — Contributors + evict-on-cascade
+
 - **Status:** done
 - **Depends on:** S28
 
 (CL1 relaxed; CL12/CL13/CL14.)
+
 - **Domain** — pure `canViewCollection(root, viewerId)` (matrix semantics, signed-in only,
   archived → no one) and `canContributeToTree(root, userId)` (owner, or listed **and**
   viewing); `moveArtefactToCollection` drops the same-owner requirement (tenant + active

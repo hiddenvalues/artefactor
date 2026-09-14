@@ -1,12 +1,16 @@
 # Artefact Views
 
+## Slices
+
 ### S21 — Who has viewed
+
 - **Status:** done
 - **Depends on:** S6, S12, S15
 
 Record when a signed-in viewer opens an artefact, and surface a "viewed by" list in the host
 chrome. (New DDD bounded context: `ddd/artefact-views.md`, invariants VT1–VT5; amends
 `ddd/artefact-hosting.md` AH11 — permanent delete also removes view entries.)
+
 - **Domain** — new **Artefact Views** context: a `ViewEntry` aggregate (`id`, `artefactId`,
   `viewerId`, `viewedAt`) with a pure `recordView` factory that upserts (first view creates;
   later views bump `viewedAt`, preserving `id`), and a `ViewRepository` port

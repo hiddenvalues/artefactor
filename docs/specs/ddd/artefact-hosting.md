@@ -8,7 +8,7 @@ publicly by slug.
 Aggregate root. The consistency boundary for one hosted artefact.
 
 | Field | Type | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | `id` | ArtefactId (uuid) | Identity. Immutable. |
 | `ownerId` | UserId | The BetterAuth user id of the Owner. Immutable. |
 | `title` | string | Human label. Required, non-empty. |
@@ -81,7 +81,7 @@ Aggregate root. The consistency boundary for one hosted artefact.
 ## Access matrix (active artefacts)
 
 | visibility | owner | member (in `sharedWith`) | other signed-in user | unauthenticated |
-|------------|-------|--------------------------|----------------------|-----------------|
+| ------------ | ------- | -------------------------- | ---------------------- | ----------------- |
 | `private` | view + edit | — | 404 | → sign-in |
 | `selected` | view + edit | view | 404 | → sign-in |
 | `authenticated` | view + edit | view | view | → sign-in |
@@ -107,7 +107,7 @@ artefact only via the "Your artefacts" archived filter to restore it.
 States are the product of `visibility × status`. Allowed transitions:
 
 | Transition | From | To | Guard |
-|------------|------|----|-------|
+| ------------ | ------ | ---- | ------- |
 | **create** | — | `active` / `private` | valid owner, valid payload + title |
 | **edit** | `active` | `active` (fields updated) | owner; not archived |
 | **share** | `active` / `private` | `active` / `selected`, `authenticated` or `public` | owner; mint slug if none, else reuse retained slug |
@@ -169,11 +169,12 @@ The data entries themselves are modelled in `artefact-data.md`.
 
 ## Open questions
 
-_None at the context level. Slice-local details are in the FDD spec._
+*None at the context level. Slice-local details are in the FDD spec.*
 
 ## Amendment (post-v0.2) — payload retention is a seam
 
-> **Status:** DDD amendment (FDD slice **S19b — Payload-retention seam**). Introduces an extensibility **seam without
+> **Status:** DDD amendment (FDD slice **S19b — Payload-retention seam**). Introduces an
+> extensibility **seam without
 > changing OSS behaviour**. A superset can swap the policy to retain prior payloads and offer
 > rollback; OSS keeps a single mutable payload.
 
@@ -217,7 +218,7 @@ prototype with no `localStorage`) the picker is meaningless.
 **Field.** `Artefact` gains a derived boolean:
 
 | Field | Type | Notes |
-|-------|------|-------|
+| --- | --- | --- |
 | `usesStorage` | boolean | Whether the payload appears to use the persistence API. **Recomputed whenever the payload is set** (create / payload-replacing edit); title/kind-only edits leave it unchanged. |
 
 **AH16 — `usesStorage` is a heuristic for chrome only.** It is detected by a pure scan of the
@@ -245,6 +246,7 @@ user, and list/find queries are global. A multi-tenant superset needs artefacts 
 access matrix or the repository.
 
 **Seam (a) — tenant scope.**
+
 - `Artefact` gains **`tenantId`** (immutable, set at create). OSS default = a single well-known
   tenant (`DEFAULT_TENANT`), so every row shares one tenant and behaviour is byte-identical.
 - `ArtefactRepository` list/find operations become **scope-aware**: `findById`, `listByOwner`, and
@@ -253,12 +255,14 @@ access matrix or the repository.
   because a slug is a globally-unique capability (AH6): it is the cross-tenant address for public/link
   serving and the mint-time uniqueness check. The per-tier tenant decision for a slug-served artefact
   is the `AccessPolicy`'s (seam b), not the scope's. OSS passes the singleton scope (no behavioural
-  change); a superset passes the caller's **active org** (a single tenant per request, not an org-set —
+  change); a superset passes the caller's **active org** (a single tenant per request, not an
+  org-set —
   it maps 1:1 onto the Postgres RLS `SET LOCAL app.tenant_id` backstop). The scope is resolved per
   request by an injected `TenantScopeResolver` (OSS default = the singleton), so a superset overrides
   *which* tenant a request sees without editing core route handlers.
 
 **Seam (b) — access policy.**
+
 - The access-matrix decision (who may view an artefact) is delegated to an **`AccessPolicy`** port.
   OSS default = the matrix above. A superset overrides **only the `authenticated` tier** to mean
   "co-member of the artefact's tenant." AH8 (no existence leak / uniform redirect) and AH9 (owner
@@ -290,7 +294,7 @@ semantics and the AH8 uniformity are not. Migration adds `tenant_id` defaulting 
 **Field.** `Artefact` gains:
 
 | Field | Type | Notes |
-|-------|------|-------|
+| --- | --- | --- |
 | `collectionId` | CollectionId \| null | The collection the artefact lives in; `null` = top-level. Mutable (move), owner-only, blocked while archived (AH7). The collection must have the same `ownerId`/`tenantId` (CL1). |
 
 **AH20 — effective access.** An artefact with `collectionId = null` behaves exactly as
@@ -342,7 +346,7 @@ the link and an **expiry** after which the link stops working — without invent
 **Value object.** `Artefact` (and `Collection`, consulted on roots only — CL4) gains:
 
 | Field | Type | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | `linkGate.passwordHash` | string \| null | scrypt hash of the owner-set password; never returned by any read. `null` = no password. |
 | `linkGate.expiresAt` | timestamp \| null | After this instant non-owners are denied. `null` = never expires. |
 | `linkGate.version` | integer | Bumped whenever the password is set, changed or cleared. Invalidates every outstanding pass. |

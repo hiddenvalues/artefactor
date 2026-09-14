@@ -1,6 +1,9 @@
 # Artefact Hosting
 
+## Slices
+
 ### S2 — Create artefact
+
 - **Status:** done
 - **Depends on:** S1
 
@@ -10,6 +13,7 @@
 - `ownerId` = current session user. *(AH 1)*
 
 **Implementation notes (from building S2):**
+
 - The pure-domain `createArtefact` factory (+ its invariant tests) already landed in S0;
   S2 is the vertical slice around it. **Drizzle adapter** for the `ArtefactRepository` port
   (`src/infra/db/artefact-repository.drizzle.ts`) — `save` is an upsert by id so it also
@@ -30,6 +34,7 @@
   → 201/401/400 + Drizzle round-trip through the `owner_id` FK).
 
 ### S3 — Edit artefact
+
 - **Status:** done
 - **Depends on:** S2
 
@@ -41,6 +46,7 @@
 - Non-owner cannot edit. *(AH 8)*
 
 **Implementation notes (from building S3):**
+
 - **Domain** `editArtefact(a, { title?, kind?, payload? })` — only the provided fields
   change, re-applies the create invariants (AH2/3), bumps `updatedAt`, blocked while
   archived (AH7).
@@ -54,6 +60,7 @@
   (title / kind / optional replacement `.html`), opened per row → `PATCH` via `api.update`.
 
 ### S4 — Owner views own artefact
+
 - **Status:** done
 - **Depends on:** S2
 
@@ -61,6 +68,7 @@
 - Archived gets 404 (reached only via "Your artefacts" restore). *(AH 7)*
 
 **Implementation notes (from building S4):**
+
 - **`loadOwnActiveArtefact(repo, { id, ownerId })`** (`src/server/artefacts/get-own-artefact.ts`):
   owner-scoped load where missing / not-owned / archived all surface identically as
   `ArtefactNotFound`, so neither a private artefact's existence nor its archived state leaks
@@ -75,6 +83,7 @@
   `404`, archived `404`, unauth `401`).
 
 ### S5 — Share / unshare
+
 - **Status:** done
 - **Depends on:** S2
 
@@ -84,6 +93,7 @@
 - Owner-only; blocked while archived. *(AH 7, 9)*
 
 **Implementation notes (from building S5):**
+
 - **Domain** (`artefact.ts`): pure `shareArtefact` (mint-once-via-supplied-slug / retain,
   set tier, block while archived) and `unshareArtefact` (→ `private`, retain slug). New
   `ArtefactNotFound` domain error covers both "missing" and "not yours" so a private
@@ -105,6 +115,7 @@
   non-owner 404).
 
 ### S6 — Serve artefact by slug (access matrix)
+
 - **Status:** done
 - **Depends on:** S5
 
@@ -113,6 +124,7 @@
 - Wrong-tier viewer, archived, and unknown slug → 404. *(AH 7, 8)*
 
 **Implementation notes (from building S6):**
+
 - **Domain** `access.ts`: pure `canViewArtefact(artefact, viewerId)` encoding the matrix,
   gated by archived-is-inert (AH7). `viewerId = null` is the unauthenticated viewer. Reused
   later by "Shared with you" (S14) and data access (S11/S12).
@@ -133,6 +145,7 @@
   uniform for unknown slug / private / archived so existence isn't leaked).
 
 ### S7 — Archive / restore
+
 - **Status:** done
 - **Depends on:** S2
 
@@ -142,6 +155,7 @@
 - Restore returns it to `active` with prior visibility, clears `archivedAt`. Owner-only. *(AH 9)*
 
 **Implementation notes (from building S7):**
+
 - **Domain** `archiveArtefact` (active → archived, stamps `archivedAt`, **keeps visibility**
   so restore can return to the prior tier) and `restoreArtefact` (archived → active, clears
   `archivedAt`; rejects a non-archived artefact). Because archival only flips `status`, the
@@ -163,6 +177,7 @@
   surfaces in `?archived=true`, restore re-serves at the prior tier).
 
 ### S10 — Your artefacts (owner's own list)
+
 - **Status:** done
 - **Depends on:** S2
 
@@ -170,6 +185,7 @@
   shareable link when shared, grouped/filterable by kind.
 
 **Implementation notes (from building S10):**
+
 - New repository port method **`listByOwner(ownerId, { includeArchived })`** (default
   active-only, most-recently-updated first), implemented in both the in-memory and Drizzle
   (`and(owner, status='active')`, `orderBy desc(updatedAt)`) repos.
@@ -184,6 +200,7 @@
   first, excludes archived + other owners, 401 unauth).
 
 ### S14 — Shared with you
+
 - **Status:** done
 - **Depends on:** S5
 
@@ -191,6 +208,7 @@
   kind; their own artefacts (in "Your artefacts") and others' private ones never appear. *(AH 8)*
 
 **Implementation notes (from building S14):**
+
 - Repository port method **`listShared(viewerId)`** — active artefacts with visibility
   `authenticated` or `public`, across owners but **excluding the viewer's own**,
   most-recently-updated first. Drizzle impl uses the `(status, visibility)` index (`inArray`)
@@ -213,6 +231,7 @@
   each enriched with the owner's identity; `401` unauthenticated).
 
 ### S15 — Permanent delete (archived only)
+
 - **Status:** done
 - **Depends on:** S7
 
@@ -221,6 +240,7 @@
   its data entries. *(AH 11)*
 
 **Implementation notes (from building S15):**
+
 - **Domain** `assertDeletable(a)` (`artefact.ts`): pure guard — throws `InvariantViolation`
   unless `status === "archived"`. Deletion produces no new aggregate, so it's a guard, not a
   transition.
@@ -242,6 +262,7 @@
   everywhere + second delete 404, non-owner 404 / anonymous 401).
 
 ### S16 — Share with specific people (`selected` tier + access list)
+
 - **Status:** done
 - **Depends on:** S5
 
@@ -258,6 +279,7 @@
   attributed to the owner, alongside `authenticated`/`public` shares. *(AH 8)*
 
 **Implementation notes (from building S16):**
+
 - **Domain**: `visibility.ts` adds `selected` (so `ShareableTier` includes it and
   `shareArtefact` mints/retains its slug unchanged). `artefact.ts` gains `sharedWith: readonly
   string[]` (created empty; carried through every transition by spread). `access.ts` extends
@@ -284,6 +306,7 @@
   view + non-member 404 + anonymous 404; member sees it in "Shared with you"; user search).
 
 ### S19b — Payload-retention seam
+
 - **Status:** specced
 - **Depends on:** S3, S15
 
@@ -292,6 +315,7 @@
 The other half of the history enabler (see **S19a — Data version pin**). (DDD amendment:
 `ddd/artefact-hosting.md` AH15.) The seam replaces a deletion in the S3 edit command, and the
 S15 permanent delete must give the policy its chance to purge.
+
 - **Hosting — retention seam.** Replace the unconditional delete of the superseded payload in
   `edit-artefact.command.ts` with a **`PayloadRetentionPolicy`** port. OSS wires the default
   `DiscardSupersededPayload` (deletes — **byte-identical behaviour**); the seam is the one place
@@ -304,6 +328,7 @@ S15 permanent delete must give the policy its chance to purge.
   version store, and rollback are the **EE** *Artefact History* context — see `ee/docs/specs/`.
 
 ### S32 — Link controls: password + expiry
+
 - **Status:** specced
 - **Depends on:** S6, S11, S12, S21, S25, S30
 
@@ -311,6 +336,7 @@ It depends on every non-owner read path it gates (S6, S11, S12, S21, S30) and on
 root's gate governs its contained artefacts. (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24.)
 An owner-set **link gate** that narrows access after the matrix grants it — the password and
 expiry every competing host offers, without a fifth tier. (Rationale: market analysis gap #4.)
+
 - **Domain** — `LinkGate` value object `{ passwordHash, expiresAt, version }` on `Artefact` and
   `Collection` (roots only). Pure `evaluateLinkGate(gate, now, pass) → open | expired |
   challenge`; pure `effectiveLinkGate(artefact, root)` (the root's gate when contained, AH20).
@@ -334,7 +360,7 @@ expiry every competing host offers, without a fifth tier. (Rationale: market ana
   (owner). Summaries expose `linkGate: { passwordProtected, expiresAt }` to the owner only.
 - **Client** — `ManageAccessModal` gains a "Link protection" section (password set/change/clear,
   expiry picker with presets 1 d / 7 d / 30 d / custom); contained artefacts show it as
-  "Inherited from <root>". Owner cards show lock / clock badges. An unlock page in the shell for
+  "Inherited from `<root>`". Owner cards show lock / clock badges. An unlock page in the shell for
   challenged viewers; an "expired" owner banner in the preview.
 - **Acceptance:** owner is never challenged or expired; a non-owner on a password-gated `public`
   link is challenged, a wrong password is rejected, a right one opens shell + frame + data reads
@@ -350,6 +376,7 @@ expiry every competing host offers, without a fifth tier. (Rationale: market ana
 - **Boundary:** **OSS**.
 
 ### S33 — Share-invitation seam
+
 - **Status:** specced
 - **Depends on:** S1, S16, S25
 
@@ -362,6 +389,7 @@ aggregate, magic-link sign-in, mail delivery and cross-org grants are the EE **S
 invitations** context (`ee/docs/specs/ddd/share-invitations.md`) — in cloud, where sign-up is
 open (IA5), an invited person becomes an ordinary Account. No DDD invariant changes: an accepted
 invitation is an ordinary AH14 grant.
+
 - **Capabilities** — public `GET /api/config` gains `capabilities: { shareInvitations: boolean,
   magicLinkSignIn: boolean }`, supplied by an injected `Capabilities` value through
   `createApp` (the S22/S24 pattern). **OSS default: both `false`.**
@@ -371,7 +399,7 @@ invitation is an ordinary AH14 grant.
   `{ id, email, createdAt, expiresAt }`), and `DELETE /api/invitations/:id`. `granted` means the
   email already had an Account and was added to `sharedWith` directly.
 - **Client** — when `shareInvitations` is on, `ManageAccessModal`'s people picker offers "Invite
-  <email>" for a well-formed email with no directory match and shows pending invitations as chips
+  `<email>`" for a well-formed email with no directory match and shows pending invitations as chips
   (resend = re-POST, revoke = DELETE) beside the access list; a `private` target prompts to share
   as `selected` first. When `magicLinkSignIn` is on, the sign-in page offers "Email me a sign-in
   link" (BetterAuth's standard `POST /api/auth/sign-in/magic-link`). With both off, the UI renders

@@ -3,7 +3,7 @@
 Shared vocabulary for Artefactor. Use these terms exactly — in code, specs, tests, and UI.
 
 | Term | Meaning |
-|------|---------|
+| ------ | --------- |
 | **Artefact** | A self-contained, **trusted** HTML deliverable produced by claude.ai / Claude design — e.g. a UX/UI prototype, slide deck, form, or interactive document. The core domain object. |
 | **Kind** | The category of an artefact: `prototype`, `slide-deck`, `form`, `interactive-doc`, `other`. Set at creation, editable. **Metadata only** — used to group and distinguish artefacts when browsing. |
 | **HTML payload** | The trusted HTML content of an artefact, stored and served as-is (no sanitization). Non-empty, size-capped. |

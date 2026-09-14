@@ -23,7 +23,7 @@ collection (name, structure, access, lifecycle) remains the owner's alone (CL9).
 Aggregate root. The consistency boundary for one folder node.
 
 | Field | Type | Notes |
-|-------|------|-------|
+| ------- | ------ | ------- |
 | `id` | CollectionId (uuid) | Identity. Immutable. |
 | `ownerId` | UserId | The BetterAuth user id of the Owner. Immutable. |
 | `tenantId` | TenantId | As on `Artefact` (AH17). Immutable; OSS: `DEFAULT_TENANT`. |
@@ -132,7 +132,7 @@ Artefact Hosting amendment (AH20/AH21). `null` = top-level / not in a collection
 
 Resolved at read time — single source of truth, no denormalized copy of access onto rows:
 
-```
+```text
 effectiveViewable(artefact, root: Collection | null): ViewableArtefact
   root = null (top-level)  → { status, ownerId, visibility, sharedWith } of the artefact
   root ≠ null              → { status: artefact.status, ownerId: artefact.ownerId,
@@ -157,7 +157,7 @@ own tier is dormant, CL5). Enforced server-side; the UI merely reflects it.
 All owner-scoped (CL9/CL10) unless noted; `requireAuth` + tenant scope as everywhere else.
 
 | Method | Path | Purpose |
-|--------|------|---------|
+| -------- | ------ | --------- |
 | `GET` | `/api/collections` | Owner's collections (active; `?archived=true` for the archive view) |
 | `POST` | `/api/collections` | Create (`name`, optional `parentId`, optional `visibility` — roots only) |
 | `PATCH` | `/api/collections/:id` | Rename; change access (`visibility`, roots only) |
@@ -165,7 +165,7 @@ All owner-scoped (CL9/CL10) unless noted; `requireAuth` + tenant scope as everyw
 | `POST` | `/api/collections/:id/archive` | Archive with cascade; returns cascade counts for the toast |
 | `POST` | `/api/collections/:id/restore` | Restore the subtree |
 | `DELETE` | `/api/collections/:id` | Permanent delete with cascade (archived-only); 204 |
-| `PUT` | `/api/artefacts/:id/collection` | Move artefact (`{ collectionId | null }`); owner-only; mints slug per CL6 |
+| `PUT` | `/api/artefacts/:id/collection` | Move artefact (`{ collectionId \| null }`); owner-only; mints slug per CL6 |
 | `GET` | `/api/bookmarks` | The caller's bookmarks (artefact ids + collection ids) |
 | `PUT/DELETE` | `/api/artefacts/:id/bookmark` | Bookmark / unbookmark a viewable artefact (BM2; remove is ungated) |
 | `PUT/DELETE` | `/api/collections/:id/bookmark` | Bookmark / unbookmark a viewable collection (BM2/CL11) |
@@ -229,4 +229,4 @@ access automatically, because their gates already call the same matrix.
 
 ## Open questions
 
-_None at the context level. Slice-local details are in the FDD spec (S25–S27)._
+*None at the context level. Slice-local details are in the FDD spec (S25–S27).*

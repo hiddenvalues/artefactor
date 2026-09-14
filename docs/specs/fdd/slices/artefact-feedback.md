@@ -1,12 +1,17 @@
 # Artefact Feedback
 
+## Slices
+
 ### S34 — Comments + agent feedback loop (MCP)
+
 - **Status:** specced
 - **Depends on:** S12, S18, S21, S25, S32
 
-The S32 edge is for its composed read authorization (gate composition). (New DDD bounded context: `ddd/artefact-feedback.md`, FB1–FB7; amends
+The S32 edge is for its composed read authorization (gate composition). (New DDD bounded context:
+`ddd/artefact-feedback.md`, FB1–FB7; amends
 `ddd/artefact-hosting.md` AH11.) Threaded comments in the host chrome, read and answered by the
 owner's agent through the connector. (Market analysis gap #3 — the most differentiating slice.)
+
 - **Domain** — `CommentThread` aggregate with `Comment` entities; pure `startThread`, `reply`,
   `editComment`, `deleteComment` (removes an emptied thread), `resolve` / `reopen`, each
   enforcing FB4 authority. `CommentBody` value object (FB, ≤ 10 000 chars). `anchor` field
@@ -46,6 +51,7 @@ owner's agent through the connector. (Market analysis gap #3 — the most differ
 - **Boundary:** **OSS**.
 
 ### S34b — Anchored comments
+
 - **Status:** specced
 - **Depends on:** S19a, S34
 

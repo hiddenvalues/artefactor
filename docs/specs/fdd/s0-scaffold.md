@@ -44,7 +44,7 @@ prefixes below).
 
 ## Repository layout
 
-```
+```text
 artefactor/
   package.json
   tsconfig.json
@@ -154,7 +154,7 @@ Commands: `drizzle-kit generate` (from schema) → `drizzle-kit migrate` (apply)
 Intended scripts (these become the CLAUDE.md **Commands** section once implemented):
 
 | Command | Purpose |
-|---------|---------|
+| --------- | --------- |
 | `pnpm dev` | Vite dev server for the client + Hono in watch — single dev experience |
 | `pnpm build` | `vite build` (client → `dist/client`) + bundle server (`dist/server`) |
 | `pnpm start` | run `dist/server` (serves API + built client) |
