@@ -110,7 +110,6 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
   function load(authorId, reseed){
     var seq = ++loads;
     var target = authorId || null;
-    author = target;
     return fetch(cfg.mintEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -118,6 +117,9 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
       body: JSON.stringify(target ? { author: target } : {})
     }).then(function(r){ return r && r.ok ? r.json() : null; }).then(function(d){
       if (!d || seq !== loads || typeof d.frameUrl !== "string") return;
+      // The context changes only once its frame is really loading: a failed
+      // mint leaves the current frame, and its saves, as they were.
+      author = target;
       if (reseed && target === null) {
         gen++;
         pin = d.seedUpdatedAt || null;
@@ -176,13 +178,17 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
     if (d.type === "artefactor:data-changed") {
       if (author !== null || typeof d.blob !== "string") return;
       pending = d.blob;
-      save(false);
+      // A change that arrives while the shell itself is unloading goes out now,
+      // with keepalive — there is no later.
+      save(unloading);
     } else if (d.type === "artefactor:frame-token-expired") {
       load(author, false);
     }
   });
 
-  window.addEventListener("pagehide", function(){ save(true); });
+  var unloading = false;
+  window.addEventListener("pagehide", function(){ unloading = true; save(true); });
+  window.addEventListener("pageshow", function(){ unloading = false; });
 
   var reload = document.getElementById("ae-conflict-reload");
   if (reload) reload.addEventListener("click", function(){ load(author, true); });

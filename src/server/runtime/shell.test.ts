@@ -319,6 +319,38 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(headersOf(s.puts()[0]![1])["If-Match"]).toBe('"2026-09-12T13:00:00.000Z"');
   });
 
+  it("a failed author switch keeps the viewer's own context: the frame's changes still save", async () => {
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint
+        ? { status: 500, ok: false, json: async () => ({}) }
+        : saved("2026-09-12T10:05:00.000Z"),
+    );
+    s.api.select("u2");
+    await settle();
+    await settle();
+    expect(s.frame.src).toBe(frameCfg.frameUrl);
+    s.changed({ a: "still mine" });
+    await settle();
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  it("a change arriving after its own pagehide is sent with keepalive", async () => {
+    const s = runShell(frameCfg);
+    s.listeners["pagehide"]!();
+    s.changed({ a: "last edit" });
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].keepalive).toBe(true);
+  });
+
+  it("back from the bfcache (pageshow), saves stop forcing keepalive", async () => {
+    const s = runShell(frameCfg);
+    s.listeners["pagehide"]!();
+    s.listeners["pageshow"]!();
+    s.changed({ a: "1" });
+    await settle();
+    expect(s.puts()[0]![1].keepalive).toBe(false);
+  });
+
   it("frame-token-expired from its frame → one mint for the current context, and the frame reloads with it", async () => {
     const s = runShell(frameCfg, () => minted("/a/slug1/frame?t=fresh", "2026-09-12T09:00:00.000Z"));
     s.fromFrame({ type: "artefactor:frame-token-expired" });
