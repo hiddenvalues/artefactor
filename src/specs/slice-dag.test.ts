@@ -1,15 +1,23 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   checkClaudeMd,
   computeWaves,
+  nextFreeIds,
+  parseSliceCatalog,
   parseSliceDag,
+  validateSliceCatalog,
   validateSliceDag,
   type Slice,
 } from "./slice-dag";
+import { loadSliceDag } from "./load";
 
-// The FDD slice DAG (`docs/specs/fdd/slice-dag.md`) is the single source of truth for slice
-// status and dependencies. These tests make the no-drift rule mechanical for the build plan.
+// The FDD slice DAG is the single source of truth for slice status and dependencies: a catalog
+// (`docs/specs/fdd/slice-dag.md`) listing context files (`docs/specs/fdd/slices/*.md`) that hold
+// the slices. These tests make the no-drift rule mechanical for the build plan.
+
+const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const readRepoFile = (path: string) =>
   readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
@@ -346,11 +354,304 @@ describe("checkClaudeMd", () => {
   });
 });
 
-describe("the real specs", () => {
-  const coreDag = parseSliceDag(readRepoFile("docs/specs/fdd/slice-dag.md"));
+/** A catalog with one row per `[title, file, ids]` and one mark per `"<prefix>: <id>"`. */
+const catalogOf = (rows: [string, string, string][], marks: string[], extra: string[] = []) =>
+  [
+    "# FDD — Feature Slice DAG",
+    "",
+    "Intro prose.",
+    "",
+    ...extra,
+    "## Contexts",
+    "",
+    "| Context | File | Slices |",
+    "|---|---|---|",
+    ...rows.map(
+      ([title, file, ids]) => `| ${title} | [${file.split("/").pop()}](${file}) | ${ids} |`,
+    ),
+    "",
+    "## High-water marks",
+    "",
+    ...marks.map((mark) => {
+      const [prefix, id] = mark.split(":").map((part) => part.trim());
+      return `- **${prefix}:** ${id}`;
+    }),
+    "",
+  ].join("\n");
 
-  it("docs/specs/fdd/slice-dag.md validates with zero violations", () => {
+/** A context file: its H1, then the slice sections. */
+const contextFile = (title: string, ...sections: string[]) =>
+  [`# ${title}`, "", ...sections].join("\n");
+
+describe("parseSliceCatalog", () => {
+  it("parses a context row into its title, link target and ids", () => {
+    const catalog = parseSliceCatalog(
+      catalogOf([["Artefact Data", "slices/artefact-data.md", "S11, S12"]], ["S: S12"]),
+    );
+    expect(catalog.contexts).toEqual([
+      { title: "Artefact Data", file: "slices/artefact-data.md", ids: ["S11", "S12"], line: 9 },
+    ]);
+  });
+
+  it("parses high-water marks into prefix, id and number", () => {
+    const catalog = parseSliceCatalog(catalogOf([], ["S: S34", "ET: ET4"]));
+    expect(catalog.highWaterMarks).toEqual([
+      { prefix: "S", id: "S34", number: 34, line: 12 },
+      { prefix: "ET", id: "ET4", number: 4, line: 13 },
+    ]);
+  });
+
+  it("records a malformed mark with a null number", () => {
+    const catalog = parseSliceCatalog(catalogOf([], ["S: S34a", "S: ET3"]));
+    expect(catalog.highWaterMarks.map((m) => [m.id, m.number])).toEqual([
+      ["S34a", null],
+      ["ET3", null],
+    ]);
+  });
+
+  it("ignores tables and bullets outside the Contexts and High-water marks sections", () => {
+    const catalog = parseSliceCatalog(
+      catalogOf(
+        [],
+        ["S: S1"],
+        [
+          "## Prose",
+          "",
+          "| Context | File | Slices |",
+          "|---|---|---|",
+          "| Stray | [x.md](slices/x.md) | S9 |",
+          "- **S:** S99",
+          "",
+        ],
+      ),
+    );
+    expect(catalog.contexts).toEqual([]);
+    expect(catalog.highWaterMarks.map((m) => m.id)).toEqual(["S1"]);
+  });
+});
+
+describe("validateSliceCatalog", () => {
+  const rows: [string, string, string][] = [
+    ["Platform", "slices/platform.md", "S0, S2"],
+    ["Artefact Data", "slices/artefact-data.md", "S1"],
+  ];
+  const consistent = () => ({
+    catalog: parseSliceCatalog(catalogOf(rows, ["S: S2"])),
+    files: [
+      {
+        path: "slices/platform.md",
+        markdown: contextFile("Platform", section("S0", "done"), section("S2", "done", "S0")),
+      },
+      {
+        path: "slices/artefact-data.md",
+        markdown: contextFile("Artefact Data", section("S1", "specced", "S0")),
+      },
+    ],
+    listed: ["slices/platform.md", "slices/artefact-data.md"],
+  });
+  const check = (c: ReturnType<typeof consistent>) =>
+    validateSliceCatalog(c.catalog, c.files, c.listed);
+
+  it("accepts a consistent catalog and files", () => {
+    expect(check(consistent())).toEqual([]);
+  });
+
+  it("resolves File cells against the catalog's directory", () => {
+    const c = consistent();
+    const catalog = parseSliceCatalog(catalogOf(rows, ["S: S2"]), "docs/fdd/slice-dag.md");
+    const files = c.files.map((f) => ({ ...f, path: `docs/fdd/${f.path}` }));
+    const listed = c.listed.map((path) => `docs/fdd/${path}`);
+    expect(validateSliceCatalog(catalog, files, listed)).toEqual([]);
+  });
+
+  it("fails on a catalogued file that doesn't exist", () => {
+    const c = consistent();
+    c.files = c.files.filter((f) => f.path !== "slices/artefact-data.md");
+    c.listed = c.listed.filter((path) => path !== "slices/artefact-data.md");
+    expect(check(c)).toEqual([
+      expect.stringMatching(/catalogued file slices\/artefact-data\.md does not exist/),
+    ]);
+  });
+
+  it("fails on a .md file in slices/ missing from the catalog", () => {
+    const c = consistent();
+    c.listed.push("slices/orphan.md");
+    expect(check(c)).toEqual([expect.stringMatching(/slices\/orphan\.md is not in the catalog/)]);
+  });
+
+  it("fails when the same file is in two rows", () => {
+    const c = consistent();
+    c.catalog = parseSliceCatalog(catalogOf([...rows, rows[0]!], ["S: S2"]));
+    expect(check(c)).toEqual([
+      expect.stringMatching(/slices\/platform\.md is catalogued in more than one row/),
+    ]);
+  });
+
+  it("fails when the Slices cell lists an id the file lacks", () => {
+    const c = consistent();
+    c.catalog.contexts[1]!.ids = ["S1", "S3"];
+    expect(check(c)).toEqual([
+      expect.stringMatching(/slices\/artefact-data\.md: its Slices cell lists S3, not in the file/),
+    ]);
+  });
+
+  it("fails when a file's slice is missing from the Slices cell", () => {
+    const c = consistent();
+    c.catalog.contexts[0]!.ids = ["S0"];
+    expect(check(c)).toEqual([
+      expect.stringMatching(/slices\/platform\.md: S2 is missing from its Slices cell/),
+    ]);
+  });
+
+  it("fails when the Slices cell lists the file's ids in a different order", () => {
+    const c = consistent();
+    c.catalog.contexts[0]!.ids = ["S2", "S0"];
+    expect(check(c)).toEqual([
+      expect.stringMatching(/slices\/platform\.md: its Slices cell order S2, S0 .*file order S0, S2/),
+    ]);
+  });
+
+  it("fails when a Context cell differs from the file's H1", () => {
+    const c = consistent();
+    c.catalog.contexts[1]!.title = "Data";
+    expect(check(c)).toEqual([
+      expect.stringMatching(/slices\/artefact-data\.md: its H1 "Artefact Data" .*Context "Data"/),
+    ]);
+  });
+
+  it("fails on a slice heading in the catalog itself", () => {
+    const c = consistent();
+    c.catalog = parseSliceCatalog(catalogOf(rows, ["S: S2"], [section("S1", "done")]));
+    expect(check(c)).toEqual([
+      expect.stringMatching(/slice-dag\.md:5: slice heading S1 belongs in a context file/),
+    ]);
+  });
+
+  it("fails on the same id in two context files, naming both file:lines", () => {
+    const c = consistent();
+    c.files[1]!.markdown = contextFile(
+      "Artefact Data",
+      section("S1", "specced", "S0"),
+      section("S2", "done"),
+    );
+    c.catalog.contexts[1]!.ids = ["S1", "S2"];
+    expect(check(c)).toEqual([
+      "duplicate slice id S2 (slices/platform.md:8, slices/artefact-data.md:8)",
+    ]);
+  });
+
+  describe("high-water marks", () => {
+    /** A single-context catalog over the given slice ids and marks. */
+    const withSlices = (ids: string[], marks: string[]) =>
+      validateSliceCatalog(
+        parseSliceCatalog(catalogOf([["Fixture", "slices/f.md", ids.join(", ")]], marks)),
+        [
+          {
+            path: "slices/f.md",
+            markdown: contextFile("Fixture", ...ids.map((id) => section(id, "specced"))),
+          },
+        ],
+        ["slices/f.md"],
+      );
+
+    it("fails when a slice id exceeds its prefix's mark", () => {
+      expect(withSlices(["S34", "S35"], ["S: S34"])).toEqual([
+        expect.stringMatching(/S35 exceeds high-water mark S34/),
+      ]);
+    });
+
+    it("accepts a sub-lettered id at the mark's number", () => {
+      expect(withSlices(["S34", "S34b"], ["S: S34"])).toEqual([]);
+    });
+
+    it("accepts a mark above the highest slice (numbers are never reused)", () => {
+      expect(withSlices(["S34"], ["S: S40"])).toEqual([]);
+    });
+
+    it("fails on a slice prefix with no mark", () => {
+      expect(withSlices(["S1", "ET1"], ["S: S1"])).toEqual([
+        expect.stringMatching(/no high-water mark for prefix ET/),
+      ]);
+    });
+
+    it("fails on a mark whose prefix has no slices", () => {
+      expect(withSlices(["S1"], ["S: S1", "EX: EX2"])).toEqual([
+        expect.stringMatching(/high-water mark EX2 .*no EX slices/),
+      ]);
+    });
+
+    it("fails on a malformed mark", () => {
+      expect(withSlices(["S1"], ["S: S1", "S: S34a"])).toEqual([
+        expect.stringMatching(/malformed high-water mark "S34a" for prefix S/),
+        expect.stringMatching(/more than one high-water mark for prefix S/),
+      ]);
+      expect(withSlices(["S1"], ["S: ET3"])).toEqual([
+        expect.stringMatching(/malformed high-water mark "ET3" for prefix S/),
+      ]);
+    });
+
+    it("fails on two marks for the same prefix", () => {
+      expect(withSlices(["S1"], ["S: S1", "S: S2"])).toEqual([
+        expect.stringMatching(/more than one high-water mark for prefix S/),
+      ]);
+    });
+  });
+});
+
+describe("nextFreeIds", () => {
+  it("is one past each well-formed mark", () => {
+    const catalog = parseSliceCatalog(catalogOf([], ["E: E3", "ET: ET4", "S: S34a"]));
+    expect(nextFreeIds(catalog)).toEqual(["E4", "ET5"]);
+  });
+});
+
+describe("a DAG over several context files", () => {
+  const a = parseSliceDag(contextFile("A", section("S0", "done")), "slices/a.md");
+  const b = parseSliceDag(
+    contextFile("B", section("S1", "specced", "S0"), section("S2", "done", "S1")),
+    "slices/b.md",
+  );
+
+  it("tags each slice with its file", () => {
+    expect([...a, ...b].map((s) => `${s.id}@${s.file}:${s.line}`)).toEqual([
+      "S0@slices/a.md:3",
+      "S1@slices/b.md:3",
+      "S2@slices/b.md:8",
+    ]);
+  });
+
+  it("resolves a dependency on an id in another file and names file:line in violations", () => {
+    expect(validateSliceDag([...a, ...b])).toEqual([
+      "S2 (slices/b.md:8) is done but its dependency S1 is specced",
+    ]);
+  });
+
+  it("names both file:lines for an id duplicated across files", () => {
+    const dup = parseSliceDag(contextFile("C", section("S0", "done")), "slices/c.md");
+    expect(validateSliceDag([...a, ...dup])).toEqual([
+      "duplicate slice id S0 (slices/a.md:3, slices/c.md:3)",
+    ]);
+  });
+});
+
+describe("the real specs", () => {
+  const core = loadSliceDag("docs/specs/fdd/slice-dag.md", { root: repoRoot });
+  const coreDag = core.slices;
+
+  it("the core catalog and its 8 context files validate with zero catalog violations", () => {
+    expect(core.violations).toEqual([]);
+    expect(core.files.map((f) => f.path)).toHaveLength(8);
+  });
+
+  it("the loaded core slices validate with zero DAG violations", () => {
     expect(validateSliceDag(coreDag)).toEqual([]);
+  });
+
+  it("loads exactly the core slices S0–S34b (S19 split into S19a + S19b)", () => {
+    const expected = Array.from({ length: 35 }, (_, n) => `S${n}`)
+      .flatMap((id) => (id === "S19" ? ["S19a", "S19b"] : [id]))
+      .concat("S34b");
+    expect(coreDag.map((s) => s.id).sort()).toEqual(expected.sort());
   });
 
   it("the root CLAUDE.md carries no slice status", () => {
