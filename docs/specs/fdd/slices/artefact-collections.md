@@ -37,8 +37,8 @@ effective share.)
 - **Client** — sidebar shell (hamburger, collections tree with auto-expand + `+`), collection
   page (breadcrumb, access control with inheritance note, `⋯` menu, sub-collection cards,
   scoped sort/kind-chips/density artefact list), add/move-to-collection modal (tree picker +
-  inline create + top-level option), create/edit editor, "Inherited" read-only access control
-  - "in \<Collection\>" chip on artefact cards.
+  inline create + top-level option), create/edit editor, "Inherited" read-only access control +
+  "in \<Collection\>" chip on artefact cards.
 - **Acceptance:** a private artefact moved into an `authenticated`-root tree is viewable by
   another signed-in user (and got a slug); moved back to top level it is private again (own
   tier resurfaces, slug retained); an artefact whose *own* tier is `public` inside a `private`

@@ -9,8 +9,8 @@
 
 *Includes Google OAuth + the sign-up domain allowlist.*
 
-- Users sign in with **Google OAuth** (the production method) and, in dev/test only, **email
-  - password**. Production disables email+password (`emailAndPassword.enabled = NODE_ENV !==
+- Users sign in with **Google OAuth** (the production method) and, in dev/test only, **email +
+  password**. Production disables email+password (`emailAndPassword.enabled = NODE_ENV !==
   "production"`), removing the open unverified sign-up path from prod.
 - Account creation is restricted to allowed email domains (`AUTH_ALLOWED_EMAIL_DOMAINS`,
   default `example.com` for dev; org domains set in prod), enforced for every provider via the
