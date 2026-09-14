@@ -406,6 +406,12 @@ or the data API. A missing thumbnail always renders the kind placeholder. Render
 **after** the create or edit is persisted and **never blocks or fails** the command: a
 disabled, missing, failing or timed-out renderer leaves `thumbnailHash` untouched.
 
+> **Implementation status (not an invariant).** Rendering is **opt-in**
+> (`ARTEFACTOR_THUMBNAILS=on`, default `off`) until renderer isolation lands: the renderer runs
+> untrusted HTML in Chromium with its OS sandbox off, in the app's own container. With it off,
+> AH25's disabled path is the default — no browser starts and every card shows the kind
+> placeholder. The isolation follow-up flips the default to `on`.
+
 **AH26 — pristine and payload-bound.** A thumbnail is rendered from the **stored payload
 alone** — no S13 localStorage bootstrap, no S12 shell, no `DataEntry` — so it is a function of
 `payloadHash` and can never leak anyone's saved data. A render is recorded **only** by a

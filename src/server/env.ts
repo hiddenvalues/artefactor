@@ -7,10 +7,12 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_PATH: z.string().min(1).default("./data/artefactor.db"),
   ARTEFACTOR_PAYLOAD_DIR: z.string().min(1).default("./data/payloads"),
-  // S35 — artefact card thumbnails. `off` never starts a browser: every card
+  // S35 — artefact card thumbnails. **Opt-in** until renderer isolation lands:
+  // the renderer runs untrusted HTML in Chromium with its OS sandbox off, in the
+  // app's own container. `off` (the default) never starts a browser; every card
   // shows the kind placeholder and nothing else changes (AH25). Thumbnails live
   // beside the payloads, never inside that directory.
-  ARTEFACTOR_THUMBNAILS: z.enum(["on", "off"]).default("on"),
+  ARTEFACTOR_THUMBNAILS: z.enum(["on", "off"]).default("off"),
   ARTEFACTOR_THUMBNAIL_DIR: z.string().min(1).default("./data/thumbnails"),
   MIGRATIONS_DIR: z.string().min(1).default("./src/infra/db/migrations"),
   CLIENT_DIR: z.string().min(1).default("./dist/client"),

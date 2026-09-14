@@ -52,8 +52,9 @@ ENV NODE_ENV=production \
 COPY --from=build /app/node_modules ./node_modules
 # S35 — headless Chromium (plus its system libraries) for artefact card
 # thumbnails. Installed as root into PLAYWRIGHT_BROWSERS_PATH and left readable
-# by everyone, so the unprivileged `node` user can launch it. Without it the app
-# still runs: cards fall back to the kind placeholder.
+# by everyone, so the unprivileged `node` user can launch it. Dormant unless
+# ARTEFACTOR_THUMBNAILS=on (deliberately not set here: rendering stays opt-in
+# until renderer isolation lands). Without it cards show the kind placeholder.
 RUN node node_modules/playwright-core/cli.js install --with-deps chromium-headless-shell \
   && rm -rf /var/lib/apt/lists/* \
   && chmod -R a+rX /ms-playwright

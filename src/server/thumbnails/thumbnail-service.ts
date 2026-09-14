@@ -36,6 +36,16 @@ export function enqueueThumbnail(queue: ThumbnailQueue | undefined, a: Artefact)
   }
 }
 
+// S35 — the renderer for an `ARTEFACTOR_THUMBNAILS` setting: built only when
+// `on`, otherwise none (placeholder mode). `make` is called lazily so `off` never
+// even constructs one.
+export function thumbnailRendererFor(
+  setting: "on" | "off",
+  make: () => ThumbnailRenderer,
+): ThumbnailRenderer | null {
+  return setting === "on" ? make() : null;
+}
+
 export interface ThumbnailServiceDeps {
   repo: Pick<ArtefactRepository, "recordThumbnail" | "listNeedingThumbnail">;
   payloadStore: PayloadStore;
@@ -92,7 +102,9 @@ export class ThumbnailService implements ThumbnailQueue {
   // or stale, page by page, until a read offers nothing not already attempted.
   async start(): Promise<void> {
     if (this.disabled) {
-      this.log("thumbnail renderer disabled — cards show the kind placeholder");
+      this.log(
+        "thumbnail rendering disabled (set ARTEFACTOR_THUMBNAILS=on to enable) — cards show the kind placeholder",
+      );
       return;
     }
     const attempted = new Set<string>();

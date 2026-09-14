@@ -441,8 +441,10 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
   Network Access then blocks loopback), WebSockets closed, `load` + a short settle (never
   `networkidle`), a CDP WebP capture at scale 0.4 (512×320), and a 15 s hard cap. A launch
   failure reports the renderer unavailable.
-- **Server** — `ARTEFACTOR_THUMBNAILS` (`on` | `off`, default `on`) and
-  `ARTEFACTOR_THUMBNAIL_DIR` (default `./data/thumbnails`). An in-process `ThumbnailService`:
+- **Server** — `ARTEFACTOR_THUMBNAILS` (`on` | `off`, default **`off`**) and
+  `ARTEFACTOR_THUMBNAIL_DIR` (default `./data/thumbnails`). Rendering is **opt-in** until
+  renderer isolation (sandbox on, a separate renderer container without secrets or the data
+  volume, egress limits) lands; that follow-up flips the default to `on`. An in-process `ThumbnailService`:
   a synchronous, never-throwing `enqueue(job)` deduped by artefact id (latest wins); one worker
   that skips fresh jobs, drops a job whose payload is gone, renders, stores, records by
   compare-and-set (deleting its file when the record loses) and then deletes the superseded
@@ -459,8 +461,9 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
   overlaid. After an upload or HTML replace the SPA polls that artefact every 2 s for up to
   ~30 s until its `thumbnailUrl` appears.
 - **Packaging** — the runtime image installs `chromium-headless-shell` under
-  `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` with `ARTEFACTOR_THUMBNAIL_DIR=/data/thumbnails`;
-  CI installs it before `pnpm test` so the renderer isolation tests run.
+  `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` with `ARTEFACTOR_THUMBNAIL_DIR=/data/thumbnails`
+  but does not set `ARTEFACTOR_THUMBNAILS=on`; CI installs it before `pnpm test` so the renderer
+  isolation tests run.
 
 **Acceptance:**
 
@@ -488,8 +491,9 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
   401 for anonymous whatever the ref; a flat 404 for an unknown ref, not viewable, archived
   (owner included) and no thumbnail yet.
 - **Permanent delete** of an archived artefact removes its thumbnail files.
-- **Disabled renderer** — with `ARTEFACTOR_THUMBNAILS=off` or no Chromium the server starts,
-  logs once, never renders, and all other behaviour is identical.
+- **Disabled by default** — with `ARTEFACTOR_THUMBNAILS` unset (or `off`, or no Chromium) the
+  server starts, logs once that thumbnails are disabled, never renders, every card shows the
+  placeholder, and all other behaviour is identical; `on` builds the renderer.
 - **Renderer integration** (runs in CI; skips locally only without Chromium) — a fixture with
   CDN CSS, a web font and a canvas yields a valid 512×320 WebP; a loopback canary receives zero
   requests from `fetch`, `<img>`, `sendBeacon` and WebSocket; a public WebSocket is blocked; a
