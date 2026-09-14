@@ -146,7 +146,10 @@ describe("create / edit collection commands (S25)", () => {
     const root = await makeCollection("Product");
     const child = await makeCollection("Q4", { parentId: root.id });
     await artefactRepo.save(baseArtefact("a1", { collectionId: root.id }));
-    await artefactRepo.save(baseArtefact("a2", { collectionId: child.id }));
+    // a2 is newer, so listings put it first: the slugs must not depend on that order.
+    await artefactRepo.save(
+      baseArtefact("a2", { collectionId: child.id, updatedAt: new Date(Date.now() + 1) }),
+    );
     await artefactRepo.save(
       baseArtefact("a3", { collectionId: child.id, publicSlug: "kept" }),
     );
@@ -162,8 +165,11 @@ describe("create / edit collection commands (S25)", () => {
       { collectionRepo, artefactRepo, generateSlug },
     );
 
-    expect((await artefactRepo.findById("a1", SCOPE))?.publicSlug).toBe("slug-1");
-    expect((await artefactRepo.findById("a2", SCOPE))?.publicSlug).toBe("slug-2");
+    const minted = [
+      (await artefactRepo.findById("a1", SCOPE))?.publicSlug,
+      (await artefactRepo.findById("a2", SCOPE))?.publicSlug,
+    ];
+    expect([...minted].sort()).toEqual(["slug-1", "slug-2"]); // one distinct slug each
     expect((await artefactRepo.findById("a3", SCOPE))?.publicSlug).toBe("kept"); // AH5
     expect((await artefactRepo.findById("a4", SCOPE))?.publicSlug).toBeNull();
   });
