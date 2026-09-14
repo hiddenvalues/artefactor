@@ -23,7 +23,7 @@ export const PERSISTENCE_CONTRACT_SUMMARY = `Artefactor hosts self-contained HTM
 
 When you AUTHOR an artefact's HTML, follow this persistence contract so saved data survives:
 
-1. Persist ONLY through the standard localStorage API. Not IndexedDB, cookies, sessionStorage, or your own fetch/network code — only localStorage is backed by Artefactor's store. (sessionStorage looks similar but is NOT persisted.)
+1. Persist ONLY through the standard localStorage API. Not IndexedDB, cookies, sessionStorage, or your own fetch/network code — only localStorage is backed by Artefactor's store. sessionStorage, IndexedDB and cookies are never saved, and in Artefactor's sandboxed frame they throw. Don't use them, even for temporary state; keep temporary state in memory. Beware libraries that silently use IndexedDB (Dexie, localForage, idb-keyval, y-indexeddb). The artefact also can't navigate the top page: a link targeting it does nothing, so open links with target="_blank".
 2. Keep your whole state as ONE JSON object under ONE versioned key (e.g. "my-artefact-v1"). Versioning the key is what makes a later shape change tractable — but note that bumping it *without* a migration means old data is ignored, i.e. every user silently loses what they saved (see "Breaking data-shape changes" below).
 3. Wrap every getItem/setItem in try/catch and degrade to in-memory. A write can fail and must never break the artefact: the data may be loaded read-only (writes rejected), over the 5 MB budget (QuotaExceededError), or unavailable (opened as a bare file). You never detect or control read-only mode yourself — just tolerate a failed write.
 4. Stay under 5 MB total. Don't stuff big base64 images/files into saved state — keep them in the HTML or reference them by URL.

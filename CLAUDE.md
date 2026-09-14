@@ -28,7 +28,9 @@ prints the graph, the next build waves and the next free slice id). In-flight wo
   tier).
 - **Identity** (`src/server/auth.ts`) — BetterAuth via its Drizzle adapter: Google OAuth in
   production, email + password in dev/test only, a sign-up email-domain allowlist (with a `*`
-  allow-all option), session middleware + the `requireAuth` guard, protected `GET /api/me`.
+  allow-all option), session middleware + the `requireAuth` guard, protected `GET /api/me`, and
+  an `Origin` / `Sec-Fetch-Site` check refusing cross-origin state changes under `/api` (IA6;
+  `/api/auth/*` is BetterAuth's own).
 - **Artefact Hosting** (`src/domain/artefact/`, `src/server/artefacts/`) — the `Artefact`
   aggregate, a Drizzle `ArtefactRepository`, the pure access matrix, and commands for
   create / edit / set-visibility / manage access list / archive / restore / permanent delete.
@@ -64,12 +66,18 @@ prints the graph, the next build waves and the next free slice id). In-flight wo
   `MAX_RENDER_INPUT_BYTES` (10 MB). With the URL unset every card keeps its kind placeholder and
   nothing else changes (AH25/AH29; `docs/renderer-isolation.md`, `deploy/`).
 - **Serving runtime** (`src/server/runtime/`) — `/a/:slug` is a server-rendered host **shell**
-  (toolbar: data-context switcher, viewers, conflict banner) wrapping the artefact in an
-  `<iframe>` at `/a/:slug/frame` (`?author=<id>` re-seeds another author's blob read-only). Both
-  serving paths (shell frame and the owner preview) inject a seeded `localStorage` shim, so
-  artefacts persist with zero code changes. The shim writes only when something changed, pins
-  each write, and on a 412 stops writing and has the shell offer a reload — an open tab can
-  neither block nor silently revert another writer.
+  (toolbar: data-context switcher, viewers, conflict banner) wrapping the artefact in a
+  **sandboxed, opaque-origin** `<iframe>` (no `allow-same-origin`; the frame responses carry the
+  same flags as a `sandbox` CSP). Frames (`/a/:slug/frame`, `/api/artefacts/:id/raw/frame`,
+  `routes/frame.ts`) never read cookies: they are opened with a short-lived HMAC **frame token**
+  (`?t=`, viewer + author + route) that the shell render embeds and
+  `POST /api/artefacts/:ref/frame-token` re-mints (author switch, reload, expiry), and they
+  re-check access at every redeem. Both serving paths inject a seeded `localStorage` shim, so
+  artefacts persist with zero code changes; the shim **posts each change to the shell**, which
+  saves it under the viewer's session — writing only on change, pinned, never overlapping, and on
+  a 412 it stops and offers a reload, so an open tab can neither block nor silently revert another
+  writer. Optional `ARTEFACTOR_CONTENT_ORIGIN` serves frames from a separate registrable domain
+  that answers nothing else.
 - **MCP connector** (`src/server/mcp/`) — `POST /mcp` (Streamable HTTP via `@hono/mcp`,
   stateless JSON responses) behind an OAuth bearer from BetterAuth's `mcp` plugin (discovery at
   `/.well-known/oauth-*`, dynamic client registration, authorize / consent / token under

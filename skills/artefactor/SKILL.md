@@ -229,7 +229,12 @@ manage who it belongs to.
 
 1. **Persist only through `localStorage`.** Not IndexedDB, not cookies, not `sessionStorage`,
    not a backend you call yourself — none of those are backed by Artefactor's store.
-   `sessionStorage` in particular looks similar but is **not** persisted.
+   sessionStorage, IndexedDB and cookies are never saved, and in Artefactor's sandboxed frame
+   they throw. Don't use them, even for temporary state; keep temporary state in memory.
+   Beware libraries that silently use IndexedDB — Dexie, localForage, idb-keyval,
+   y-indexeddb — they fail the same way. The artefact also can't navigate the top page: a link
+   targeting it (`target="_top"`, `target="_parent"`) does nothing, so open links with
+   `target="_blank"`.
 
 2. **Keep one JSON object under one (versioned) key.** Serialize your whole state to a single
    object and store it as JSON. Version the key so you can migrate later.

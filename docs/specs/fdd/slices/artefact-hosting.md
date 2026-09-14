@@ -519,7 +519,7 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
 
 ### S36 — Isolated artefact serving: sandboxed frame, frame token, optional content origin
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S6, S12, S13, S31
 - **Optional:** S32
 - **Linear:** ALI-321

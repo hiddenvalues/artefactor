@@ -118,6 +118,22 @@ describe("MCP artefact tools (S18)", () => {
     expect(text).toMatch(/Persisting data \(localStorage\)/);
   });
 
+  // S36 — the sandboxed frame makes the other browser stores throw, so the
+  // guide and the ambient instructions both say so, in the same words.
+  it("warns, in both the instructions and the guide, that other browser storage throws in the sandbox", async () => {
+    const STORAGE =
+      "sessionStorage, IndexedDB and cookies are never saved, and in Artefactor's sandboxed frame they throw. Don't use them, even for temporary state; keep temporary state in memory.";
+    const client = await clientFor("u1");
+    const guide = (await call(client, "get_authoring_guide", {})).content[0]!.text;
+    for (const text of [client.getInstructions()!, guide]) {
+      expect(text.replace(/\s+/g, " ")).toContain(STORAGE);
+      for (const lib of ["Dexie", "localForage", "idb-keyval", "y-indexeddb"]) {
+        expect(text).toContain(lib);
+      }
+      expect(text).toMatch(/target="_blank"/);
+    }
+  });
+
   describe("thumbnails (S35)", () => {
     function withQueue() {
       const jobs: { id: string; payloadHash: string }[] = [];

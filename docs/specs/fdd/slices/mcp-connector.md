@@ -156,6 +156,9 @@ quarter"), write the whole blob back.
 - **Host shell (amends S12)** — a signed-in-only banner ("changed elsewhere … Reload") revealed
   by that message, accepted only from its own same-origin frame; Reload re-seeds the current
   data context.
+  *(Amended by S36: the frame is sandboxed with no session, so the shell owns this whole
+  discipline — the shim posts `artefactor:data-changed`, the shell pins and sends each `PUT`
+  and detects the 412 itself; `artefactor:data-conflict` is gone.)*
 - **MCP** — `set_artefact_data { id, blob, if_unmodified_since? }` → `{ id, bytes, updatedAt }`.
   **Whole-blob replacement only**, stated outright in the description (a model assuming merge
   semantics would silently delete every key it didn't send). Owner-scoped via
