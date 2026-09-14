@@ -39,6 +39,8 @@ export function loadSliceDag(catalogPath: string | URL, options: LoadOptions = {
 
   const files: ContextFile[] = [];
   for (const context of catalog.contexts) {
+    // A File cell that isn't a link has no target; `validateSliceCatalog` reports it.
+    if (context.file === "") continue;
     const path = join(dir, context.file);
     if (existsSync(path)) files.push({ path: display(path), markdown: readFileSync(path, "utf8") });
   }

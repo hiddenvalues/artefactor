@@ -78,7 +78,8 @@ The *why* of an edge belongs in the slice body. Other headings (`# <Context>`,
 
 1. Take the next free id from `pnpm spec:dag` (`Next free id: S35`), or sub-letter a split
    slice (`S19a`/`S19b`).
-2. Bump the prefix's high-water mark in the catalog.
+2. For a new number, bump the prefix's high-water mark in the catalog to it. A sub-lettered
+   split keeps its number, so the mark stays put.
 3. Add the id to its context's Slices cell, in file order.
 4. Write the section (heading + metadata block + body) in that context file.
 
@@ -94,7 +95,7 @@ the context files; a dependency or optional id doesn't exist, or a hard dependen
 the hard-dependency graph has a cycle; or a `done` or `in progress` slice depends on one that
 isn't `done`.
 
-**Catalog.** It fails when a catalogued file doesn't exist; a `.md` file in `slices/` is missing
+**Catalog.** It fails when a File cell isn't a Markdown link; a catalogued file doesn't exist; a `.md` file in `slices/` is missing
 from the catalog; a file sits in two rows; a Slices cell and its file disagree on ids or their
 order; a Context cell differs from the file's H1; the catalog itself holds a slice heading; or a
 high-water mark is malformed, duplicated, below a slice's number, or missing for a prefix in use

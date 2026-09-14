@@ -389,7 +389,13 @@ describe("parseSliceCatalog", () => {
       catalogOf([["Artefact Data", "slices/artefact-data.md", "S11, S12"]], ["S: S12"]),
     );
     expect(catalog.contexts).toEqual([
-      { title: "Artefact Data", file: "slices/artefact-data.md", ids: ["S11", "S12"], line: 9 },
+      {
+        title: "Artefact Data",
+        file: "slices/artefact-data.md",
+        fileCell: "[artefact-data.md](slices/artefact-data.md)",
+        ids: ["S11", "S12"],
+        line: 9,
+      },
     ]);
   });
 
@@ -470,6 +476,22 @@ describe("validateSliceCatalog", () => {
     c.listed = c.listed.filter((path) => path !== "slices/artefact-data.md");
     expect(check(c)).toEqual([
       expect.stringMatching(/catalogued file slices\/artefact-data\.md does not exist/),
+    ]);
+  });
+
+  it("fails on a File cell that is a bare path instead of a Markdown link", () => {
+    const c = consistent();
+    const markdown = catalogOf(rows, ["S: S2"]).replace(
+      "[artefact-data.md](slices/artefact-data.md)",
+      "slices/artefact-data.md",
+    );
+    c.catalog = parseSliceCatalog(markdown);
+    expect(c.catalog.contexts[1]).toMatchObject({ title: "Artefact Data", file: "" });
+    expect(check(c)).toEqual([
+      expect.stringMatching(
+        /slice-dag\.md:10: File cell "slices\/artefact-data\.md" is not a Markdown link/,
+      ),
+      expect.stringMatching(/slices\/artefact-data\.md is not in the catalog/),
     ]);
   });
 

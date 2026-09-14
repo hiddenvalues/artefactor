@@ -182,8 +182,9 @@ sync with implementation and tests at all times.
   unknown or dropped dependency, a cycle, a `done`/`in progress` slice with an unfinished
   dependency, a catalog that disagrees with its context files or high-water marks, or slice
   status creeping back into this file. `pnpm spec:dag` prints the graph, the parallel build
-  waves and the next free id; a new slice takes that id, bumps the mark, and joins its
-  context's Slices cell (details: `docs/specs/README.md`).
+  waves and the next free id; a new slice takes that id and bumps the mark (a sub-lettered
+  split such as `S19a` keeps its number and the mark), then joins its context's Slices cell
+  (details: `docs/specs/README.md`).
 - **TDD (Test-Driven Development)** — every slice is built test-first. Unit tests encode
   the invariants and business logic from the DDD spec. A spec, its implementation, and
   its tests must always agree.

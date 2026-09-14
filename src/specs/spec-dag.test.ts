@@ -67,4 +67,30 @@ describe("pnpm spec:dag", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain("catalogued file slices/missing.md does not exist");
   });
+
+  it("reports a File cell with no link target instead of reading the catalog's directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "spec-dag-"));
+    dirs.push(dir);
+    writeFileSync(
+      join(dir, "slice-dag.md"),
+      [
+        "# Fixture DAG",
+        "",
+        "## Contexts",
+        "",
+        "| Context | File | Slices |",
+        "|---|---|---|",
+        "| Platform | | S0 |",
+        "",
+        "## High-water marks",
+        "",
+        "- **S:** S0",
+        "",
+      ].join("\n"),
+    );
+
+    const result = run(join(dir, "slice-dag.md"), dir);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('File cell "" is not a Markdown link');
+  });
 });

@@ -250,8 +250,10 @@ export function computeWaves(slices: Slice[], options: ValidateOptions = {}): Sl
 export interface CatalogContext {
   /** The Context cell; must equal the context file's H1. */
   title: string;
-  /** The File cell's link target, relative to the catalog's directory. */
+  /** The File cell's link target, relative to the catalog's directory; `""` when not a link. */
   file: string;
+  /** The File cell as written, for messages. */
+  fileCell: string;
   /** The Slices cell: the file's slice ids in file order. */
   ids: string[];
   line: number;
@@ -308,8 +310,9 @@ export function parseSliceCatalog(markdown: string, path = "slice-dag.md"): Slic
         return;
       }
       if (TABLE_SEPARATOR.test(row[1]!)) return;
-      const [title = "", file = "", ids = ""] = row[1]!.split("|").map((cell) => cell.trim());
-      catalog.contexts.push({ title, file: LINK.exec(file)?.[1] ?? file, ids: parseIdList(ids), line });
+      const [title = "", fileCell = "", ids = ""] = row[1]!.split("|").map((cell) => cell.trim());
+      const file = LINK.exec(fileCell)?.[1] ?? "";
+      catalog.contexts.push({ title, file, fileCell, ids: parseIdList(ids), line });
     } else if (section === "High-water marks") {
       const mark = MARK.exec(text);
       if (!mark) return;
@@ -355,6 +358,12 @@ export function validateSliceCatalog(
   const union: Slice[] = [];
   for (const context of catalog.contexts) {
     const at = `${catalog.path}:${context.line}`;
+    if (context.file === "") {
+      violations.push(
+        `${at}: File cell "${context.fileCell}" is not a Markdown link — write [name.md](slices/name.md)`,
+      );
+      continue;
+    }
     const path = posix.join(dir, context.file);
     if (catalogued.has(path)) {
       violations.push(`${at}: ${path} is catalogued in more than one row`);
