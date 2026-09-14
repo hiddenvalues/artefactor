@@ -18,6 +18,7 @@ import { createArtefactServingRoutes } from "./routes/serve";
 import { createFrameRoutes } from "./routes/frame";
 import { framingFromEnv } from "./runtime/framing";
 import { createOriginGuard } from "./middleware/origin-guard";
+import { createContentHostGate } from "./middleware/content-host";
 import { createMcpRoutes, type McpScopeResolver } from "./mcp/routes";
 import type { HealthResponse } from "../shared/contracts";
 import type { ThumbnailQueue } from "./thumbnails/thumbnail-service";
@@ -54,6 +55,12 @@ export function createApp(
   const framing = framingFromEnv(env);
 
   app.use("*", logger());
+
+  // S36 (AH28) — a configured content origin answers only frames and /health;
+  // the app host then answers no frame route.
+  if (framing.contentOrigin) {
+    app.use("*", createContentHostGate(framing.contentOrigin));
+  }
 
   app.get("/health", (c) =>
     c.json<HealthResponse>({

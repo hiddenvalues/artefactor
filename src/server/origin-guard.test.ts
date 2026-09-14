@@ -132,22 +132,24 @@ describe("origin guard (S36, IA6)", () => {
 
     it("403 and nothing changed for Origin: null, a foreign Origin, or a cross-site fetch", async () => {
       const a = await makeArtefact();
-      for (const headers of [
+      const refused: Record<string, string>[] = [
         { Origin: "null" },
         { Origin: "https://evil.example" },
         { "Sec-Fetch-Site": "cross-site" },
-      ]) {
+      ];
+      for (const headers of refused) {
         expect((await share(a.id, headers)).status).toBe(403);
       }
       expect(await visibilityOf(a.id)).toBe("private");
     });
 
     it("200 from the app origin, an AUTH_TRUSTED_ORIGINS entry, or a client sending neither header", async () => {
-      for (const headers of [
+      const admitted: Record<string, string>[] = [
         { Origin: "http://localhost:3000", "Sec-Fetch-Site": "same-origin" },
         { Origin: "http://localhost:5273" },
         {},
-      ]) {
+      ];
+      for (const headers of admitted) {
         const a = await makeArtefact();
         expect((await share(a.id, headers)).status).toBe(200);
       }

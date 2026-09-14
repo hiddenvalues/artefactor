@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { contentOriginProblem } from "./runtime/content-origin";
 
 const schema = z.object({
   NODE_ENV: z
@@ -47,6 +48,11 @@ const schema = z.object({
         .map((o) => o.trim())
         .filter(Boolean),
     ),
+  // S36 (AH28) — optional origin (`scheme://host[:port]`, no path) that artefact
+  // frames are served on, on a **separate registrable domain** from the app
+  // (e.g. https://humlycontent.com). That host answers only the frame routes and
+  // /health. Unset: frames live on the app host, isolated by the sandbox alone.
+  ARTEFACTOR_CONTENT_ORIGIN: z.string().min(1).optional(),
   // Google OAuth (BetterAuth social sign-in). Required in production, which is
   // Google-only; optional in dev/test where email+password is the method.
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
@@ -94,6 +100,18 @@ const schema = z.object({
       });
     }
   }
+  // S36 — a content origin sharing the app's host, a subdomain or a parent
+  // domain would share its cookies and site, defeating the point.
+  if (cfg.ARTEFACTOR_CONTENT_ORIGIN !== undefined) {
+    const problem = contentOriginProblem(cfg.ARTEFACTOR_CONTENT_ORIGIN, cfg.BETTER_AUTH_URL);
+    if (problem) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ARTEFACTOR_CONTENT_ORIGIN"],
+        message: `ARTEFACTOR_CONTENT_ORIGIN ${problem}`,
+      });
+    }
+  }
   // An empty allowlist would lock everyone out — guard against a misconfigured
   // AUTH_ALLOWED_EMAIL_DOMAINS (e.g. set to "" or only commas).
   if (cfg.AUTH_ALLOWED_EMAIL_DOMAINS.length === 0) {
@@ -106,6 +124,9 @@ const schema = z.object({
 });
 
 export type Env = z.infer<typeof schema>;
+
+// The schema itself, for validating a configuration without starting the app.
+export const envSchema = schema;
 
 const parsed = schema.safeParse(process.env);
 if (!parsed.success) {
