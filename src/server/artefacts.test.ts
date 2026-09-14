@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import { SINGLETON_SCOPE } from "../domain/artefact/tenant-scope";
 import type { ArtefactSummary } from "../shared/contracts";
+import { openFrame } from "../test/frame";
 
 // End-to-end S2: drive the real app — sign a user up, then POST an HTML upload
 // to /api/artefacts. Exercises the whole vertical slice (BFF → command →
@@ -277,9 +278,8 @@ describe("create artefact (S2)", () => {
       expect(shellBody).toContain(`/api/artefacts/${id}/raw/frame`);
       expect(shellBody).not.toContain("<h1>mine</h1>");
 
-      const frame = await app.request(`/api/artefacts/${id}/raw/frame`, {
-        headers: { cookie },
-      });
+      // S36 — the frame opens on a token the shell minted, never the cookie.
+      const frame = await openFrame(app, id, cookie);
       expect(frame.status).toBe(200);
       // The frame carries the artefact content plus the injected runtime.
       expect(await frame.text()).toContain("<h1>mine</h1>");

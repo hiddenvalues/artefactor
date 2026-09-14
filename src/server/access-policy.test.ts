@@ -3,6 +3,7 @@ import type { Hono } from "hono";
 import type { AccessPolicy } from "../domain/artefact/access";
 import { DEFAULT_TENANT } from "../domain/artefact/artefact";
 import type { ArtefactSummary, MeResponse } from "../shared/contracts";
+import { openFrame } from "../test/frame";
 
 // End-to-end S22 part B (AH18): the composition root injects an `AccessPolicy`
 // and the slug-addressed read paths consult it for the `authenticated` tier.
@@ -87,14 +88,15 @@ describe("injected access policy gates the authenticated tier (S22, AH18)", () =
   it("serves an authenticated artefact to a policy-granted co-member", async () => {
     const a = await makeArtefact("authenticated");
     expect((await get(`/a/${a.publicSlug}`, member)).status).toBe(200);
-    expect((await get(`/a/${a.publicSlug}/frame`, member)).status).toBe(200);
+    // S36 — the frame opens on a token minted under the same policy.
+    expect((await openFrame(app, a.publicSlug!, member)).status).toBe(200);
   });
 
   it("denies a signed-in non-member with a flat 404, like an unknown slug (AH8)", async () => {
     const a = await makeArtefact("authenticated");
     const denied = await get(`/a/${a.publicSlug}`, outsider);
     expect(denied.status).toBe(404);
-    expect((await get(`/a/${a.publicSlug}/frame`, outsider)).status).toBe(404);
+    expect((await openFrame(app, a.publicSlug!, outsider)).status).toBe(404);
     expect((await get("/a/no-such-slug", outsider)).status).toBe(404);
   });
 

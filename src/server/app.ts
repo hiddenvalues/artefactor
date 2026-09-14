@@ -15,6 +15,8 @@ import {
 } from "../domain/artefact/access";
 import { createApiRoutes } from "./routes";
 import { createArtefactServingRoutes } from "./routes/serve";
+import { createFrameRoutes } from "./routes/frame";
+import { framingFromEnv } from "./runtime/framing";
 import { createMcpRoutes, type McpScopeResolver } from "./mcp/routes";
 import type { HealthResponse } from "../shared/contracts";
 import type { ThumbnailQueue } from "./thumbnails/thumbnail-service";
@@ -47,6 +49,8 @@ export function createApp(
   thumbnails?: ThumbnailQueue,
 ) {
   const app = new Hono();
+  // S36 — where frames live, how they are tokened, and which origins are the app's.
+  const framing = framingFromEnv(env);
 
   app.use("*", logger());
 
@@ -58,9 +62,24 @@ export function createApp(
     }),
   );
 
+  // S36 (AH28) — the frame routes, mounted before the `/api` and `/a` routers so
+  // their attach-session middleware never runs for a frame: frames authenticate
+  // only by frame token.
+  app.route(
+    "/",
+    createFrameRoutes({
+      repo: adapters.artefactRepository,
+      collectionRepo: adapters.collectionRepository,
+      payloadStore: adapters.payloadStore,
+      dataRepo: adapters.dataRepository,
+      accessPolicy,
+      framing,
+    }),
+  );
+
   app.route(
     "/api",
-    createApiRoutes(adapters, auth, resolveScope, accessPolicy, thumbnails),
+    createApiRoutes(adapters, auth, resolveScope, accessPolicy, thumbnails, framing),
   );
 
   // S6 — public artefact serving by slug (the shared-link render route). Mounted
@@ -70,11 +89,11 @@ export function createApp(
     createArtefactServingRoutes({
       repo: adapters.artefactRepository,
       collectionRepo: adapters.collectionRepository,
-      payloadStore: adapters.payloadStore,
       dataRepo: adapters.dataRepository,
       viewRepo: adapters.viewRepository,
       auth,
       accessPolicy,
+      framing,
     }),
   );
 

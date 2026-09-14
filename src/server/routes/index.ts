@@ -26,6 +26,8 @@ import { createDownloadRoutes } from "./download";
 import { createThumbnailRoutes } from "./thumbnail";
 import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
 import { createViewRoutes } from "./views";
+import { createFrameTokenRoutes } from "./frame-token";
+import { framingFromEnv, type Framing } from "../runtime/framing";
 import { createUserRoutes } from "./users";
 import type {
   MeResponse,
@@ -46,6 +48,8 @@ export function createApiRoutes(
   accessPolicy: AccessPolicy = defaultAccessPolicy,
   // S35 — renders card thumbnails after a create or HTML replace; absent = none.
   thumbnails?: ThumbnailQueue,
+  // S36 — frame URLs and tokens for the shells and the mint endpoint.
+  framing: Framing = framingFromEnv(env),
 ) {
   const {
     artefactRepository,
@@ -171,6 +175,21 @@ export function createApiRoutes(
       resolveScope,
       thumbnailStore,
       thumbnails,
+      framing,
+    }),
+  );
+
+  // S36 — a fresh, tokened frame URL for the host shell (author switch, conflict
+  // reload, expired token), addressed by slug or id.
+  api.route(
+    "/artefacts",
+    createFrameTokenRoutes({
+      artefactRepo: artefactRepository,
+      collectionRepo: collectionRepository,
+      dataRepo: dataRepository,
+      resolveScope,
+      accessPolicy,
+      framing,
     }),
   );
 

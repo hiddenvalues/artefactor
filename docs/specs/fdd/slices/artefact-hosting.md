@@ -517,6 +517,89 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
 - **Boundary:** **OSS** (the EE Postgres repository mirrors the column and the two repository
   methods).
 
+### S36 — Isolated artefact serving: sandboxed frame, frame token, optional content origin
+
+- **Status:** in progress
+- **Depends on:** S6, S12, S13, S31
+- **Optional:** S32
+- **Linear:** ALI-321
+
+A served artefact stops running with the viewer's session. The frame becomes a sandboxed,
+opaque-origin iframe authenticated by a short-lived frame token instead of cookies, the served
+`localStorage` shim hands its writes to the host shell, the API refuses cross-origin
+cookie-authenticated state changes, and a deployment may serve frames from a separate content
+domain. It builds on slug serving (S6), the host shell and its data-context switcher (S12), the
+runtime shim (S13) and its pinned write discipline (S31). S32 is optional: when it lands, its link
+gate applies at frame-token redeem (AH22 already names "the host shell and frame"). (DDD
+amendments: `ddd/artefact-hosting.md` AH28, `ddd/artefact-data.md` AD10,
+`ddd/identity-access.md` IA6.)
+
+- **Sandbox** *(AH28)* — one exported constant holds the flags; the shell's iframe carries them as
+  `sandbox` (plus `allow="clipboard-write; fullscreen"`), and every frame response carries them as
+  `Content-Security-Policy: sandbox …` with `Referrer-Policy: no-referrer`.
+- **Frame token** *(AD10)* — stateless HMAC-SHA256 over `artefactId`, `route`, `viewerId`,
+  `authorId`, `exp` (+ `tenantId` on a `raw` token), 5-minute TTL. The shell render embeds a
+  tokened frame URL; `POST /api/artefacts/:ref/frame-token` mints another. Frame routes read only
+  `?t=` (never cookies), re-run the route's access check at every redeem, and answer an expired
+  token with a sandboxed page that asks the shell to re-mint.
+- **Persistence through the shell** *(AD10, S31)* — the shim posts
+  `artefactor:data-changed` to the parent and never fetches; the shell accepts it only from its
+  frame's window while in the viewer's own context, and owns the pin, the no-overlap rule, the
+  412 → conflict banner and the `pagehide` keepalive.
+- **CSRF backstop** *(IA6)* — `/api/*` state changes (not `/api/auth/*`) with an untrusted
+  `Origin` or a non-`same-origin` `Sec-Fetch-Site` → 403.
+- **Content origin** *(AH28)* — optional `ARTEFACTOR_CONTENT_ORIGIN`, validated at startup as a
+  separate registrable domain; that host answers only the frame routes and `/health`, the app
+  host answers no frame route.
+- **Authoring guide** — `skills/artefactor/SKILL.md` and the MCP `instructions` warn that
+  `sessionStorage`, IndexedDB and cookies are never saved and throw in the sandbox, name the
+  libraries that silently use IndexedDB, and say top-targeted links don't navigate.
+
+**Acceptance:**
+
+- **Sandbox.** The `/a/:slug` and owner-preview shells' iframe carries exactly the flag list and
+  no `allow-same-origin`. Tokened slug and raw frames, the anonymous public frame and the
+  expired-token page answer 200 with `Content-Security-Policy: sandbox allow-scripts allow-forms
+  allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads` and
+  `Referrer-Policy: no-referrer`. The attribute and the header come from one constant.
+- **Token.** Sign → verify round-trips; a tampered payload or signature, or another secret, is
+  invalid; a past `exp` is expired.
+- **Redeem.** A valid session cookie and no token → 404 on an `authenticated` artefact, the
+  anonymous read-only seed (`{}`, not writable) on a `public` one. An own-context token seeds the
+  viewer's blob writable; an author token seeds that author's blob read-only. A token for another
+  artefact, or a `raw` token on a slug frame → 404. Revoking access (visibility → private) makes a
+  still-unexpired token 404. An expired token → the expired page, seeding nothing.
+- **Mint.** `POST /api/artefacts/:ref/frame-token` → 401 anonymous, 404 for a viewer the matrix
+  denies, 200 `{ frameUrl, seedUpdatedAt }` for a viewer by slug and for the owner by id, with
+  `author` honoured. The shell render embeds a tokened frame URL for a signed-in viewer and a
+  token-less one for an anonymous viewer.
+- **Shim.** A `setItem` posts one `data-changed` with the whole blob to the parent at the app
+  origin after the debounce and never fetches; idle posts nothing; read-only throws
+  `QuotaExceededError` and posts nothing; over-cap still throws.
+- **Shell.** A message from another source, or from the frame in an author context → no request.
+  From the frame in own context → one `PUT` to the fixed endpoint with `If-None-Match: *`
+  (unseeded) or `If-Match: "<seedUpdatedAt>"`, and the next pins the returned `updatedAt`. A
+  change during an in-flight save goes after it, with the new pin, carrying only the latest blob.
+  412 → banner and no further `PUT`s; Reload re-mints and re-seeds. `frame-token-expired` from the
+  frame → one mint and the frame's `src` set to the result; from another source → ignored.
+- **IA6.** `PUT /api/artefacts/:id/visibility` with a session and `Origin: null`,
+  `Origin: https://evil.example`, `Sec-Fetch-Site: cross-site`, or the content origin → 403 and
+  nothing changed; with the app origin, an `AUTH_TRUSTED_ORIGINS` entry, or neither header → 200.
+  `GET` with `Origin: null`, `POST /mcp` with a bearer and `Origin: null`, and `/api/auth/*` are not
+  blocked by it.
+- **Content origin.** A value equal to, a subdomain of, or a parent of the `BETTER_AUTH_URL` host,
+  or carrying a path, fails startup validation; unset is fine. When set, the content host answers
+  `/a/:slug/frame?t=…` 200 and `/health` 200, and 404 for `/a/:slug`, `/api/me`, `/`, `/mcp` and
+  `/.well-known/oauth-authorization-server`; the app host answers `/a/:slug/frame` 404; the
+  shell's iframe `src` and the mint's `frameUrl` are absolute on the content origin, and the
+  shim's `targetOrigin` is the app origin.
+- **Browser (Chromium).** A fixture artefact in the real shell can't read `document.cookie`, can't
+  read `/api/me` (and the request carries no session cookie), and can't archive itself with a form
+  POST. Its `localStorage.setItem` persists across a shell reload, and an in-frame
+  `location.reload()` after the token expired comes back seeded.
+- **Guide.** The storage sentence is in both `PERSISTENCE_CONTRACT_SUMMARY` and
+  `skills/artefactor/SKILL.md`.
+
 ### S37 — Isolated thumbnail renderer
 
 - **Status:** done

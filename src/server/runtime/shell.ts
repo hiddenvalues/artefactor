@@ -4,9 +4,15 @@
 // `localStorage`). Choosing *which* author's data is loaded is a host concern
 // handled OUTSIDE the artefact container (DDD artefact-data.md §"Data context").
 // So `/a/:slug` returns this thin host shell — a toolbar + an <iframe> that
-// loads the artefact itself from `/a/:slug/frame`. Picking an author reloads the
-// iframe with `?author=<id>`, which the frame seeds read-only (only the viewer's
-// own context is writable, AD5).
+// loads the artefact itself from `/a/:slug/frame`. Picking an author mints a
+// frame token for that author (S36) and reloads the iframe with it; the frame
+// seeds that context read-only (only the viewer's own context is writable, AD5).
+//
+// S36 (AH28, AD10) — the iframe is sandboxed into an opaque origin with no
+// session, so the shell is where the artefact's data gets saved: the shim posts
+// each change to the shell, which accepts it only from its own frame's window
+// and only in the viewer's own context, and writes it under the S31 discipline
+// (see `shellFrameJs`).
 //
 // The shell is server-rendered (not the Svelte SPA) because `/a/:slug` is the
 // shareable link and also serves unauthenticated/public viewers, who never load
@@ -19,15 +25,25 @@
 
 import type { ArtefactKind } from "../../domain/artefact/kind";
 import { kindPresentation } from "../../shared/kind-presentation";
+import { FRAME_ALLOW, FRAME_SANDBOX_FLAGS } from "./sandbox";
 
 export interface HostShellContext {
   title: string;
   kind: ArtefactKind;
   // ISO-8601 timestamp; rendered as a relative "Updated …" label.
   updatedAt: string;
-  // Where the <iframe> loads the artefact from. The switcher appends
-  // `?author=<id>` to re-seed another author's context.
-  framePath: string;
+  // S36 — the first frame URL: tokened for a signed-in viewer's own context,
+  // token-less for an anonymous viewer; absolute when frames live on a content
+  // origin.
+  frameUrl: string;
+  // S36 — `POST …/frame-token`: a fresh frame URL for another author, a reload,
+  // or an expired token.
+  mintEndpoint: string;
+  // S36 — the `PUT …/data/me` the shell saves the viewer's own data to.
+  dataEndpoint: string;
+  // S31 — the viewer's own entry's `updatedAt` the first frame was seeded with
+  // (null when none): the pin of the first save.
+  seedUpdatedAt: string | null;
   // The `…/data/authors` endpoint that populates the picker.
   authorsEndpoint: string;
   // S21 — the `…/viewers` endpoint that populates the "viewed by" widget. The
@@ -44,12 +60,142 @@ export interface HostShellContext {
   usesStorage: boolean;
 }
 
+// S36 — what the shell's frame controller needs.
+export interface ShellFrameConfig {
+  frameUrl: string;
+  viewerId: string | null;
+  mintEndpoint: string;
+  dataEndpoint: string;
+  seedUpdatedAt: string | null;
+}
+
+// Chrome caps a keepalive request's body (64 KiB across in-flight ones); a larger
+// pagehide flush goes out as a plain request, best effort.
+const KEEPALIVE_MAX_BYTES = 60 * 1024;
+
+// S36 (AD10) — the shell's frame controller, as a JS expression evaluating to
+// `{ select(authorId) }`. Kept free of server-only references so it can be
+// unit-tested by evaluating it with injected globals: references only `window`,
+// `document`, `fetch`, `TextEncoder`.
+//
+// It loads the frame, mints fresh frame URLs (author switch, conflict reload,
+// expired token), and saves the viewer's own data under the S31 discipline: it
+// accepts `artefactor:data-changed` only when `event.source` is its frame's
+// window (the frame's origin is "null", so there is no origin to check) and only
+// in the viewer's own context; the endpoint is fixed here, never taken from a
+// message; each PUT is pinned (`If-Match`, or `If-None-Match: *` with no entry);
+// saves never overlap (the latest blob waits); a 412 stops all writing and shows
+// the conflict banner. It posts nothing to the frame.
+export function shellFrameJs(cfg: ShellFrameConfig): string {
+  const cfgJson = JSON.stringify({ ...cfg, keepaliveMax: KEEPALIVE_MAX_BYTES }).replace(
+    /</g,
+    "\\u003c",
+  );
+  return `(function(){
+  var cfg = ${cfgJson};
+  var frame = document.getElementById("ae-frame");
+  frame.src = cfg.frameUrl;
+  // Anonymous viewers are never writable and their frames carry no token.
+  if (!cfg.viewerId) return { select: function(){} };
+
+  var conflict = document.getElementById("ae-conflict");
+  var author = null;          // null = the viewer's own data
+  var pin = cfg.seedUpdatedAt;
+  var pending = null;         // the latest blob not yet sent
+  var inflight = false;
+  var stale = false;          // a 412 was seen: never write again until re-seeded
+  var gen = 0;                // bumped on every re-seed; older saves are ignored
+  var loads = 0;              // only the newest mint may point the frame
+
+  function load(authorId, reseed){
+    var seq = ++loads;
+    var target = authorId || null;
+    author = target;
+    return fetch(cfg.mintEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(target ? { author: target } : {})
+    }).then(function(r){ return r && r.ok ? r.json() : null; }).then(function(d){
+      if (!d || seq !== loads || typeof d.frameUrl !== "string") return;
+      if (reseed && target === null) {
+        gen++;
+        pin = d.seedUpdatedAt || null;
+        pending = null;
+        inflight = false;
+        stale = false;
+        if (conflict) conflict.hidden = true;
+      }
+      frame.src = d.frameUrl;
+    }).catch(function(){});
+  }
+
+  function bytes(s){ try { return new TextEncoder().encode(s).length; } catch (e) { return s.length * 3; } }
+
+  // \`force\` is for pagehide: the page may be gone before an in-flight save
+  // settles, so send now rather than wait.
+  function save(force){
+    if (stale || pending === null) return;
+    if (inflight && force !== true) return;
+    var body = pending;
+    pending = null;
+    var headers = { "Content-Type": "application/json" };
+    if (pin) headers["If-Match"] = '"' + pin + '"';
+    else headers["If-None-Match"] = "*";
+    var mine = gen;
+    var failed = false;
+    inflight = true;
+    var req;
+    try {
+      req = fetch(cfg.dataEndpoint, {
+        method: "PUT",
+        headers: headers,
+        body: body,
+        credentials: "same-origin",
+        keepalive: force === true && bytes(body) <= cfg.keepaliveMax
+      });
+    } catch (e) { inflight = false; if (pending === null) pending = body; return; }
+    Promise.resolve(req).then(function(r){
+      if (mine !== gen) return;
+      if (r && r.status === 412) { stale = true; pending = null; if (conflict) conflict.hidden = false; return; }
+      if (!r || !r.ok) { failed = true; return; }
+      return r.json().then(function(d){ if (mine === gen && d && d.updatedAt) pin = d.updatedAt; });
+    }).catch(function(){ failed = true; }).then(function(){
+      if (mine !== gen) return;
+      inflight = false;
+      // A failed save waits for the next change, without a retry loop.
+      if (failed) { if (pending === null) pending = body; return; }
+      save(false);
+    });
+  }
+
+  window.addEventListener("message", function(e){
+    if (e.source !== frame.contentWindow) return;
+    var d = e.data;
+    if (!d || typeof d !== "object") return;
+    if (d.type === "artefactor:data-changed") {
+      if (author !== null || typeof d.blob !== "string") return;
+      pending = d.blob;
+      save(false);
+    } else if (d.type === "artefactor:frame-token-expired") {
+      load(author, false);
+    }
+  });
+
+  window.addEventListener("pagehide", function(){ save(true); });
+
+  var reload = document.getElementById("ae-conflict-reload");
+  if (reload) reload.addEventListener("click", function(){ load(author, true); });
+
+  return { select: function(authorId){ load(authorId, true); } };
+})()`;
+}
+
 export function renderHostShell(ctx: HostShellContext): string {
   const cfg = {
     title: ctx.title,
     viewerId: ctx.viewerId,
     ownerId: ctx.ownerId,
-    frameSrc: ctx.framePath,
     authorsEndpoint: ctx.authorsEndpoint,
     viewersEndpoint: ctx.viewersEndpoint,
     usesStorage: ctx.usesStorage,
@@ -183,22 +329,30 @@ export function renderHostShell(ctx: HostShellContext): string {
     ${hostTools}
   </div>
   ${conflictBanner}
-  <iframe class="ae-frame" id="ae-frame" title="Artefact"></iframe>
+  <iframe class="ae-frame" id="ae-frame" title="Artefact" sandbox="${FRAME_SANDBOX_FLAGS}" allow="${FRAME_ALLOW}"></iframe>
 <script>
 (function(){
   var cfg = ${cfgJson};
-  var frame = document.getElementById("ae-frame");
+  // S36 — loads the frame (its first, server-minted URL) and saves the viewer's
+  // own data for it.
+  var frameCtl = ${shellFrameJs({
+    frameUrl: ctx.frameUrl,
+    viewerId: ctx.viewerId,
+    mintEndpoint: ctx.mintEndpoint,
+    dataEndpoint: ctx.dataEndpoint,
+    seedUpdatedAt: ctx.seedUpdatedAt,
+  })};
 
   // Anonymous viewers get no host tools (data-context switcher / future
-  // widgets) — just load the artefact in its default read-only context.
-  if (!cfg.viewerId) { frame.src = cfg.frameSrc; return; }
+  // widgets) — just the artefact in its default read-only context.
+  if (!cfg.viewerId) return;
 
   var sel = document.getElementById("ae-ctx");
   var ro = document.getElementById("ae-ro");
   var switcher = document.getElementById("ae-switch");
 
   function seed(authorId){
-    frame.src = authorId ? cfg.frameSrc + "?author=" + encodeURIComponent(authorId) : cfg.frameSrc;
+    frameCtl.select(authorId);
     ro.classList.toggle("show", !!authorId);
   }
 
@@ -228,9 +382,8 @@ export function renderHostShell(ctx: HostShellContext): string {
   def.textContent = "Your data";
   sel.appendChild(def);
 
-  // Always seed the default context first so the artefact loads immediately,
-  // even if the authors list is empty or fails to load.
-  seed("");
+  // The default context is already loading (the frame controller pointed the
+  // frame at its server-minted URL), even if the authors list fails to load.
 
   // S20: only fetch authors / reveal the picker for artefacts that persist data
   // (usesStorage). A non-persisting artefact never has a context to switch to.
@@ -255,20 +408,6 @@ export function renderHostShell(ctx: HostShellContext): string {
   }
 
   sel.addEventListener("change", function(){ seed(sel.value); });
-
-  // S31 — the artefact's localStorage shim posts this when a save is refused
-  // because the saved data was replaced elsewhere (e.g. by an agent). Accept it
-  // only from our own same-origin frame; reloading re-seeds the latest data.
-  var conflict = document.getElementById("ae-conflict");
-  window.addEventListener("message", function(e){
-    if (e.source !== frame.contentWindow || e.origin !== location.origin) return;
-    if (!e.data || e.data.type !== "artefactor:data-conflict") return;
-    conflict.hidden = false;
-  });
-  document.getElementById("ae-conflict-reload").addEventListener("click", function(){
-    conflict.hidden = true;
-    seed(sel.value);
-  });
 
   // S21 — "viewed by" widget. Fetch the other viewers (the endpoint already
   // excludes the current viewer, VT4), show a count, and reveal a pop-over list

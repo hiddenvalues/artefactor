@@ -50,6 +50,8 @@
 - Tiers enforced via the `…/data/authors` + `…/data/:authorId` endpoints: private → owner
   only; authenticated → signed-in; public → anyone. *(AD 4)*
 - This lives entirely in the host (BFF + chrome); the artefact stays opaque.
+  *(Amended by S36: sandboxed, token-seeded, persistence via the shell — the author is named by
+  a minted frame token, not `?author=`.)*
 
 **Implementation notes (from building S12):**
 
@@ -91,6 +93,8 @@
   *(AD runtime contract §1)*
   *(Amended by S31: writes only when dirty, pinned with `If-Match`/`If-None-Match: *`, and a
   412 stops the tab writing and prompts a reload in the host shell.)*
+  *(Amended by S36: sandboxed, token-seeded, persistence via the shell — the shim posts changes
+  to the shell, which owns the S31 discipline.)*
 - The artefact needs **zero code changes** and sees **one opaque dataset** — `localStorage`
   only, no `ARTEFACTOR` helper.
 - Over-cap write throws `QuotaExceededError`; a read-only context (logged-out public viewer,

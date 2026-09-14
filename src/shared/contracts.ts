@@ -117,6 +117,14 @@ export interface DataEntryResponse {
   updatedAt: string | null;
 }
 
+// S36 — `POST /api/artefacts/:ref/frame-token`: a freshly tokened frame URL for
+// the host shell (relative, or absolute on the content origin) and the seeded
+// entry's `updatedAt` (null when none), the pin of the shell's next own save.
+export interface FrameTokenResponse {
+  frameUrl: string;
+  seedUpdatedAt: string | null;
+}
+
 // S12 — Host data-context switcher. One author who holds a data entry for an
 // artefact, enriched (BFF-side) with their display identity so the host picker
 // can label contexts. Drives `GET /api/artefacts/:ref/data/authors`. The

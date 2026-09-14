@@ -7,6 +7,7 @@ import type {
   SharedArtefactSummary,
   UserSearchResponse,
 } from "../shared/contracts";
+import { openFrame } from "../test/frame";
 
 // End-to-end S16: share with specific people. An owner creates an artefact,
 // shares it at the `selected` tier (which mints a slug), then grants/revokes
@@ -68,10 +69,9 @@ describe("share with specific people (S16)", () => {
       headers: { cookie },
     });
   }
+  // S36 — as the shell does: mint a frame token as the viewer, then open it.
   function frame(slug: string, cookie?: string) {
-    return app.request(`/a/${slug}/frame`, {
-      headers: cookie ? { cookie } : {},
-    });
+    return openFrame(app, slug, cookie);
   }
 
   beforeAll(async () => {

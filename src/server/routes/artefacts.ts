@@ -33,8 +33,8 @@ import {
   CollectionInvariantViolation,
   CollectionNotFound,
 } from "../../domain/collection/errors";
-import { renderServedArtefact } from "../runtime/render";
 import { renderHostShell } from "../runtime/shell";
+import { frameUrl, type Framing } from "../runtime/framing";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { DataRepository } from "../../domain/data/data-repository";
@@ -68,6 +68,8 @@ export type ArtefactRoutesDeps = CreateArtefactDeps & {
   resolveScope: TenantScopeResolver;
   // S35 (AH11) — permanent delete removes the thumbnail files.
   thumbnailStore: ThumbnailStore;
+  // S36 — mints the owner-preview shell's first frame URL.
+  framing: Framing;
 };
 
 // BFF routes for the Artefact Hosting context. S2 adds manual HTML upload;
@@ -153,12 +155,24 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         ownerId: ownerId(c),
         scope: await deps.resolveScope(c),
       });
+      const scope = await deps.resolveScope(c);
+      const own = await deps.dataRepo.findByArtefactAndAuthor(artefact.id, ownerId(c));
       return c.html(
         renderHostShell({
           title: artefact.title,
           kind: artefact.kind,
           updatedAt: artefact.updatedAt.toISOString(),
-          framePath: `/api/artefacts/${encodeURIComponent(artefact.id)}/raw/frame`,
+          // S36 — the owner preview's frame opens on a `raw` token carrying the
+          // tenant scope this read ran under.
+          frameUrl: frameUrl(deps.framing, "raw", artefact.id, {
+            artefactId: artefact.id,
+            viewerId: ownerId(c),
+            authorId: null,
+            tenantId: scope.tenantId,
+          }),
+          mintEndpoint: `/api/artefacts/${encodeURIComponent(artefact.id)}/frame-token`,
+          dataEndpoint: `/api/artefacts/${encodeURIComponent(artefact.id)}/data/me`,
+          seedUpdatedAt: own?.updatedAt.toISOString() ?? null,
           authorsEndpoint: `/api/artefacts/${encodeURIComponent(artefact.id)}/data/authors`,
           viewersEndpoint: `/api/artefacts/${encodeURIComponent(artefact.id)}/viewers`,
           viewerId: ownerId(c),
@@ -172,31 +186,8 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // The artefact itself for the owner preview, inside the iframe. `?author=<id>`
-  // selects the data context (default = the owner's own, read-write; another
-  // author = read-only, AD5). The S13 localStorage bootstrap is injected and
-  // seeded with that context, addressed by id (so a never-shared artefact still
-  // persists). Archived → 404.
-  r.get("/:id/raw/frame", requireAuth, async (c) => {
-    try {
-      const artefact = await loadOwnActiveArtefact(deps.repo, {
-        id: c.req.param("id"),
-        ownerId: ownerId(c),
-        scope: await deps.resolveScope(c),
-      });
-      const html = await renderServedArtefact(
-        artefact,
-        artefact.id,
-        ownerId(c),
-        deps,
-        { authorId: c.req.query("author") ?? null },
-      );
-      return c.html(html);
-    } catch (err) {
-      if (err instanceof ArtefactNotFound) return c.notFound();
-      throw err;
-    }
-  });
+  // The artefact itself for the owner preview (`/:id/raw/frame`) is a frame
+  // route (`routes/frame.ts`, S36): token-authenticated, never cookie-read.
 
   // S5 — Share / unshare. Owner sets the visibility tier; `private` unshares
   // (retaining the slug), `authenticated`/`public` share (minting on first

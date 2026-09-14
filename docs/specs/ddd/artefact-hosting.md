@@ -132,10 +132,13 @@ States are the product of `visibility × status`. Allowed transitions:
 - Payloads are **trusted**: served as-is, no sanitization or script stripping (interactive
   prototypes keep their JS).
 - The slug route serves the raw HTML for an `active` artefact subject to the access matrix.
-- The in-app viewer may embed the payload in an iframe for layout containment — a UI
-  concern, not a security boundary.
-- Because artefacts are served **same-origin**, their JS can call the backend store (see
-  `artefact-data.md`) carrying the viewer's session — this is how forms persist data.
+- The host shell embeds the payload in a **sandboxed** iframe, and that iframe **is the security
+  boundary** (AH28, S36): trusted means "served as-is", not "trusted with the viewer's session".
+  The artefact runs in an opaque origin, so its JS can't read the session cookie, read any
+  `/api` response, or make a state change the API accepts (IA6).
+- Forms still persist, with no code change: the served `localStorage` shim posts each change to
+  the host shell, which writes it to the backend store under the viewer's session (see
+  `artefact-data.md` AD10).
 - **Export (S30).** Alongside the render there is a second read path: the **export**, which
   returns the **stored payload** — never the injected render. It is governed by the same
   matrix as the render (AH7/AH8/AH9, on the *effective* tier per AH20): unknown handle,
@@ -485,3 +488,55 @@ needs (`id`, `payloadRef`, `payloadHash`, `thumbnailHash`, and — for the AH29 
 **Storage.** Thumbnails are WebP files at `<thumbnailRoot>/<artefactId>/<payloadHash>.webp`,
 a sibling of the payload root and never inside it (a payload-retention policy, the S19b seam,
 must never have to tell them apart).
+
+## Amendment (post-v0.2) — Isolated artefact serving
+
+> **Status:** DDD amendment (FDD slice **S36**). A serving change, not sanitization: payloads
+> stay trusted and byte-identical in storage and export (S30). With the Artefact Data AD10 and
+> Identity & Access IA6 amendments.
+
+**Problem.** The frame used to load same-origin with no `sandbox`, so any artefact a signed-in
+viewer opened could call every `/api` endpoint as them: list and download private artefacts,
+change visibility and access lists, archive and delete, write data.
+
+**AH28 — served artefact HTML never runs in the app origin.**
+
+- **Sandboxed frame.** The host shell's iframe carries `sandbox="allow-scripts allow-forms
+  allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads"` and
+  `allow="clipboard-write; fullscreen"`. It never carries `allow-same-origin` or any
+  `allow-top-navigation*`. The artefact therefore runs in an **opaque origin** (`"null"`).
+- **The header travels with every frame response.** `GET /a/:slug/frame`,
+  `GET /api/artefacts/:id/raw/frame` and the expired-token page all answer with
+  `Content-Security-Policy: sandbox <the same flags>` and `Referrer-Policy: no-referrer`, so a
+  frame URL opened top-level, or in a popup that escaped the sandbox, is still opaque. One
+  constant is the single source of the attribute and the header. There are no other CSP
+  directives, so CDN libraries and external APIs keep working.
+- **Frames never read cookies.** A frame is authenticated **only** by its frame token (AD10), and
+  the access matrix (AH8, on the effective tier of AH20, under the policy of AH18) is
+  re-evaluated at every token redeem, so a revocation takes effect at once.
+- **Optional content origin.** When `ARTEFACTOR_CONTENT_ORIGIN` is set, frames are served only
+  on that origin, which must be a **separate registrable domain** from the app (startup refuses
+  the app host itself, a subdomain of it, or a parent domain of it). That host answers only the
+  two frame routes and `/health`, and the app host answers no frame route. Unset, frames are
+  served on the app host, isolated by the sandbox alone.
+
+**Isolation evidence (S36 spike, not an invariant).** A fixture in a sandboxed iframe (attribute
+and header), against a canary server holding a `SameSite=Lax` cookie (BetterAuth's default), a
+`SameSite=None; Secure` one and a script-readable one:
+
+| Probe | Chromium 153 (headless shell) |
+| --- | --- |
+| `self.origin` | `"null"` |
+| `document.cookie`, `sessionStorage`, `indexedDB.open` | throw `SecurityError` |
+| `Object.defineProperty(window, "localStorage", …)` before any native access | succeeds; the shim round-trips |
+| `parent.postMessage(msg, appOrigin)` | delivered, `event.source === frame.contentWindow`, `event.origin === "null"` |
+| `fetch` / XHR `/api/me` with credentials | response unreadable (CORS); `Lax` cookie never sent |
+| no-cors `POST`, form `POST`, `<img>`, `sendBeacon` | `Lax` cookie never sent; the `None` cookie is, always with `Origin: null` (none on `<img>`) and `Sec-Fetch-Site: cross-site`, so IA6 refuses any state change |
+| `top.location = …`, `target="_top"` link | blocked; the shell stays put |
+| `window.open` of the frame URL, frame URL top-level | still `"null"` (the header), cookies and storage throw |
+| `target="_blank"` link | opens an unsandboxed popup (expected) |
+| `alert`, blob download, clipboard on a click, a CDN script | work |
+
+Firefox and WebKit were **not run**: their Playwright builds could not be downloaded in the spike
+environment and Safari's WebDriver was not enabled. Re-run the matrix on them before relying on it
+beyond Chromium.

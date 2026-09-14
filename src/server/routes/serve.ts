@@ -7,12 +7,11 @@ import {
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import { resolveEffectiveViewable } from "../collections/effective";
-import type { PayloadStore } from "../../domain/artefact/ports";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
 import { recordArtefactView } from "../views/views.command";
-import { renderServedArtefact } from "../runtime/render";
 import { renderHostShell } from "../runtime/shell";
+import { frameUrl, type Framing } from "../runtime/framing";
 import {
   createAttachSession,
   type AuthEnv,
@@ -23,23 +22,24 @@ export interface ServingDeps {
   repo: ArtefactRepository;
   // AH20 — serving decides access on the *effective* tier (collection tree root).
   collectionRepo: CollectionRepository;
-  payloadStore: PayloadStore;
   dataRepo: DataRepository;
   viewRepo: ViewRepository;
   auth: AuthInstance;
   // S22 (AH18) — serving is slug-addressed and tenant-global (AH6), so the
   // per-tier tenant decision is the policy's. Default = the OSS matrix.
   accessPolicy?: AccessPolicy;
+  // S36 — mints the shell's first frame URL (and places it on the content origin).
+  framing: Framing;
 }
 
 // S6 + S12 — Serve artefact by slug. The shared links point at `/a/:slug`, which
 // returns the **host shell** (S12): a thin chrome with the data-context switcher
-// wrapping an <iframe>. The iframe loads the artefact itself from
-// `/a/:slug/frame` — its trusted HTML served **as-is** (no sanitization) with
-// the S13 localStorage bootstrap injected and seeded with the chosen data
-// context. Both resolve the slug and apply the access matrix against the current
-// session; any deny — unknown slug, archived, or wrong-tier viewer — is a flat
-// 404 so visibility is never leaked (AH7/AH8).
+// wrapping a sandboxed <iframe>. The artefact itself is served by the frame
+// routes (`routes/frame.ts`, S36), which never read cookies. The shell resolves
+// the slug and applies the access matrix against the current session; any deny
+// — unknown slug, archived, or wrong-tier viewer — is a flat 404 (or, for the
+// anonymous, a uniform sign-in redirect) so visibility is never leaked
+// (AH7/AH8).
 export function createArtefactServingRoutes(deps: ServingDeps) {
   const app = new Hono<AuthEnv>();
   const accessPolicy = deps.accessPolicy ?? defaultAccessPolicy;
@@ -91,12 +91,27 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
       }
     }
 
+    // S36 — a signed-in viewer's frame opens on a token for their own context
+    // (and the shell's first save is pinned to that entry); the anonymous get a
+    // token-less, read-only frame.
+    const own = viewerId
+      ? await deps.dataRepo.findByArtefactAndAuthor(artefact.id, viewerId)
+      : null;
     return c.html(
       renderHostShell({
         title: artefact.title,
         kind: artefact.kind,
         updatedAt: artefact.updatedAt.toISOString(),
-        framePath: `/a/${encodeURIComponent(slug)}/frame`,
+        frameUrl: viewerId
+          ? frameUrl(deps.framing, "slug", slug, {
+              artefactId: artefact.id,
+              viewerId,
+              authorId: null,
+            })
+          : frameUrl(deps.framing, "slug", slug),
+        mintEndpoint: `/api/artefacts/${encodeURIComponent(slug)}/frame-token`,
+        dataEndpoint: `/api/artefacts/${encodeURIComponent(slug)}/data/me`,
+        seedUpdatedAt: own?.updatedAt.toISOString() ?? null,
         authorsEndpoint: `/api/artefacts/${encodeURIComponent(slug)}/data/authors`,
         viewersEndpoint: `/api/artefacts/${encodeURIComponent(slug)}/viewers`,
         viewerId,
@@ -104,33 +119,6 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
         usesStorage: artefact.usesStorage,
       }),
     );
-  });
-
-  // The artefact itself, inside the iframe. `?author=<id>` selects the data
-  // context to seed (default = the viewer's own, read-write; another author =
-  // read-only, AD5). The chosen author is gated by the same artefact access as
-  // the shell — any viewer who can see the artefact can load any author (AD4).
-  app.get("/:slug/frame", async (c) => {
-    const slug = c.req.param("slug");
-    const artefact = await deps.repo.findBySlug(slug);
-    const viewerId = c.get("user")?.id ?? null;
-
-    if (
-      !artefact ||
-      !(await canViewArtefactUnder(
-        accessPolicy,
-        await resolveEffectiveViewable(artefact, deps.collectionRepo),
-        viewerId,
-      ))
-    ) {
-      return c.notFound();
-    }
-
-    // Served by slug → the shim writes back through the slug.
-    const html = await renderServedArtefact(artefact, slug, viewerId, deps, {
-      authorId: c.req.query("author") ?? null,
-    });
-    return c.html(html);
   });
 
   return app;

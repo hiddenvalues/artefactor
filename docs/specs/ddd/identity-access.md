@@ -102,6 +102,27 @@ administration. **IA4 still holds**: account creation is gated by the allowlist 
 superset merely configures it to allow-all. An invited user may therefore sign up regardless of
 email domain.
 
+## Amendment (post-v0.2) — cookie-authenticated state changes come only from the app origin
+
+> **Status:** DDD amendment (FDD slice **S36**; with Artefact Hosting AH28 and Artefact Data
+> AD10). IA1–IA5 hold: this only narrows which browser contexts may use a session.
+
+**Problem.** Nothing checked where a cookie-authenticated `POST`/`PUT`/`PATCH`/`DELETE` came from,
+so any page able to make the browser attach the session cookie (a sandboxed artefact frame, or
+another site whenever a cookie is sent cross-site) could change state as the viewer.
+
+**IA6 — cookie-authenticated state changes come only from the app origin.** A `POST`, `PUT`,
+`PATCH` or `DELETE` under `/api` is refused with **403** when:
+
+- its `Origin` header is present and is not a **trusted app origin** — the `BETTER_AUTH_URL`
+  origin and the `AUTH_TRUSTED_ORIGINS` entries; `Origin: null` is never trusted, and neither is
+  the content origin (`ARTEFACTOR_CONTENT_ORIGIN`, AH28), even when listed; or
+- its `Sec-Fetch-Site` header is present and is not `same-origin`.
+
+A request with neither header (a non-browser client) passes. **Exemptions:** `GET`/`HEAD`/
+`OPTIONS` are never checked; `/api/auth/*` is left to BetterAuth, which applies its own
+`trustedOrigins` check; `/mcp` is not under `/api` and is authenticated by bearer only (IA2/IA3).
+
 ## Open questions
 
 - MCP OAuth scopes: a single implicit "act as me" grant vs. finer scopes (read-only vs.

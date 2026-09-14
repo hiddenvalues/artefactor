@@ -4,19 +4,17 @@
 // replaces `window.localStorage` with a backend-backed shim. The artefact needs
 // zero code changes and sees one opaque dataset: the whole localStorage keyspace
 // is modelled as a single JSON object (`{ [key]: stringValue }`) which IS the
-// `DataEntry.blob`. The shim is seeded server-side (so reads are synchronous) and
-// writes are write-through + debounced to `PUT :endpoint`, with a keepalive flush
-// on pagehide/visibilitychange. Over-cap writes throw `QuotaExceededError`; a
-// read-only context (logged-out viewer, or another author's data via S12) throws
-// on write while seeded reads still work. No `window.ARTEFACTOR` is exposed.
+// `DataEntry.blob`. The shim is seeded server-side (so reads are synchronous).
+// Over-cap writes throw `QuotaExceededError`; a read-only context (logged-out
+// viewer, or another author's data via S12) throws on write while seeded reads
+// still work. No `window.ARTEFACTOR` is exposed.
 //
-// S31 — because the saved data can also be replaced from outside the tab (an
-// agent's `set_artefact_data`), a tab must not act on a stale copy: it writes
-// only when the artefact actually changed something (an idle open tab never
-// writes), each write is pinned to the `updatedAt` it last knew (`If-Match`, or
-// `If-None-Match: *` when it was seeded with no entry), saves never overlap, and
-// a 412 makes the tab stop writing and tell the host shell
-// (`postMessage({ type: "artefactor:data-conflict" })`) so it can offer a reload.
+// S36 (AD10) — the artefact runs in a sandboxed, opaque-origin frame with no
+// session (AH28), so the shim never calls the API. It posts each change — the
+// whole blob, debounced, and again on pagehide / visibilitychange when a change
+// is still unposted — to the host shell (`window.parent`, at the app origin).
+// The shell owns the S31 write discipline: the pin, no overlapping saves, and
+// the 412 conflict banner (see `shell.ts`).
 //
 // See docs/specs/ddd/artefact-data.md §"Artefact runtime contract".
 
@@ -24,29 +22,26 @@ export interface BootstrapContext {
   // The seed blob: a JSON object string `{ [key]: stringValue }`. "{}" when the
   // viewer has no entry yet.
   seedBlob: string;
-  // The seeded entry's `updatedAt` (ISO), or null when there is no entry — the
-  // pin the first write is conditioned on (S31).
-  seedUpdatedAt: string | null;
   // Whether the served context may persist writes (authenticated viewer of their
   // own entry). Read-only contexts throw on write.
   writable: boolean;
-  // The `PUT …/data/me` target for write-through (same-origin path).
-  endpoint: string;
+  // The app origin the host shell runs on — the `targetOrigin` changes are posted
+  // to, so a frame embedded anywhere else never hands its data over.
+  targetOrigin: string;
   // The blob byte cap; an over-cap write throws QuotaExceededError.
   maxBytes: number;
-  // Debounce window for write-through, in ms.
+  // Debounce window before a change is posted, in ms.
   debounceMs?: number;
 }
 
 // The shim as inline JS (an IIFE). Kept free of server-only references so it can
 // be unit-tested by evaluating it with injected globals. References only
-// `window`, `document`, `fetch`, `setTimeout`, `clearTimeout`, `TextEncoder`.
+// `window`, `document`, `setTimeout`, `clearTimeout`, `TextEncoder`.
 export function bootstrapInnerJs(ctx: BootstrapContext): string {
   const cfg = {
     seed: ctx.seedBlob,
-    pin: ctx.seedUpdatedAt,
     writable: ctx.writable,
-    endpoint: ctx.endpoint,
+    targetOrigin: ctx.targetOrigin,
     maxBytes: ctx.maxBytes,
     debounceMs: ctx.debounceMs ?? 600,
   };
@@ -60,65 +55,25 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
   if (typeof map !== "object" || map === null || Array.isArray(map)) map = {};
   var enc = new TextEncoder();
   var timer = null;
+  // Whether the map holds a change the shell hasn't been handed yet.
+  var dirty = false;
 
   function serialize(){ return JSON.stringify(map); }
   function quota(){ var e = new Error("localStorage quota exceeded"); e.name = "QuotaExceededError"; return e; }
   function denyIfReadOnly(){ if (!cfg.writable) throw quota(); }
 
-  // S31 write discipline: the updatedAt this tab last knew, whether it holds
-  // unsaved changes, whether a save is in flight, and whether the saved data was
-  // replaced elsewhere (after which this tab never writes again).
-  var pin = cfg.pin;
-  var dirty = false;
-  var inflight = false;
-  var stale = false;
-
-  function notifyConflict(){
+  function post(){
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!cfg.writable || !dirty) return;
+    dirty = false;
     try {
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ type: "artefactor:data-conflict" }, window.location.origin);
-      }
+      window.parent.postMessage({ type: "artefactor:data-changed", blob: serialize() }, cfg.targetOrigin);
     } catch (e) {}
   }
-
-  // \`force\` is for pagehide: the page may be gone before an in-flight save
-  // settles, so send now rather than wait.
-  function flush(force){
-    if (timer) { clearTimeout(timer); timer = null; }
-    if (!cfg.writable || stale || !dirty) return;
-    if (inflight && force !== true) return; // resumes when the in-flight save settles
-    dirty = false;
-    var headers = { "Content-Type": "application/json" };
-    if (pin) headers["If-Match"] = '"' + pin + '"';
-    else headers["If-None-Match"] = "*";
-    var failed = false;
-    inflight = true;
-    var req;
-    try {
-      req = fetch(cfg.endpoint, {
-        method: "PUT",
-        headers: headers,
-        body: serialize(),
-        keepalive: true,
-        credentials: "same-origin"
-      });
-    } catch (e) { inflight = false; dirty = true; return; }
-    Promise.resolve(req).then(function(r){
-      if (r && r.status === 412) { stale = true; notifyConflict(); return; }
-      if (!r || !r.ok) { failed = true; return; }
-      return r.json().then(function(d){ if (d && d.updatedAt) pin = d.updatedAt; });
-    }).catch(function(){ failed = true; }).then(function(){
-      inflight = false;
-      // A failed save stays dirty for the next opportunity, without a retry loop.
-      if (failed) { dirty = true; return; }
-      if (dirty) schedule();
-    });
-  }
   function schedule(){
-    if (!cfg.writable) return;
     dirty = true;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(flush, cfg.debounceMs);
+    timer = setTimeout(post, cfg.debounceMs);
   }
 
   var shim = {
@@ -163,9 +118,9 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
     try { window.localStorage = shim; } catch (e2) {}
   }
 
-  window.addEventListener("pagehide", function(){ flush(true); });
+  window.addEventListener("pagehide", post);
   document.addEventListener("visibilitychange", function(){
-    if (document.visibilityState === "hidden") flush();
+    if (document.visibilityState === "hidden") post();
   });
 })();`;
 }

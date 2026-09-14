@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import type { ArtefactSummary } from "../shared/contracts";
+import { openFrame } from "../test/frame";
 
 // End-to-end S3 (edit) + S7 (archive/restore): drive the real app against a
 // throwaway db + payload store.
@@ -77,8 +78,9 @@ describe("edit + archive/restore (S3, S7)", () => {
     it("replaces the payload, served back by the owner raw view", async () => {
       const a = await create(owner, "WithPayload", "<h1>v1</h1>");
       expect((await patch(a.id, { payload: new File(["<h1>v2</h1>"], "b.html") }, owner)).status).toBe(200);
-      // The artefact content lives in the raw view's iframe frame (S12 shell).
-      const raw = await app.request(`/api/artefacts/${a.id}/raw/frame`, { headers: { cookie: owner } });
+      // The artefact content lives in the raw view's iframe frame (S12 shell),
+      // opened with a frame token (S36).
+      const raw = await openFrame(app, a.id, owner);
       expect(await raw.text()).toContain("<h1>v2</h1>");
     });
 

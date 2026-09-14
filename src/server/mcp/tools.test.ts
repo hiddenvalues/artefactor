@@ -734,11 +734,15 @@ describe("MCP artefact tools (S18)", () => {
       expect(json(await call(client, "get_artefact_data", { id: a.id })).blob).toBe(blob);
 
       const artefact = (await deps.repo.findById(a.id, SINGLETON_SCOPE))!;
-      const served = await renderServedArtefact(artefact, a.id, "u1", deps);
+      const served = await renderServedArtefact(artefact, "u1", deps, {
+        targetOrigin: "http://localhost:3000",
+      });
       expect(served).toContain(`"seed":${JSON.stringify(blob).replace(/</g, "\\u003c")}`);
-      // The reloaded tab pins its own later saves to the agent's write, so it
-      // neither conflicts with it nor can revert it.
-      expect(served).toContain(`"pin":"${written.updatedAt}"`);
+      // S36 — the reloaded tab's shell pins its own later saves to the entry's
+      // updatedAt, the agent's write, so it neither conflicts with it nor can
+      // revert it.
+      const entry = await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1");
+      expect(entry!.updatedAt.toISOString()).toBe(written.updatedAt);
     });
   });
 });

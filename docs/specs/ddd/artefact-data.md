@@ -219,12 +219,16 @@ that replaces `window.localStorage` with a backend-backed shim:
 - **Reads are synchronous** because the shim is **seeded server-side**: the BFF looks up the
   viewer's `DataEntry` while serving and inlines it into the bootstrap, so the in-memory map
   is populated before the artefact runs. No client round-trip on first read.
-- **Writes are write-through + debounced**: `setItem`/`removeItem`/`clear` update the
-  in-memory map synchronously, then schedule a debounced `PUT …/data/me` of the whole blob.
-  A keepalive flush on `pagehide`/`visibilitychange` avoids losing the last edit.
+- **Writes are write-through + debounced, through the host shell (AD10, S36)**:
+  `setItem`/`removeItem`/`clear` update the in-memory map synchronously, then the shim posts the
+  whole blob to the host shell (`{ type: "artefactor:data-changed", blob }`, debounced, and
+  again on `pagehide`/`visibilitychange: hidden` when a change is still unposted). The shim
+  never calls the API: the sandboxed frame has no session (AH28). The **shell** sends the
+  `PUT …/data/me`, under the viewer's session, with a `keepalive` flush on its own `pagehide`.
 - **Only changes are written, and every write is pinned (S31).** Because the saved data can
   also be replaced from outside the tab (the connector's `set_artefact_data`), a tab must not
-  act on a stale copy:
+  act on a stale copy. The shell owns this discipline, and the pin never lives in the frame
+  (AD10):
   - a flush sends **only when the artefact changed something** since the last save — an open,
     idle tab never writes (hiding or closing it sends nothing);
   - each `PUT` is conditioned on the `updatedAt` the tab last knew — `If-Match:
@@ -232,12 +236,14 @@ that replaces `window.localStorage` with a backend-backed shim:
     server-side with the blob and advanced by each successful save's response;
   - saves never overlap (an edit made while one is in flight goes out after it, with the new
     pin), except the forced `pagehide` flush;
-  - a **412** means the data was replaced since the tab loaded: the tab **stops writing** (it
-    keeps running on its in-memory copy, so the artefact doesn't break) and posts
-    `{ type: "artefactor:data-conflict" }` to the host shell, which shows a banner offering a
-    reload (re-seeding the latest data). A tab can therefore never silently revert a newer
-    write. The one residual loss: unsaved in-tab edits when the tab is closed right after a
-    conflicting write — the keepalive response can't be acted on.
+  - a **412** means the data was replaced since the tab loaded: the shell **stops writing** (the
+    artefact keeps running on its in-memory copy, so it doesn't break) and shows a banner
+    offering a reload, which mints a fresh frame URL and re-seeds the latest data. A tab can
+    therefore never silently revert a newer write. The residual losses: a change still inside
+    the shim's debounce window when the tab closes or the viewer switches data context (the
+    shell is gone, or no longer in the viewer's own context, when it arrives), and unsaved
+    edits when the tab is closed right after a conflicting write (the shell's keepalive
+    response can't be acted on).
 - **Quota maps to the cap**: a write that would push the blob over `MAX_BLOB_BYTES` (5 MB)
   throws `QuotaExceededError`, mirroring native `localStorage` (and 5 MB is itself a typical
   localStorage budget, so artefacts already tolerate it).
@@ -265,9 +271,12 @@ This keeps cross-user viewing entirely in the host application (BFF + chrome), b
 by the `…/data/authors` and `…/data/:authorId` endpoints above.
 
 **Realized in S12 as a server-rendered shell.** `/a/:slug` returns a thin host shell (a
-toolbar that wraps an `<iframe>` loading the artefact from `/a/:slug/frame`; `?author=<id>`
-chooses the context). The shell is server-rendered rather than part of the Svelte SPA because
-`/a/:slug` is the shareable link and must also serve unauthenticated/public viewers, who never
+toolbar that wraps an `<iframe>` loading the artefact from `/a/:slug/frame`). Since S36 the
+frame URL carries a short-lived **frame token** that names the context (AD10); the `?author=<id>`
+query parameter is gone. Switching author asks the BFF for a new tokened frame URL, and an
+expired token makes the frame ask the shell to mint a fresh one.
+The shell is server-rendered rather than part of the Svelte SPA because `/a/:slug` is the
+shareable link and must also serve unauthenticated/public viewers, who never
 load the SPA. The **host tools** — the data-context picker, and any future toolbar widgets —
 live in a **signed-in-only** wrapper: an anonymous public viewer gets the title bar + artefact
 only, never the switcher. (This is a host-UI choice, not an access rule: the `…/authors` /
@@ -344,3 +353,55 @@ That is correct, since the blob matches that HTML. The pin is not exposed on the
   warn / seed cautiously). This is the **pin-for-compatibility** decision — there is deliberately
   **no co-snapshot of data and no data time-travel** (continuous per-write data is a different
   cadence from discrete payload versions; out of scope).
+
+## Amendment (post-v0.2) — persistence through the host shell
+
+> **Status:** DDD amendment (FDD slice **S36**; with Artefact Hosting AH28 and Identity & Access
+> IA6). AD1–AD9 are unchanged: the shell's `PUT …/data/me` is the same `putOwnDataEntry`, so
+> writes stay own-entry (AD2/AD5), authenticated (AD3), opaque (AD8), stamped (AD9) and pinned
+> (S31).
+
+**Problem.** The served shim wrote with `fetch(…, { credentials: "same-origin" })`, which only
+works while the artefact runs in the app origin with the viewer's session — the very exposure
+AH28 removes.
+
+**AD10 — the served shim persists through the host shell, never the API; seeding is
+authenticated by a frame token, never by cookies inside the frame.**
+
+- **Frame → shell.** The shim keeps the synchronous seeded map, `QuotaExceededError` over
+  `MAX_BLOB_BYTES` and throw-on-write in a read-only context. On a change (debounced) and on
+  `pagehide` / `visibilitychange: hidden` with a change still unposted, it posts
+  `{ type: "artefactor:data-changed", blob }` to `window.parent` with `targetOrigin` = the app
+  origin. An idle tab posts nothing. It never calls `fetch`.
+- **The shell decides.** It accepts a message only when `event.source === frame.contentWindow`
+  (there is no origin to check: the frame's is `"null"`), and only while its context is the
+  viewer's own (signed in, no author selected). The endpoint is fixed by the shell: a message
+  never chooses the artefact, the author or the URL. The shell posts nothing to the frame, and
+  the frame receives no data it wasn't already seeded with.
+- **Frame token.** A stateless HMAC-SHA256 token (key derived from `BETTER_AUTH_SECRET` under its
+  own label, so it is never the session key), base64url, with claims `artefactId`, `route`
+  (`slug` | `raw`), `viewerId` (or null), `authorId` (null = the viewer's own context), `exp`,
+  and, on a `raw` token, the `tenantId` the owner-preview read was scoped to. It lives
+  **5 minutes** and is reusable within them.
+- **Mint.** The shell's server render (`/a/:slug`, `/api/artefacts/:id/raw`) embeds a first
+  tokened frame URL for a signed-in viewer; an anonymous viewer gets a token-less one.
+  `POST /api/artefacts/:ref/frame-token` (signed in; `:ref` = slug or id; body
+  `{ author?: string }`) returns `{ frameUrl, seedUpdatedAt }` for switching author or
+  refreshing. A slug ref is gated by the access matrix like `…/data/authors` and mints a `slug`
+  token; an id ref is the owner preview, gated like `/:id/raw` (own, active, in scope), and
+  mints a `raw` token. Anything else is a flat 404 (AH8).
+- **Redeem.** A frame route authenticates only from `?t=`. It verifies the signature and `exp`,
+  that the token's `artefactId` and `route` match the URL, then re-runs the route's own access
+  check for `viewerId` (the matrix for `slug`, own-active for `raw`), so a revocation is
+  effective immediately. Seed = `authorId ?? viewerId`; writable = `viewerId !== null &&
+  authorId === null`.
+- **No token:** the slug frame serves the anonymous read-only view when the matrix admits an
+  anonymous viewer, else 404; the raw frame is 404. **Invalid** (bad signature, wrong artefact or
+  route): 404. **Expired:** a sandboxed page that seeds nothing and posts
+  `{ type: "artefactor:frame-token-expired" }` to its parent; the shell (same `event.source` rule)
+  mints a fresh URL for its current context and reloads the frame, which is what keeps an
+  in-artefact `location.reload()` working after five minutes.
+
+A token in a frame URL is readable by the artefact it seeds. It grants nothing that artefact
+didn't already hold: the seeded data of that one context, for five minutes, read-only unless it is
+the viewer's own.

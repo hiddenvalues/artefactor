@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import { SINGLETON_SCOPE } from "../domain/artefact/tenant-scope";
 import type { ArtefactSummary } from "../shared/contracts";
+import { openFrame } from "../test/frame";
 
 // End-to-end S6: serve an artefact by slug, enforcing the access matrix. Drives
 // the real app against a throwaway db + filesystem payload store: create →
@@ -52,12 +53,10 @@ describe("serve artefact by slug (S6)", () => {
   }
 
   // The artefact itself lives inside the iframe at `/a/:slug/frame`; `author`
-  // selects the data context (S12).
+  // selects the data context (S12), named by the frame token the shell mints
+  // (S36).
   function frame(slug: string, opts: { cookie?: string; author?: string } = {}) {
-    const q = opts.author ? `?author=${encodeURIComponent(opts.author)}` : "";
-    return app.request(`/a/${slug}/frame${q}`, {
-      headers: opts.cookie ? { cookie: opts.cookie } : {},
-    });
+    return openFrame(app, slug, opts.cookie, opts.author);
   }
 
   beforeAll(async () => {
@@ -155,7 +154,7 @@ describe("serve artefact by slug (S6)", () => {
     // Trusted payload, plus the S13 localStorage bootstrap (read-only for the
     // anonymous viewer — seeded empty, no write-through).
     expect(body).toContain(HTML);
-    expect(body).toContain(`/api/artefacts/${a.publicSlug}/data/me`);
+    expect(body).toContain("localStorage");
     expect(body).toContain('"writable":false');
   });
 
@@ -174,7 +173,7 @@ describe("serve artefact by slug (S6)", () => {
     expect(body).toContain("dark");
   });
 
-  it("seeds another author's data read-only via ?author (S12, AD5)", async () => {
+  it("seeds another author's data read-only via an author frame token (S12, AD5, S36)", async () => {
     // Authenticated artefact: owner writes data; a different signed-in viewer
     // loads the owner's context through the switcher.
     const a = await makeArtefact("authenticated");
