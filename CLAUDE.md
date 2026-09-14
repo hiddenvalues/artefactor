@@ -2,9 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Where work stands:** slice status and dependencies live in
-[`docs/specs/fdd/slice-dag.md`](docs/specs/fdd/slice-dag.md) — the single, test-enforced source
-of truth (`pnpm spec:dag` prints the graph and the next build waves). In-flight work lives in
+**Where work stands:** slice status and dependencies live in the slice DAG — the catalog
+[`docs/specs/fdd/slice-dag.md`](docs/specs/fdd/slice-dag.md) and the per-context files it lists
+under `docs/specs/fdd/slices/` — the single, test-enforced source of truth (`pnpm spec:dag`
+prints the graph, the next build waves and the next free slice id). In-flight work lives in
 **Linear**. This file holds only what's true between slices.
 
 ## Architecture at a glance
@@ -106,8 +107,9 @@ The domain and build plan live in `docs/specs/` and are the **source of truth**:
 - `docs/specs/ddd/` — domain model: ubiquitous language, the **Identity & Access**,
   **Artefact Hosting**, and **Artefact Data** bounded contexts, with aggregates and
   invariants.
-- `docs/specs/fdd/slice-dag.md` — the feature slice DAG: every slice's status, dependencies and
-  acceptance criteria (the seeds for TDD tests). `s0-scaffold.md` has the full S0 spec.
+- `docs/specs/fdd/slice-dag.md` — the feature slice DAG's catalog, listing one file per context
+  under `docs/specs/fdd/slices/` with every slice's status, dependencies and acceptance criteria
+  (the seeds for TDD tests). `s0-scaffold.md` has the full S0 spec.
 
 `skills/artefactor/SKILL.md` is an Agent Skill for the **authoring + publishing** side
 (claude.ai / Claude design) — it teaches Claude both to **publish/update/share** artefacts via
@@ -161,8 +163,10 @@ sync with implementation and tests at all times.
   feature is a vertical slice of the DDD model. Features are organized as a **DAG**:
   a feature depends on the features (slices) it builds on, and is only started once its
   dependencies are in place. Build order follows the DAG topologically.
-  `docs/specs/fdd/slice-dag.md` records the DAG: each `### <id> — <title>` slice heading is
-  followed directly by a metadata block —
+  The DAG is a catalog, `docs/specs/fdd/slice-dag.md` (a context table + the high-water mark per
+  id prefix), and one context file per context under `docs/specs/fdd/slices/` holding the
+  slices. In a context file, each `### <id> — <title>` slice heading is followed directly by a
+  metadata block —
 
   ```markdown
   ### S31 — Agent edits data: `set_artefact_data` MCP tool
@@ -176,8 +180,10 @@ sync with implementation and tests at all times.
   `—` for none); `Optional` (non-blocking edges) and `Linear` may be omitted. The drift test
   `src/specs/slice-dag.test.ts` (part of `pnpm test`) fails on a missing or invalid block, an
   unknown or dropped dependency, a cycle, a `done`/`in progress` slice with an unfinished
-  dependency, or slice status creeping back into this file. `pnpm spec:dag` prints the graph
-  and the parallel build waves.
+  dependency, a catalog that disagrees with its context files or high-water marks, or slice
+  status creeping back into this file. `pnpm spec:dag` prints the graph, the parallel build
+  waves and the next free id; a new slice takes that id, bumps the mark, and joins its
+  context's Slices cell (details: `docs/specs/README.md`).
 - **TDD (Test-Driven Development)** — every slice is built test-first. Unit tests encode
   the invariants and business logic from the DDD spec. A spec, its implementation, and
   its tests must always agree.
@@ -216,10 +222,10 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
 - Respect the FDD DAG: don't build a slice before its dependency slices exist.
 - `CLAUDE.md` holds only what's true between slices: product, architecture, locked decisions,
   process and commands. A change edits it only for an architecture fact or a locked-decision
-  reversal — slice status belongs in `docs/specs/fdd/slice-dag.md`, in-flight work in Linear.
+  reversal — slice status belongs in the slice DAG (`docs/specs/fdd/`), in-flight work in Linear.
 - **Slice naming:** in all human-facing text a session writes (chat, Linear, PR titles and
   bodies, commit messages), refer to a slice by its **full title** — e.g. "S31 — Agent edits
-  data: `set_artefact_data` MCP tool", never "S31". The machine-parsed metadata fields in `slice-dag.md` keep bare ids.
+  data: `set_artefact_data` MCP tool", never "S31". The machine-parsed metadata fields and catalog cells keep bare ids.
 
 ## Commands
 
@@ -233,7 +239,7 @@ pnpm check                     # svelte-check + tsc --noEmit (server) — type s
 pnpm db:generate               # drizzle-kit: generate a migration from src/infra/db/schema.ts
 pnpm db:migrate                # apply migrations (tsx src/infra/db/migrate.ts)
 pnpm db:studio                 # drizzle studio
-pnpm spec:dag [file]           # slice DAG → mermaid graph + parallel build waves (default: core DAG)
+pnpm spec:dag [catalog]        # slice DAG → mermaid graph + build waves + next free id (default: core catalog)
 
 # Identity (S1): regenerate BetterAuth's Drizzle tables after changing src/server/auth.ts
 # (e.g. the mcp/OIDC plugin tables added in S18), then re-run db:generate to emit the migration.
