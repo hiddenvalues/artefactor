@@ -151,6 +151,21 @@ describe("editArtefactCommand (S3)", () => {
       ]);
     });
 
+    it("enqueues before the previous payload is deleted, so a newer edit's job can't be overtaken", async () => {
+      const thumbnails = new RecordingQueue();
+      let queuedWhenDeleted = -1;
+      const del = store.delete.bind(store);
+      store.delete = async (ref) => {
+        queuedWhenDeleted = thumbnails.jobs.length;
+        await del(ref);
+      };
+      await editArtefactCommand(
+        { artefactId: "a1", requesterId: OWNER, scope: SCOPE, payload: bytes("<h1>new</h1>") },
+        { repo, payloadStore: store, thumbnails },
+      );
+      expect(queuedWhenDeleted).toBe(1);
+    });
+
     it("a title/kind-only edit enqueues nothing", async () => {
       const thumbnails = new RecordingQueue();
       await editArtefactCommand(

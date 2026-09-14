@@ -77,9 +77,11 @@ export async function editArtefactCommand(
 
     // Edit succeeded: drop the superseded payload file (if it was replaced).
     if (stored) {
-      await deps.payloadStore.delete(previousPayloadRef).catch(() => {});
-      // A title/kind-only edit keeps the thumbnail it has (AH26).
+      // Enqueue right after the save, before any further await: a newer edit's
+      // job queued meanwhile must not be replaced by this older one (the queue
+      // is latest-wins per artefact). A title/kind-only edit keeps its thumbnail.
       enqueueThumbnail(deps.thumbnails, edited);
+      await deps.payloadStore.delete(previousPayloadRef).catch(() => {});
     }
     return edited;
   } catch (err) {
