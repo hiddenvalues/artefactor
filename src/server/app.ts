@@ -17,6 +17,7 @@ import { createApiRoutes } from "./routes";
 import { createArtefactServingRoutes } from "./routes/serve";
 import { createFrameRoutes } from "./routes/frame";
 import { framingFromEnv } from "./runtime/framing";
+import { createOriginGuard } from "./middleware/origin-guard";
 import { createMcpRoutes, type McpScopeResolver } from "./mcp/routes";
 import type { HealthResponse } from "../shared/contracts";
 import type { ThumbnailQueue } from "./thumbnails/thumbnail-service";
@@ -76,6 +77,10 @@ export function createApp(
       framing,
     }),
   );
+
+  // S36 (IA6) — a cookie-authenticated state change under /api must come from
+  // the app origin (BetterAuth checks /api/auth/* itself).
+  app.use("/api/*", createOriginGuard(framing.trustedAppOrigins));
 
   app.route(
     "/api",

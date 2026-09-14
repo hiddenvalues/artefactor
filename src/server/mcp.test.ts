@@ -132,10 +132,12 @@ describe("MCP connector (S18)", () => {
     const { access_token } = (await tokenRes.json()) as { access_token: string };
     expect(access_token).toBeTruthy();
 
-    // 4. Call a tool with the bearer — JSON-RPC over POST /mcp.
+    // 4. Call a tool with the bearer — JSON-RPC over POST /mcp. S36 (IA6): /mcp
+    // is bearer-only and not under /api, so even an opaque Origin passes.
     const callRes = await app.request("/mcp", {
       method: "POST",
       headers: {
+        Origin: "null",
         Authorization: `Bearer ${access_token}`,
         "Content-Type": "application/json",
         Accept: "application/json",
