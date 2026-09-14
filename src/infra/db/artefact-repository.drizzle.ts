@@ -5,6 +5,7 @@ import type { Artefact } from "../../domain/artefact/artefact";
 import type {
   ArtefactRepository,
   ListByOwnerOptions,
+  ThumbnailJob,
 } from "../../domain/artefact/artefact-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 
@@ -21,13 +22,51 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
 
   // Upsert by id so the same port serves create (S2) and later mutations
   // (edit/share/archive in S3/S5/S7), then reconcile the access list (S16).
+  // `thumbnail_hash` is inserted as NULL and left out of the update set (AH26):
+  // only recordThumbnail writes it, so a concurrent edit can't revert a render.
   async save(a: Artefact): Promise<void> {
-    const row = toRow(a);
+    const { thumbnailHash: _never, ...row } = toRow(a);
     await this.db
       .insert(artefact)
-      .values(row)
+      .values({ ...row, thumbnailHash: null })
       .onConflictDoUpdate({ target: artefact.id, set: row });
     await this.syncAccessList(a.id, a.sharedWith);
+  }
+
+  // S35 (AH26) — compare-and-set against the current payload hash; `updated_at`
+  // is deliberately not touched.
+  async recordThumbnail(id: string, renderedHash: string): Promise<boolean> {
+    // `returning` (not the driver's affected-row count) keeps this dialect-neutral,
+    // so the Postgres mirror stays byte-identical (P3).
+    const recorded = await this.db
+      .update(artefact)
+      .set({ thumbnailHash: renderedHash })
+      .where(and(eq(artefact.id, id), eq(artefact.payloadHash, renderedHash)))
+      .returning({ id: artefact.id });
+    return recorded.length > 0;
+  }
+
+  // S35 (AH17 note) — the render sweep's system read: tenant-agnostic by design,
+  // internal only, and projecting just what the renderer needs.
+  async listNeedingThumbnail(limit: number): Promise<ThumbnailJob[]> {
+    return this.db
+      .select({
+        id: artefact.id,
+        payloadRef: artefact.payloadRef,
+        payloadHash: artefact.payloadHash,
+        thumbnailHash: artefact.thumbnailHash,
+      })
+      .from(artefact)
+      .where(
+        and(
+          eq(artefact.status, "active"),
+          or(
+            isNull(artefact.thumbnailHash),
+            ne(artefact.thumbnailHash, artefact.payloadHash),
+          ),
+        ),
+      )
+      .limit(limit);
   }
 
   // Permanent delete (AH11). The data_entry and artefact_access FKs are ON
@@ -222,6 +261,7 @@ function toRow(a: Artefact): ArtefactRow {
     payloadBytes: a.payloadBytes,
     payloadHash: a.payloadHash,
     usesStorage: a.usesStorage,
+    thumbnailHash: a.thumbnailHash,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
     archivedAt: a.archivedAt,
@@ -244,6 +284,7 @@ function toAggregate(row: ArtefactRow, sharedWith: string[]): Artefact {
     payloadBytes: row.payloadBytes,
     payloadHash: row.payloadHash,
     usesStorage: row.usesStorage,
+    thumbnailHash: row.thumbnailHash,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     archivedAt: row.archivedAt,

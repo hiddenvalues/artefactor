@@ -17,6 +17,7 @@ import { createApiRoutes } from "./routes";
 import { createArtefactServingRoutes } from "./routes/serve";
 import { createMcpRoutes, type McpScopeResolver } from "./mcp/routes";
 import type { HealthResponse } from "../shared/contracts";
+import type { ThumbnailQueue } from "./thumbnails/thumbnail-service";
 
 // S24 — the composition root. The persistence-port adapters *and* the BetterAuth
 // instance are injected (defaulting to the OSS SQLite/filesystem set + the
@@ -41,6 +42,9 @@ export function createApp(
   // open question on the connector's active org.
   resolveMcpScope?: McpScopeResolver,
   accessPolicy: AccessPolicy = defaultAccessPolicy,
+  // S35 — the thumbnail queue the create/edit commands enqueue into (UI and MCP
+  // alike). The entry constructs and starts it; absent = no renders.
+  thumbnails?: ThumbnailQueue,
 ) {
   const app = new Hono();
 
@@ -54,7 +58,10 @@ export function createApp(
     }),
   );
 
-  app.route("/api", createApiRoutes(adapters, auth, resolveScope, accessPolicy));
+  app.route(
+    "/api",
+    createApiRoutes(adapters, auth, resolveScope, accessPolicy, thumbnails),
+  );
 
   // S6 — public artefact serving by slug (the shared-link render route). Mounted
   // before the static handlers so `/a/:slug` is not swallowed by the SPA fallback.
@@ -83,6 +90,7 @@ export function createApp(
         collectionRepo: adapters.collectionRepository,
         payloadStore: adapters.payloadStore,
         dataRepo: adapters.dataRepository,
+        thumbnails,
       },
       auth,
       resolveMcpScope,

@@ -10,6 +10,7 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { PayloadStore } from "../../domain/artefact/ports";
 import { loadOwnActiveArtefact } from "./get-own-artefact";
+import { enqueueThumbnail, type ThumbnailQueue } from "../thumbnails/thumbnail-service";
 
 // Application command for S3 — Edit artefact. Loads the caller's own active
 // artefact (archived/non-owner → not-found, AH7/AH8), validates the kind and
@@ -29,6 +30,8 @@ export interface EditArtefactInput {
 export interface EditArtefactDeps {
   repo: ArtefactRepository;
   payloadStore: PayloadStore;
+  // S35 (AH25/AH26) — re-renders the thumbnail after a payload replacement.
+  thumbnails?: ThumbnailQueue;
 }
 
 export async function editArtefactCommand(
@@ -75,6 +78,8 @@ export async function editArtefactCommand(
     // Edit succeeded: drop the superseded payload file (if it was replaced).
     if (stored) {
       await deps.payloadStore.delete(previousPayloadRef).catch(() => {});
+      // A title/kind-only edit keeps the thumbnail it has (AH26).
+      enqueueThumbnail(deps.thumbnails, edited);
     }
     return edited;
   } catch (err) {

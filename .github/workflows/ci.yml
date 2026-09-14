@@ -34,6 +34,9 @@ jobs:
       # onlyBuiltDependencies (pnpm-workspace.yaml) lets install compile better-sqlite3
       # + esbuild from source — needed before tests run. ubuntu-latest ships the toolchain.
       - run: pnpm install --frozen-lockfile
+      # S35 — the thumbnail renderer's isolation tests need a real headless
+      # Chromium; without one they would skip instead of guarding the sandbox.
+      - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
       - run: pnpm test
       - run: pnpm check
       - run: pnpm lint:md

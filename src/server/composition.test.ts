@@ -6,6 +6,7 @@ import { InMemoryCollectionRepository } from "../domain/collection/in-memory-col
 import { InMemoryBookmarkRepository } from "../domain/bookmark/in-memory-bookmark-repository";
 import { InMemoryDataRepository } from "../domain/data/in-memory-data-repository";
 import { InMemoryViewRepository } from "../domain/views/in-memory-view-repository";
+import { InMemoryThumbnailStore } from "../domain/artefact/in-memory-thumbnail-store";
 import { createArtefact, shareArtefact } from "../domain/artefact/artefact";
 import type { PayloadStore, StoredPayload } from "../domain/artefact/ports";
 import type { UserDirectory } from "./data/user-directory";
@@ -59,6 +60,7 @@ async function injectedAdapters(): Promise<Adapters> {
     dataRepository: new InMemoryDataRepository(),
     viewRepository: new InMemoryViewRepository(),
     payloadStore: new FakePayloadStore(PAYLOAD),
+    thumbnailStore: new InMemoryThumbnailStore(),
     userDirectory: stubDirectory,
   };
 }

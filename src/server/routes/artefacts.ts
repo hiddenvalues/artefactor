@@ -40,6 +40,7 @@ import type { BookmarkRepository } from "../../domain/bookmark/bookmark-reposito
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
 import type { UserDirectory } from "../data/user-directory";
+import type { ThumbnailStore } from "../../domain/artefact/ports";
 import { ownerId, requireAuth, type AuthEnv } from "../middleware/auth";
 import type { TenantScopeResolver } from "../middleware/tenant-scope";
 import type {
@@ -65,6 +66,8 @@ export type ArtefactRoutesDeps = CreateArtefactDeps & {
   userDirectory: UserDirectory;
   // S22 (AH17) — resolves the request's tenant scope for the owner-scoped reads.
   resolveScope: TenantScopeResolver;
+  // S35 (AH11) — permanent delete removes the thumbnail files.
+  thumbnailStore: ThumbnailStore;
 };
 
 // BFF routes for the Artefact Hosting context. S2 adds manual HTML upload;
@@ -396,6 +399,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           viewRepo: deps.viewRepo,
           bookmarkRepo: deps.bookmarkRepo,
           payloadStore: deps.payloadStore,
+          thumbnailStore: deps.thumbnailStore,
         },
       );
       return c.body(null, 204);
@@ -520,6 +524,13 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   return r;
 }
 
+// S35 (AH25/AH27) — the card preview URL, versioned by the recorded hash so a
+// re-render busts the immutable cache. Archived artefacts are inert (AH7): no URL.
+function thumbnailUrlOf(a: Artefact): string | null {
+  if (a.thumbnailHash === null || a.status !== "active") return null;
+  return `/api/artefacts/${encodeURIComponent(a.id)}/thumbnail?v=${a.thumbnailHash}`;
+}
+
 // `effectiveVisibility` (AH20) defaults to the artefact's own tier — correct
 // for every top-level artefact; callers pass the resolved tier for contained
 // ones (the create path is always top-level, AH1).
@@ -539,6 +550,7 @@ export function toArtefactSummary(
     publicSlug: a.publicSlug,
     payloadBytes: a.payloadBytes,
     usesStorage: a.usesStorage,
+    thumbnailUrl: thumbnailUrlOf(a),
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),
   };

@@ -71,6 +71,11 @@ export const api = {
       .then((r) => r.artefacts);
   },
 
+  // S4 — one owned artefact's summary (S35 polls it for a fresh thumbnail).
+  getOwn(id: string): Promise<ArtefactSummary> {
+    return fetch(`/api/artefacts/${id}`).then(json<ArtefactSummary>);
+  },
+
   create(input: {
     title: string;
     kind: ArtefactKind;

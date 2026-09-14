@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { SharedArtefactSummary } from "../../../shared/contracts";
   import {
-    kindMeta,
     initials,
     relativeTime,
     BOOKMARK_ICON,
@@ -9,6 +8,7 @@
     STORAGE_LABEL,
   } from "../format";
   import Icon from "./Icon.svelte";
+  import CardThumbnail from "./CardThumbnail.svelte";
 
   interface Props {
     g: SharedArtefactSummary;
@@ -22,62 +22,48 @@
   }
   let { g, onOpen, bookmarked = false, onBookmark, onEject }: Props = $props();
 
-  const m = $derived(kindMeta(g.kind));
   const ownerName = $derived(g.owner.name || g.owner.email || "Unknown");
 </script>
 
 <!-- Grid card: base look + hover "pop" come from `.af-card-grid` (app.css). -->
 <div class="af-card-grid">
-  <!-- thumbnail — clickable upper half; opens the artefact -->
-  <button
-    type="button"
-    onclick={onOpen}
-    aria-label={`Open ${g.title}`}
-    style="position:relative;width:100%;height:108px;padding:0;display:flex;align-items:center;justify-content:center;background:{m.tint};--thumb-stripe:{m.color};border:none;border-bottom:1px solid var(--border);overflow:hidden;border-top-left-radius:12px;border-top-right-radius:12px;cursor:pointer;font-family:inherit;"
-  >
-    <div
-      style="position:absolute;inset:0;opacity:.5;background-image:repeating-linear-gradient(135deg, transparent 0 9px, var(--thumb-stripe) 9px 10px);"
-    ></div>
-    <Icon paths={m.icon} size={30} width={1.7} color={m.color} style="position:relative;" />
-    <span
-      style="position:absolute;top:9px;left:9px;display:inline-flex;align-items:center;padding:3px 8px;border-radius:7px;background:var(--card);color:{m.color};box-shadow:var(--shadow);"
-    >
-      <span style="font-family:'Geist Mono',monospace;font-size:10.5px;letter-spacing:0.02em;">
-        {m.label}
-      </span>
-    </span>
-    {#if g.usesStorage}
-      <span
-        title={STORAGE_LABEL}
-        aria-label={STORAGE_LABEL}
-        style="position:absolute;top:9px;right:9px;display:inline-flex;align-items:center;justify-content:center;padding:4px;border-radius:7px;background:var(--card);color:var(--muted-fg);box-shadow:var(--shadow);"
+  <!-- The bookmark toggle sits over the preview's lower-right, outside the
+       open-button so a mis-click never opens the artefact. -->
+  <div style="position:relative;">
+    <CardThumbnail kind={g.kind} title={g.title} thumbnailUrl={g.thumbnailUrl} {onOpen}>
+      {#snippet chips()}
+        {#if g.usesStorage}
+          <span
+            title={STORAGE_LABEL}
+            aria-label={STORAGE_LABEL}
+            style="display:inline-flex;align-items:center;justify-content:center;padding:4px;border-radius:7px;background:var(--card);color:var(--muted-fg);box-shadow:var(--shadow);"
+          >
+            <Icon paths={STORAGE_ICON} size={13} width={1.8} />
+          </span>
+        {/if}
+      {/snippet}
+    </CardThumbnail>
+    {#if onBookmark}
+      <button
+        onclick={onBookmark}
+        title={bookmarked ? "Remove bookmark" : "Bookmark"}
+        aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
+        style="position:absolute;bottom:9px;right:9px;display:inline-flex;align-items:center;justify-content:center;padding:5px;border-radius:7px;border:none;background:var(--card);box-shadow:var(--shadow);cursor:pointer;color:{bookmarked ? 'var(--primary)' : 'var(--muted-fg)'};"
       >
-        <Icon paths={STORAGE_ICON} size={13} width={1.8} />
-      </span>
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill={bookmarked ? "currentColor" : "none"}
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linejoin="round"
+        >
+          <path d={BOOKMARK_ICON[0]} />
+        </svg>
+      </button>
     {/if}
-  </button>
-  {#if onBookmark}
-    <!-- Sits over the thumbnail's lower-right, outside the open-button so a
-         mis-click never opens the artefact. -->
-    <button
-      onclick={onBookmark}
-      title={bookmarked ? "Remove bookmark" : "Bookmark"}
-      aria-label={bookmarked ? "Remove bookmark" : "Bookmark"}
-      style="position:absolute;top:76px;right:9px;display:inline-flex;align-items:center;justify-content:center;padding:5px;border-radius:7px;border:none;background:var(--card);box-shadow:var(--shadow);cursor:pointer;color:{bookmarked ? 'var(--primary)' : 'var(--muted-fg)'};"
-    >
-      <svg
-        width="13"
-        height="13"
-        viewBox="0 0 24 24"
-        fill={bookmarked ? "currentColor" : "none"}
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linejoin="round"
-      >
-        <path d={BOOKMARK_ICON[0]} />
-      </svg>
-    </button>
-  {/if}
+  </div>
   <div style="padding:13px 14px 13px;display:flex;flex-direction:column;gap:11px;">
     <div
       style="font-size:14px;font-weight:600;letter-spacing:-0.01em;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"

@@ -23,6 +23,8 @@ import { listEffectivelyShared } from "../collections/shared.query";
 import { listSharedCollections } from "../collections/shared-collections.query";
 import { createDataRoutes } from "./data";
 import { createDownloadRoutes } from "./download";
+import { createThumbnailRoutes } from "./thumbnail";
+import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
 import { createViewRoutes } from "./views";
 import { createUserRoutes } from "./users";
 import type {
@@ -42,6 +44,8 @@ export function createApiRoutes(
   // S22 (AH18) — decides the `authenticated` tier on the slug-addressed reads
   // (data authors/entries, viewers). Default = the OSS matrix, byte-identical.
   accessPolicy: AccessPolicy = defaultAccessPolicy,
+  // S35 — renders card thumbnails after a create or HTML replace; absent = none.
+  thumbnails?: ThumbnailQueue,
 ) {
   const {
     artefactRepository,
@@ -49,6 +53,7 @@ export function createApiRoutes(
     bookmarkRepository,
     dataRepository,
     payloadStore,
+    thumbnailStore,
     userDirectory,
     viewRepository,
   } = adapters;
@@ -164,6 +169,8 @@ export function createApiRoutes(
       bookmarkRepo: bookmarkRepository,
       userDirectory,
       resolveScope,
+      thumbnailStore,
+      thumbnails,
     }),
   );
 
@@ -177,6 +184,7 @@ export function createApiRoutes(
       dataRepo: dataRepository,
       viewRepo: viewRepository,
       payloadStore,
+      thumbnailStore,
       userDirectory,
       resolveScope,
     }),
@@ -216,6 +224,20 @@ export function createApiRoutes(
       artefactRepo: artefactRepository,
       collectionRepo: collectionRepository,
       payloadStore,
+      resolveScope,
+      accessPolicy,
+    }),
+  );
+
+  // S35 — the card thumbnail, addressed by slug or id. Signed-in only (AH27);
+  // access otherwise follows the download's resolver, so the matrix, the
+  // effective tier and the access policy are inherited, not re-implemented.
+  api.route(
+    "/artefacts",
+    createThumbnailRoutes({
+      artefactRepo: artefactRepository,
+      collectionRepo: collectionRepository,
+      thumbnailStore,
       resolveScope,
       accessPolicy,
     }),

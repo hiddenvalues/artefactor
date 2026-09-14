@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { ThumbnailJob } from "../../domain/artefact/artefact-repository";
+import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
 import { createArtefactCommand } from "./create-artefact.command";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
@@ -23,6 +25,14 @@ class FakePayloadStore implements PayloadStore {
   }
   async delete(ref: string): Promise<void> {
     this.live.delete(ref);
+  }
+}
+
+// S35 — a queue that records what the command enqueued.
+class RecordingQueue implements ThumbnailQueue {
+  readonly jobs: ThumbnailJob[] = [];
+  enqueue(job: ThumbnailJob): void {
+    this.jobs.push(job);
   }
 }
 
@@ -102,5 +112,54 @@ describe("createArtefactCommand (S2)", () => {
       ),
     ).rejects.toBeInstanceOf(InvariantViolation);
     expect(d.payloadStore.live.size).toBe(0);
+  });
+
+  describe("thumbnail enqueue (S35, AH25)", () => {
+    it("enqueues exactly one job carrying the saved payload hash, after the save", async () => {
+      const d = deps();
+      const thumbnails = new RecordingQueue();
+      let savedWhenEnqueued = false;
+      thumbnails.enqueue = (job) => {
+        void d.repo.findById(job.id, SINGLETON_SCOPE).then((a) => (savedWhenEnqueued = a !== null));
+        thumbnails.jobs.push(job);
+      };
+      const a = await createArtefactCommand(
+        { ownerId: "user_1", title: "Deck", kind: "slide-deck", payload: html },
+        { ...d, thumbnails },
+      );
+      await Promise.resolve();
+      expect(thumbnails.jobs).toEqual([
+        { id: a.id, payloadRef: a.payloadRef, payloadHash: a.payloadHash, thumbnailHash: null },
+      ]);
+      expect(savedWhenEnqueued).toBe(true);
+      expect(a.thumbnailHash).toBeNull();
+    });
+
+    it("a throwing queue does not fail the create", async () => {
+      const d = deps();
+      const thumbnails: ThumbnailQueue = {
+        enqueue() {
+          throw new Error("queue exploded");
+        },
+      };
+      const a = await createArtefactCommand(
+        { ownerId: "user_1", title: "Deck", kind: "slide-deck", payload: html },
+        { ...d, thumbnails },
+      );
+      expect(await d.repo.findById(a.id, SINGLETON_SCOPE)).not.toBeNull();
+      expect(d.payloadStore.live.size).toBe(1);
+    });
+
+    it("a rejected create enqueues nothing", async () => {
+      const d = deps();
+      const thumbnails = new RecordingQueue();
+      await expect(
+        createArtefactCommand(
+          { ownerId: "user_1", title: "  ", kind: "slide-deck", payload: html },
+          { ...d, thumbnails },
+        ),
+      ).rejects.toBeInstanceOf(InvariantViolation);
+      expect(thumbnails.jobs).toEqual([]);
+    });
   });
 });

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { InMemoryThumbnailStore } from "../../domain/artefact/in-memory-thumbnail-store";
 import {
   archiveArtefactCommand,
   deleteArtefactCommand,
@@ -123,7 +124,7 @@ describe("delete command (S15, AH11)", () => {
     await seedArchivedWithData();
     await deleteArtefactCommand(
       { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
-      { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore },
+      { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore, thumbnailStore: new InMemoryThumbnailStore() },
     );
     expect(await repo.findById("a1", SCOPE)).toBeNull();
     expect(payloadStore.deleted).toEqual(["r"]);
@@ -137,7 +138,7 @@ describe("delete command (S15, AH11)", () => {
     await expect(
       deleteArtefactCommand(
         { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
-        { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore },
+        { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore, thumbnailStore: new InMemoryThumbnailStore() },
       ),
     ).rejects.toBeInstanceOf(InvariantViolation);
     expect(await repo.findById("a1", SCOPE)).not.toBeNull();
@@ -149,9 +150,23 @@ describe("delete command (S15, AH11)", () => {
     await expect(
       deleteArtefactCommand(
         { artefactId: "a1", requesterId: "intruder", scope: SCOPE },
-        { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore },
+        { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore, thumbnailStore: new InMemoryThumbnailStore() },
       ),
     ).rejects.toBeInstanceOf(ArtefactNotFound);
     expect(await repo.findById("a1", SCOPE)).not.toBeNull();
+  });
+
+  it("removes every thumbnail file of the deleted artefact and no other (AH11, S35)", async () => {
+    await seedArchivedWithData();
+    const thumbnailStore = new InMemoryThumbnailStore();
+    await thumbnailStore.put("a1", "h", new Uint8Array([1]));
+    await thumbnailStore.put("a1", "older", new Uint8Array([2]));
+    await thumbnailStore.put("other", "h", new Uint8Array([3]));
+    await deleteArtefactCommand(
+      { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+      { repo, dataRepo, viewRepo, bookmarkRepo: new InMemoryBookmarkRepository(), payloadStore, thumbnailStore },
+    );
+    expect(thumbnailStore.hashesOf("a1")).toEqual([]);
+    expect(thumbnailStore.hashesOf("other")).toEqual(["h"]);
   });
 });

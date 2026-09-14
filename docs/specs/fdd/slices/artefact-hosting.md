@@ -411,3 +411,97 @@ invitation is an ordinary AH14 grant.
   sign-in page shows the magic-link option.
 - **Boundary:** **OSS** (the capabilities flag, client affordances and endpoint contract). The
   invitation domain, persistence, mail and sign-in are **EE** (Share invitations, EI1–EI3).
+
+### S35 — Artefact thumbnails
+
+- **Status:** done
+- **Depends on:** S2, S3, S10, S14, S15, S30
+- **Optional:** S32
+- **Linear:** ALI-271
+
+A WebP preview on every dashboard, collection and "Shared with you" card, rendered server-side
+from the stored payload alone, so an artefact published through the MCP connector (which has no
+browser) gets one too. It builds on create (S2) and edit (S3), which enqueue renders, on the
+lists whose cards show it (S10, S14), on permanent delete (S15), which removes the files, and on
+the S30 download resolver, which the thumbnail read reuses. S32 is optional: the link gate is
+inherited through that resolver when it lands. (DDD amendment: `ddd/artefact-hosting.md`
+AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
+
+- **Domain** — `Artefact.thumbnailHash: string | null` (`null` at create, untouched by
+  `editArtefact`); pure `isThumbnailStale(a)`. Ports `ThumbnailStore { put, get,
+  deleteAllExcept, deleteAll }` and `ThumbnailRenderer { render(html) }`. `ArtefactRepository`
+  gains `recordThumbnail(id, renderedHash)` — a compare-and-set against `payloadHash` that never
+  bumps `updatedAt` — and the system read `listNeedingThumbnail(limit)` (active rows whose
+  `thumbnailHash` is null or stale). `save()` never writes `thumbnailHash`. *(AH25, AH26, AH17)*
+- **Infra** — nullable `thumbnail_hash` column + migration; `FilesystemThumbnailStore` at
+  `<root>/<artefactId>/<payloadHash>.webp` (a sibling of `payloads/`);
+  `PlaywrightThumbnailRenderer` (`playwright-core` + `chromium-headless-shell`): lazy launch,
+  idle close, a fresh context per render (1280×800, service workers blocked, no credentials),
+  the payload fulfilled at the synthetic origin `https://artefact.invalid/` (Chromium's Local
+  Network Access then blocks loopback), WebSockets closed, `load` + a short settle (never
+  `networkidle`), a CDP WebP capture at scale 0.4 (512×320), and a 15 s hard cap. A launch
+  failure reports the renderer unavailable.
+- **Server** — `ARTEFACTOR_THUMBNAILS` (`on` | `off`, default `on`) and
+  `ARTEFACTOR_THUMBNAIL_DIR` (default `./data/thumbnails`). An in-process `ThumbnailService`:
+  a synchronous, never-throwing `enqueue(job)` deduped by artefact id (latest wins); one worker
+  that skips fresh jobs, drops a job whose payload is gone, renders, stores, records by
+  compare-and-set (deleting its file when the record loses) and then deletes the superseded
+  files; failed hashes are remembered per process and never retried; `start()` sweeps
+  backfill + crash recovery. Create and payload-replacing edit enqueue after the save (UI and
+  MCP alike). Permanent delete (and the CL8 collection cascade) removes the files.
+  `GET /api/artefacts/:ref/thumbnail` behind `requireAuth`, resolved like the S30 download,
+  `image/webp` + `Cache-Control: private, max-age=31536000, immutable` + `nosniff`.
+  `ArtefactSummary.thumbnailUrl` = `/api/artefacts/<id>/thumbnail?v=<thumbnailHash>` for an
+  active artefact with a thumbnail, else `null`. *(AH27, AH11)*
+- **Client** — a shared `CardThumbnail.svelte` in `ArtefactCard` and `GalleryCard`: a 16:10
+  preview area showing the image (`loading="lazy"`, top-aligned, `object-fit: cover`) or, when
+  there is none or it fails to load, the striped kind placeholder; the kind badge and chips stay
+  overlaid. After an upload or HTML replace the SPA polls that artefact every 2 s for up to
+  ~30 s until its `thumbnailUrl` appears.
+- **Packaging** — the runtime image installs `chromium-headless-shell` under
+  `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` with `ARTEFACTOR_THUMBNAIL_DIR=/data/thumbnails`;
+  CI installs it before `pnpm test` so the renderer isolation tests run.
+
+**Acceptance:**
+
+- **Create** (UI upload or MCP `create_artefact`) returns the same status and body as before,
+  plus `thumbnailUrl: null`, without awaiting any render; a job with the saved `payloadHash` is
+  enqueued exactly once; a throwing or absent queue doesn't fail the command.
+- **Edit** replacing the HTML (UI or MCP `update_artefact`) enqueues once with the new hash; a
+  title/kind-only edit enqueues nothing.
+- **Summary URL** — `thumbnailUrl` is `null` before a render completes, and after it
+  `thumbnailHash === payloadHash` and `thumbnailUrl` is
+  `/api/artefacts/<id>/thumbnail?v=<thumbnailHash>`; an archived artefact's is `null`.
+- **Repository CAS** — `recordThumbnail` applies only on a hash match and leaves `updatedAt`
+  unchanged (in-memory and Drizzle); a `save()` after a record doesn't revert `thumbnailHash`;
+  `listNeedingThumbnail` returns only active rows that are null or stale.
+- **Stale render** — a render finishing after the payload changed again is not recorded, its
+  file is removed, and the newer render's result wins.
+- **Superseded file** — a successful re-render deletes every other thumbnail file of the
+  artefact; until then the previous thumbnail is still served.
+- **Failure** — a renderer failure leaves `thumbnailHash` unchanged and that hash isn't retried
+  in the same process.
+- **Startup sweep** — `start()` enqueues active artefacts that are null or stale, never archived
+  ones.
+- **Route access** — 200 `image/webp` with the three headers for the owner, a `selected`
+  member, any signed-in user on `authenticated` or `public`, and collection-inherited tiers;
+  401 for anonymous whatever the ref; a flat 404 for an unknown ref, not viewable, archived
+  (owner included) and no thumbnail yet.
+- **Permanent delete** of an archived artefact removes its thumbnail files.
+- **Disabled renderer** — with `ARTEFACTOR_THUMBNAILS=off` or no Chromium the server starts,
+  logs once, never renders, and all other behaviour is identical.
+- **Renderer integration** (runs in CI; skips locally only without Chromium) — a fixture with
+  CDN CSS, a web font and a canvas yields a valid 512×320 WebP; a loopback canary receives zero
+  requests from `fetch`, `<img>`, `sendBeacon` and WebSocket; a public WebSocket is blocked; a
+  `while(true){}` page is aborted within the 15 s cap.
+- **Card** — `pnpm check` passes; a manual run shows upload → placeholder → thumbnail without a
+  reload, the thumbnail in "Shared with you", and the placeholder for an archived artefact and a
+  broken image.
+
+- **Out of scope:** the Chromium OS sandbox (off in the container; isolation relies on the
+  synthetic origin, WebSocket/service-worker blocking, the timeout, no credentials and the
+  container), anonymous thumbnail reads, OG/social images, thumbnails in MCP responses, list
+  rows and collection tiles, owner-chosen crops, per-kind viewports, dark-mode variants, an
+  object-storage store, a durable queue and per-tenant render quotas.
+- **Boundary:** **OSS** (the EE Postgres repository mirrors the column and the two repository
+  methods).

@@ -63,8 +63,9 @@ Aggregate root. The consistency boundary for one hosted artefact.
     invariants as **manual upload**; there is no privileged path that bypasses them.
 11. **Delete is archived-only**: an artefact may be permanently deleted only while
     `archived`, only by its owner; deletion also removes its payload file, all its data
-    entries, all its view entries (Artefact Views, `artefact-views.md` VT5), and all its
-    comment threads (`artefact-feedback.md` FB6).
+    entries, all its view entries (Artefact Views, `artefact-views.md` VT5), all its
+    comment threads (`artefact-feedback.md` FB6), and its thumbnail files (AH25–AH27
+    amendment).
 12. **Selected ⟹ slug**: `selected` is a shared tier — it mints a slug on the first share
     and retains it exactly like `authenticated`/`public` (subsumed by AH4/AH5). The slug
     link is live only for the owner and members; a signed-in non-member gets a flat 404, and
@@ -358,9 +359,9 @@ when the access matrix (AH8, under the effective access of AH20 and the `AccessP
 has already **granted** view to a **non-owner**. The owner is never gated. It applies to
 **every** non-owner read of the artefact regardless of how it is addressed (slug or id alias):
 the host shell and frame, the data reads (AD4) and writes, the HTML download (S30), the viewer
-list (VT4), and comment threads (`artefact-feedback.md`). A gate on an artefact whose effective
-access comes from a collection is **dormant** — the **tree root's** gate applies instead,
-exactly as the root's `(visibility, sharedWith)` does (AH20/CL4).
+list (VT4), comment threads (`artefact-feedback.md`), and the thumbnail (S35). A gate on an
+artefact whose effective access comes from a collection is **dormant** — the **tree root's**
+gate applies instead, exactly as the root's `(visibility, sharedWith)` does (AH20/CL4).
 
 **AH23 — expiry is evaluated at read time and never mutates state.** An expired gate makes the
 artefact behave **exactly as `private`** for non-owners (unauthenticated → sign-in redirect,
@@ -383,3 +384,55 @@ holder and client.
 **Authority & guards.** Only the owner sets or clears a gate (AH9); not while archived (AH7);
 only on a top-level artefact or a collection root (a contained artefact's gate is dormant and
 cannot be edited, like its tier). Password length ≥ 8. Setting a gate does not change the tier.
+
+## Amendment (post-v0.2) — Artefact thumbnails
+
+> **Status:** DDD amendment (FDD slice **S35**). Adds a **derived** preview image per artefact
+> that drives **host chrome only** (the dashboard and gallery cards) — never access, serving,
+> listing or the data API.
+
+**Problem.** Cards show only a kind placeholder, so many prototypes or decks look alike until
+each is opened. The MCP connector (Path A) has no browser, so a preview must be rendered
+server-side from what is stored.
+
+**Field.** `Artefact` gains:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `thumbnailHash` | string \| null | The `payloadHash` the recorded thumbnail was rendered from. `null` at create; untouched by edit; written **only** by the record compare-and-set (AH26). The artefact's thumbnail is **stale** while `thumbnailHash ≠ payloadHash`. |
+
+**AH25 — the thumbnail is derived host chrome.** It never gates access (AH8), serving, listing
+or the data API. A missing thumbnail always renders the kind placeholder. Rendering runs
+**after** the create or edit is persisted and **never blocks or fails** the command: a
+disabled, missing, failing or timed-out renderer leaves `thumbnailHash` untouched.
+
+**AH26 — pristine and payload-bound.** A thumbnail is rendered from the **stored payload
+alone** — no S13 localStorage bootstrap, no S12 shell, no `DataEntry` — so it is a function of
+`payloadHash` and can never leak anyone's saved data. A render is recorded **only** by a
+compare-and-set against the artefact's current `payloadHash`: a render that finishes after a
+newer edit is discarded. Recording does not change `updatedAt`. `thumbnailHash` is written
+**only** by that compare-and-set, never by an aggregate save, so a concurrent edit cannot revert
+a just-recorded thumbnail. The previous thumbnail stays served until a newer one is recorded;
+the superseded file is deleted after that. A title/kind-only edit does not re-render.
+
+**AH27 — thumbnail reads are signed-in and follow the export access matrix.**
+`GET /api/artefacts/:ref/thumbnail` requires a session (anonymous → 401 for every ref, which
+leaks nothing, AH8), then resolves exactly like the S30 download (`resolveViewableArtefact`:
+slug or id, effective tier per AH20, `AccessPolicy` per AH18). Unknown, not viewable, archived
+(owner too, AH7) and no thumbnail yet all return the same flat 404. The route adds no access
+logic of its own — the matrix stays single-sourced (AH18).
+
+**AH11 amendment.** Permanent delete — of the artefact, or of it through a collection's CL8
+cascade — also removes the artefact's thumbnail files.
+
+**AH22 amendment.** The link gate's list of non-owner reads gains **the thumbnail (S35)**. No
+S35 code is needed for it: the thumbnail route reuses the download's resolver, so the gate is
+inherited when S32 lands, and a card whose image fails to load falls back to the placeholder.
+
+**AH17 note.** The render sweep that finds artefacts needing a thumbnail is a **system** read:
+tenant-agnostic, internal, never exposed through any API, and returning only what the renderer
+needs (`id`, `payloadRef`, `payloadHash`, `thumbnailHash`).
+
+**Storage.** Thumbnails are WebP files at `<thumbnailRoot>/<artefactId>/<payloadHash>.webp`,
+a sibling of the payload root and never inside it (a payload-retention policy, the S19b seam,
+must never have to tell them apart).

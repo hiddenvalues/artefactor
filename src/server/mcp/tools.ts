@@ -33,6 +33,7 @@ import { extractDeclaredSchema } from "../../domain/data/declared-schema";
 import { toArtefactSummary } from "../routes/artefacts";
 import { loadAuthoringGuide } from "./authoring-guide";
 import { env } from "../env";
+import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
 
 // S18 — the MCP tool surface. Each tool is a thin adapter over the existing
 // Hosting / Data application commands, attributed to the OAuth token's Account
@@ -47,6 +48,8 @@ export interface McpToolDeps {
   collectionRepo: CollectionRepository;
   payloadStore: PayloadStore;
   dataRepo: DataRepository;
+  // S35 — create/update enqueue a thumbnail render through the same commands.
+  thumbnails?: ThumbnailQueue;
 }
 
 // S30 — caps on what a read-back tool may return. An MCP result lands in the
@@ -138,7 +141,7 @@ export function registerArtefactTools(
   deps: McpToolDeps,
   scope: TenantScope,
 ): void {
-  const { repo, payloadStore, dataRepo } = deps;
+  const { repo, payloadStore, dataRepo, thumbnails } = deps;
   const summarize = makeSummarize(deps);
 
   // Artefacts accumulate per-user data blobs (what the running artefact reads /
@@ -185,7 +188,7 @@ export function registerArtefactTools(
             payload: new TextEncoder().encode(html),
             tenantId: scope.tenantId,
           },
-          { repo, payloadStore },
+          { repo, payloadStore, thumbnails },
         );
         if (!visibility || visibility === "private") return summarize(created);
         // Fold the initial share into create as one logical operation: if the
@@ -234,7 +237,7 @@ export function registerArtefactTools(
             kind,
             payload: html === undefined ? undefined : new TextEncoder().encode(html),
           },
-          { repo, payloadStore },
+          { repo, payloadStore, thumbnails },
         );
         return withDataCount(updated);
       }),

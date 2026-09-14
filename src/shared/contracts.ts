@@ -47,6 +47,10 @@ export interface ArtefactSummary {
   // AH16: whether the artefact persists data (uses localStorage). The client
   // shows a small indicator for it in the dashboard/gallery card + row.
   usesStorage: boolean;
+  // S35 (AH25) — the card preview, `/api/artefacts/<id>/thumbnail?v=<hash>`, while
+  // the artefact is active and a render is recorded (the previous one stays until
+  // the next lands); otherwise null and the card shows the kind placeholder.
+  thumbnailUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }

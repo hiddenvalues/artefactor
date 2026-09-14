@@ -4,6 +4,7 @@ import {
   assertDeletable,
   createArtefact,
   editArtefact,
+  isThumbnailStale,
   restoreArtefact,
   shareArtefact,
   unshareArtefact,
@@ -332,5 +333,30 @@ describe("InMemoryArtefactRepository", () => {
       expect((await repo.findBySlug("slug-a"))?.id).toBe("a-shared");
       expect((await repo.findBySlug("slug-b"))?.id).toBe("b-shared");
     });
+  });
+});
+
+describe("thumbnailHash (S35, AH25/AH26)", () => {
+  it("starts null at create, so a new artefact's thumbnail is stale", () => {
+    const a = createArtefact(base);
+    expect(a.thumbnailHash).toBeNull();
+    expect(isThumbnailStale(a)).toBe(true);
+  });
+
+  it("is fresh only while it equals the payload hash", () => {
+    const a = createArtefact(base);
+    expect(isThumbnailStale({ ...a, thumbnailHash: "deadbeef" })).toBe(false);
+    expect(isThumbnailStale({ ...a, thumbnailHash: "older" })).toBe(true);
+  });
+
+  it("is left untouched by an edit, including a payload replacement", () => {
+    const a = { ...createArtefact(base), thumbnailHash: "deadbeef" };
+    const retitled = editArtefact(a, { title: "Renamed" });
+    expect(retitled.thumbnailHash).toBe("deadbeef");
+    const replaced = editArtefact(a, {
+      payload: { ref: "r2", bytes: 10, hash: "cafebabe" },
+    });
+    expect(replaced.thumbnailHash).toBe("deadbeef");
+    expect(isThumbnailStale(replaced)).toBe(true);
   });
 });

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { ThumbnailJob } from "../../domain/artefact/artefact-repository";
+import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
 import { editArtefactCommand } from "./edit-artefact.command";
 import { createArtefact } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
@@ -21,6 +23,14 @@ class FakePayloadStore implements PayloadStore {
   }
   async delete(ref: string): Promise<void> {
     this.live.delete(ref);
+  }
+}
+
+// S35 — a queue that records what the command enqueued.
+class RecordingQueue implements ThumbnailQueue {
+  readonly jobs: ThumbnailJob[] = [];
+  enqueue(job: ThumbnailJob): void {
+    this.jobs.push(job);
   }
 }
 
@@ -122,5 +132,48 @@ describe("editArtefactCommand (S3)", () => {
         deps(),
       ),
     ).rejects.toBeInstanceOf(InvariantViolation);
+  });
+
+  describe("thumbnail enqueue (S35, AH25/AH26)", () => {
+    it("replacing the HTML enqueues once with the new payload hash", async () => {
+      const thumbnails = new RecordingQueue();
+      const edited = await editArtefactCommand(
+        { artefactId: "a1", requesterId: OWNER, scope: SCOPE, payload: bytes("<h1>new</h1>") },
+        { repo, payloadStore: store, thumbnails },
+      );
+      expect(thumbnails.jobs).toEqual([
+        {
+          id: "a1",
+          payloadRef: edited.payloadRef,
+          payloadHash: edited.payloadHash,
+          thumbnailHash: null,
+        },
+      ]);
+    });
+
+    it("a title/kind-only edit enqueues nothing", async () => {
+      const thumbnails = new RecordingQueue();
+      await editArtefactCommand(
+        { artefactId: "a1", requesterId: OWNER, scope: SCOPE, title: "Renamed", kind: "form" },
+        { repo, payloadStore: store, thumbnails },
+      );
+      expect(thumbnails.jobs).toEqual([]);
+    });
+
+    it("a throwing queue does not fail the edit", async () => {
+      const edited = await editArtefactCommand(
+        { artefactId: "a1", requesterId: OWNER, scope: SCOPE, payload: bytes("<h1>new</h1>") },
+        {
+          repo,
+          payloadStore: store,
+          thumbnails: {
+            enqueue() {
+              throw new Error("queue exploded");
+            },
+          },
+        },
+      );
+      expect((await repo.findById("a1", SCOPE))!.payloadHash).toBe(edited.payloadHash);
+    });
   });
 });

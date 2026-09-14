@@ -15,7 +15,7 @@ import type { CollectionRepository } from "../../domain/collection/collection-re
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
-import type { PayloadStore } from "../../domain/artefact/ports";
+import type { PayloadStore, ThumbnailStore } from "../../domain/artefact/ports";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import { loadOwnCollection } from "./get-own-collection";
 
@@ -162,6 +162,8 @@ export interface DeleteCollectionDeps extends CollectionLifecycleDeps {
   viewRepo: ViewRepository;
   payloadStore: PayloadStore;
   bookmarkRepo: BookmarkRepository;
+  // S35 — each erased artefact's thumbnail files go too (AH11).
+  thumbnailStore: ThumbnailStore;
 }
 
 export async function deleteCollectionCommand(
@@ -196,6 +198,7 @@ export async function deleteCollectionCommand(
       continue;
     }
     await deps.payloadStore.delete(artefact.payloadRef);
+    await deps.thumbnailStore.deleteAll(artefact.id);
     await deps.dataRepo.deleteByArtefact(artefact.id);
     await deps.viewRepo.deleteByArtefact(artefact.id);
     await deps.bookmarkRepo.deleteByArtefact(artefact.id);

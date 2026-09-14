@@ -1,0 +1,1 @@
+ALTER TABLE `artefact` ADD `thumbnail_hash` text;

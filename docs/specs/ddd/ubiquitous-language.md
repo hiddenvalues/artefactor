@@ -27,3 +27,4 @@ Shared vocabulary for Artefactor. Use these terms exactly — in code, specs, te
 | **Share invitation** | A pending grant of `selected` access to an email that has no Account yet; it joins the access list when that Account is created. Distinct from an **org invitation** (membership). Provided by a superset through the S33 seam; OSS advertises no invitations. |
 | **Thread** | A comment discussion attached to one artefact, shown in the host chrome; `open` or `resolved` (S34). |
 | **Comment** | One plain-text message in a thread, by a signed-in viewer or — marked "via Claude" — through the MCP connector. |
+| **Thumbnail** | A small WebP preview of an artefact, rendered server-side from its stored payload alone and shown on its card. Derived host chrome: bound to the payload hash it was rendered from, never gates access, and a missing one shows the kind placeholder (S35). |

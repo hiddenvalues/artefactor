@@ -118,6 +118,41 @@ describe("MCP artefact tools (S18)", () => {
     expect(text).toMatch(/Persisting data \(localStorage\)/);
   });
 
+  describe("thumbnails (S35)", () => {
+    function withQueue() {
+      const jobs: { id: string; payloadHash: string }[] = [];
+      deps = { ...deps, thumbnails: { enqueue: (job) => jobs.push(job) } };
+      return jobs;
+    }
+
+    it("create_artefact enqueues one render with the stored hash and reports no thumbnail yet", async () => {
+      const jobs = withQueue();
+      const client = await clientFor("u1");
+      const r = json(
+        await call(client, "create_artefact", { title: "T", kind: "prototype", html: "<h1>hi</h1>" }),
+      );
+      const stored = await deps.repo.findById(r.id, SINGLETON_SCOPE);
+      expect(jobs).toEqual([expect.objectContaining({ id: r.id, payloadHash: stored!.payloadHash })]);
+      expect(r.thumbnailUrl).toBeNull();
+    });
+
+    it("update_artefact enqueues on an HTML replace, and not for a title-only change", async () => {
+      const jobs = withQueue();
+      const client = await clientFor("u1");
+      const { id } = json(
+        await call(client, "create_artefact", { title: "T", kind: "prototype", html: "<h1>v1</h1>" }),
+      );
+      jobs.length = 0;
+
+      await call(client, "update_artefact", { id, title: "Renamed" });
+      expect(jobs).toEqual([]);
+
+      await call(client, "update_artefact", { id, html: "<h1>v2</h1>" });
+      const stored = await deps.repo.findById(id, SINGLETON_SCOPE);
+      expect(jobs).toEqual([expect.objectContaining({ id, payloadHash: stored!.payloadHash })]);
+    });
+  });
+
   it("create_artefact creates a private artefact owned by the caller", async () => {
     const client = await clientFor("u1");
     const r = json(

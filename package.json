@@ -36,6 +36,7 @@
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.27",
+    "playwright-core": "^1.63.0",
     "tailwind-merge": "^3.6.0",
     "tailwind-variants": "^3.2.2",
     "zod": "^4.4.3"

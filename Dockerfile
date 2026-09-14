@@ -43,11 +43,20 @@ ENV NODE_ENV=production \
     GIT_SHA=${GIT_SHA} \
     DATABASE_PATH=/data/artefactor.db \
     ARTEFACTOR_PAYLOAD_DIR=/data/payloads \
+    ARTEFACTOR_THUMBNAIL_DIR=/data/thumbnails \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     CLIENT_DIR=/app/dist/client \
     MIGRATIONS_DIR=/app/migrations \
     AUTHORING_GUIDE_PATH=/app/skills/artefactor/SKILL.md
 
 COPY --from=build /app/node_modules ./node_modules
+# S35 — headless Chromium (plus its system libraries) for artefact card
+# thumbnails. Installed as root into PLAYWRIGHT_BROWSERS_PATH and left readable
+# by everyone, so the unprivileged `node` user can launch it. Without it the app
+# still runs: cards fall back to the kind placeholder.
+RUN node node_modules/playwright-core/cli.js install --with-deps chromium-headless-shell \
+  && rm -rf /var/lib/apt/lists/* \
+  && chmod -R a+rX /ms-playwright
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/infra/db/migrations ./migrations
 # The authoring skill is served at runtime by the MCP `get_authoring_guide` tool
@@ -57,7 +66,8 @@ COPY --from=build /app/package.json ./package.json
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
 
-# SQLite DB file and artefact payloads must live on a persistent volume (Coolify).
+# SQLite DB file, artefact payloads and thumbnails must live on a persistent
+# volume (Coolify); the entrypoint's `chown -R /data` covers all three.
 VOLUME ["/data"]
 EXPOSE 3000
 

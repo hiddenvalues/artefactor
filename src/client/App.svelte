@@ -841,6 +841,30 @@
     uploadOpen = false;
     editing = null;
   }
+  // S35 — a new upload or HTML replace renders its thumbnail in the background.
+  // Watch that one artefact briefly (every 2 s, up to ~30 s) and swap the new
+  // preview into its card without a reload. `previous` is the URL the card had,
+  // so a replace waits for the new render rather than the one it replaces.
+  function watchThumbnail(id: string, previous: string | null) {
+    let attempts = 0;
+    const check = async () => {
+      attempts += 1;
+      try {
+        const latest = await api.getOwn(id);
+        if (latest.thumbnailUrl !== null && latest.thumbnailUrl !== previous) {
+          owned = owned.map((x) =>
+            x.id === id ? { ...x, thumbnailUrl: latest.thumbnailUrl } : x,
+          );
+          return;
+        }
+      } catch {
+        return; // gone or no longer ours — the card's own state stands
+      }
+      if (attempts < 15) setTimeout(check, 2000);
+    };
+    setTimeout(check, 2000);
+  }
+
   async function submitUpload(input: {
     title: string;
     kind: ArtefactKind;
@@ -850,14 +874,16 @@
     uploadError = null;
     try {
       if (editing) {
-        await api.update(editing.id, input);
+        const updated = await api.update(editing.id, input);
         toast.show("Changes saved", TOAST_ICONS.check);
+        if (input.file) watchThumbnail(updated.id, updated.thumbnailUrl);
       } else {
         const created = await api.create({
           title: input.title,
           kind: input.kind,
           file: input.file!,
         });
+        watchThumbnail(created.id, created.thumbnailUrl);
         // Uploading from a collection page you own or contribute to (CL12)
         // places the new artefact there: create-in = create + move-in, so the
         // usual invariants and the CL6 slug mint apply unchanged.

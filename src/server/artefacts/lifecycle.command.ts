@@ -9,7 +9,7 @@ import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
-import type { PayloadStore } from "../../domain/artefact/ports";
+import type { PayloadStore, ThumbnailStore } from "../../domain/artefact/ports";
 import { loadOwnActiveArtefact, loadOwnArtefact } from "./get-own-artefact";
 
 // Application commands for S7 — Archive / restore. Owner-only lifecycle moves;
@@ -35,6 +35,8 @@ export interface DeleteArtefactDeps {
   // S27 (BM4) — permanent delete also removes every user's bookmark of it.
   bookmarkRepo: BookmarkRepository;
   payloadStore: PayloadStore;
+  // S35 (AH11 amendment) — permanent delete also removes the thumbnail files.
+  thumbnailStore: ThumbnailStore;
 }
 
 // Archive an active artefact the caller owns (AH7). Non-owner / unknown /
@@ -85,6 +87,7 @@ export async function deleteArtefactCommand(
   });
   assertDeletable(existing);
   await deps.payloadStore.delete(existing.payloadRef);
+  await deps.thumbnailStore.deleteAll(existing.id); // AH11 (S35)
   await deps.dataRepo.deleteByArtefact(existing.id);
   await deps.viewRepo.deleteByArtefact(existing.id);
   await deps.bookmarkRepo.deleteByArtefact(existing.id); // BM4

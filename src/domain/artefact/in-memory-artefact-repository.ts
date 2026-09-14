@@ -2,6 +2,7 @@ import type { Artefact } from "./artefact";
 import type {
   ArtefactRepository,
   ListByOwnerOptions,
+  ThumbnailJob,
 } from "./artefact-repository";
 import type { TenantScope } from "./tenant-scope";
 
@@ -11,7 +12,28 @@ export class InMemoryArtefactRepository implements ArtefactRepository {
   private readonly store = new Map<string, Artefact>();
 
   async save(artefact: Artefact): Promise<void> {
-    this.store.set(artefact.id, { ...artefact });
+    // AH26 — a save never writes thumbnailHash; only recordThumbnail does.
+    const thumbnailHash = this.store.get(artefact.id)?.thumbnailHash ?? null;
+    this.store.set(artefact.id, { ...artefact, thumbnailHash });
+  }
+
+  async recordThumbnail(id: string, renderedHash: string): Promise<boolean> {
+    const found = this.store.get(id);
+    if (!found || found.payloadHash !== renderedHash) return false;
+    this.store.set(id, { ...found, thumbnailHash: renderedHash });
+    return true;
+  }
+
+  async listNeedingThumbnail(limit: number): Promise<ThumbnailJob[]> {
+    return [...this.store.values()]
+      .filter((a) => a.status === "active" && a.thumbnailHash !== a.payloadHash)
+      .slice(0, limit)
+      .map((a) => ({
+        id: a.id,
+        payloadRef: a.payloadRef,
+        payloadHash: a.payloadHash,
+        thumbnailHash: a.thumbnailHash,
+      }));
   }
 
   async delete(id: string): Promise<void> {

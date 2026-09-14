@@ -9,6 +9,7 @@ import { payloadUsesStorage } from "../../domain/artefact/uses-storage";
 import { InvariantViolation } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { PayloadStore } from "../../domain/artefact/ports";
+import { enqueueThumbnail, type ThumbnailQueue } from "../thumbnails/thumbnail-service";
 
 // Application command for S2 — Create artefact. Orchestrates the two ports the
 // pure domain factory cannot touch (the filesystem payload store and the
@@ -31,6 +32,8 @@ export interface CreateArtefactDeps {
   payloadStore: PayloadStore;
   newId?: () => string;
   now?: () => Date;
+  // S35 (AH25) — renders the thumbnail after the save; absent = none.
+  thumbnails?: ThumbnailQueue;
 }
 
 export async function createArtefactCommand(
@@ -51,8 +54,9 @@ export async function createArtefactCommand(
   }
 
   const stored = await deps.payloadStore.put(input.payload);
+  let artefact: Artefact;
   try {
-    const artefact = createArtefact({
+    artefact = createArtefact({
       id: (deps.newId ?? randomUUID)(),
       ownerId: input.ownerId,
       title: input.title,
@@ -63,11 +67,13 @@ export async function createArtefactCommand(
       now: (deps.now ?? (() => new Date()))(),
     });
     await deps.repo.save(artefact);
-    return artefact;
   } catch (err) {
     // Don't leak an orphaned payload file if the aggregate is rejected
     // (e.g. empty title) or persistence fails.
     await deps.payloadStore.delete(stored.ref).catch(() => {});
     throw err;
   }
+  // Outside the rollback: a thumbnail never blocks or fails the create (AH25).
+  enqueueThumbnail(deps.thumbnails, artefact);
+  return artefact;
 }

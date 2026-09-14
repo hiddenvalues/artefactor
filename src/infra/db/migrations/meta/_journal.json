@@ -64,6 +64,13 @@
       "when": 1789285109589,
       "tag": "0008_loose_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789391271553,
+      "tag": "0009_illegal_ted_forrester",
+      "breakpoints": true
     }
   ]
 }

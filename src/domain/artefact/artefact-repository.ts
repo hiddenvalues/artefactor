@@ -8,13 +8,33 @@ export interface ListByOwnerOptions {
   includeArchived?: boolean;
 }
 
+// S35 (AH26/AH17) — what the render sweep needs to (re)render one artefact's
+// thumbnail, and nothing more.
+export interface ThumbnailJob {
+  id: string;
+  payloadRef: string;
+  payloadHash: string;
+  thumbnailHash: string | null;
+}
+
 // Port: persistence for the Artefact aggregate. The Drizzle adapter (infra/db)
 // and the in-memory test double both implement this.
 export interface ArtefactRepository {
   // Persists the aggregate, including its `selected`-tier access list
   // (`sharedWith`) — the adapter syncs the membership set as part of the save
   // (S16, AH13/14). Reads (`findById`/`findBySlug`/`listByOwner`) populate it.
+  // `thumbnailHash` is never written by a save (AH26): a new row starts with
+  // none, and an update leaves the stored value as it is.
   save(artefact: Artefact): Promise<void>;
+  // S35 (AH26) — record a rendered thumbnail by compare-and-set: sets
+  // `thumbnailHash = renderedHash` only while the artefact's current
+  // `payloadHash` equals it, without bumping `updatedAt`. Returns whether it
+  // applied (false for a superseded render or an unknown id).
+  recordThumbnail(id: string, renderedHash: string): Promise<boolean>;
+  // S35 (AH17 note) — a **system** read for the render sweep, tenant-agnostic
+  // and never exposed through any API: up to `limit` active artefacts whose
+  // thumbnail is missing or stale.
+  listNeedingThumbnail(limit: number): Promise<ThumbnailJob[]>;
   // Permanently remove an artefact by id (AH11). Archived-only is enforced by
   // the delete command, not here. A no-op if the id does not exist.
   delete(id: string): Promise<void>;

@@ -50,6 +50,15 @@ prints the graph, the next build waves and the next free slice id). In-flight wo
   `If-Match` / `If-None-Match: *` → 412), plus `GET …/data/authors` and `GET …/data/:authorId`,
   which are access-matrix gated but **not** auth-gated (anonymous may read a `public`
   artefact's data). `GET /api/artefacts/:ref/viewers` lists who has viewed.
+- **Artefact thumbnails** (`src/server/thumbnails/`, `src/infra/render/`) — a derived 512×320
+  WebP per artefact for the dashboard and gallery cards, rendered server-side from the stored
+  payload alone (no bootstrap, no shell, no data) by a Playwright `chromium-headless-shell`
+  renderer at a synthetic origin, through an **in-process queue**: create / HTML replace enqueue
+  after the save and a startup sweep backfills, and a render is recorded only by a
+  compare-and-set against the current payload hash. Files live beside the payloads
+  (`ARTEFACTOR_THUMBNAIL_DIR`); `GET /api/artefacts/:ref/thumbnail` is signed-in only and
+  resolves like the download. `ARTEFACTOR_THUMBNAILS=off` (or no Chromium) leaves every card on
+  its kind placeholder and changes nothing else.
 - **Serving runtime** (`src/server/runtime/`) — `/a/:slug` is a server-rendered host **shell**
   (toolbar: data-context switcher, viewers, conflict banner) wrapping the artefact in an
   `<iframe>` at `/a/:slug/frame` (`?author=<id>` re-seeds another author's blob read-only). Both
@@ -245,6 +254,7 @@ pnpm db:studio                 # drizzle studio
 pnpm spec:dag [catalog]        # slice DAG → mermaid graph + build waves + next free id (default: core catalog)
 pnpm lint:md                   # markdownlint-cli2 over every tracked .md (.markdownlint-cli2.jsonc); CI gate
 pnpm lint:md:fix               # apply markdownlint's auto-fixes (over-long prose lines still rewrap by hand)
+pnpm exec playwright-core install chromium-headless-shell  # once per machine: thumbnails (else placeholders)
 
 # Identity (S1): regenerate BetterAuth's Drizzle tables after changing src/server/auth.ts
 # (e.g. the mcp/OIDC plugin tables added in S18), then re-run db:generate to emit the migration.

@@ -10,7 +10,7 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
-import type { PayloadStore } from "../../domain/artefact/ports";
+import type { PayloadStore, ThumbnailStore } from "../../domain/artefact/ports";
 import type { UserDirectory } from "../data/user-directory";
 import {
   createCollectionCommand,
@@ -49,6 +49,8 @@ export interface CollectionRoutesDeps {
   dataRepo: DataRepository;
   viewRepo: ViewRepository;
   payloadStore: PayloadStore;
+  // S35 (AH11 via CL8) — the delete cascade removes each artefact's thumbnails.
+  thumbnailStore: ThumbnailStore;
   userDirectory: UserDirectory;
   resolveScope: TenantScopeResolver;
 }

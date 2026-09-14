@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { ArtefactSummary } from "../../../shared/contracts";
   import {
-    kindMeta,
     fmtBytes,
     relativeTime,
     collectionColor,
@@ -13,6 +12,7 @@
   } from "../format";
   import { overlay } from "../ui.svelte";
   import Icon from "./Icon.svelte";
+  import CardThumbnail from "./CardThumbnail.svelte";
   import MoreMenu from "./MoreMenu.svelte";
   import VisibilityControl from "./VisibilityControl.svelte";
 
@@ -50,7 +50,6 @@
     showCollectionChip = true,
   }: Props = $props();
 
-  const m = $derived(kindMeta(a.kind));
   const inherited = $derived(a.collectionId !== null);
   // Link reachability follows the *effective* tier (AH20).
   const isShared = $derived(a.effectiveVisibility !== "private" && !!a.publicSlug);
@@ -63,25 +62,8 @@
      menu/visibility picker is open the card is raised above neighbours (z 50, beating
      the hover z 20) so the dropdown isn't clipped. -->
 <div class="af-card-grid" style={raised ? "z-index:50;" : ""}>
-  <!-- thumbnail — clickable upper half; opens the artefact like the title does -->
-  <button
-    type="button"
-    onclick={onOpen}
-    aria-label={`Open ${a.title}`}
-    style="position:relative;width:100%;height:108px;padding:0;display:flex;align-items:center;justify-content:center;background:{m.tint};--thumb-stripe:{m.color};border:none;border-bottom:1px solid var(--border);overflow:hidden;border-top-left-radius:12px;border-top-right-radius:12px;cursor:pointer;font-family:inherit;"
-  >
-    <div
-      style="position:absolute;inset:0;opacity:.5;background-image:repeating-linear-gradient(135deg, transparent 0 9px, var(--thumb-stripe) 9px 10px);"
-    ></div>
-    <Icon paths={m.icon} size={30} width={1.7} color={m.color} style="position:relative;" />
-    <span
-      style="position:absolute;top:9px;left:9px;display:inline-flex;align-items:center;padding:3px 8px;border-radius:7px;background:var(--card);color:{m.color};box-shadow:var(--shadow);"
-    >
-      <span style="font-family:'Geist Mono',monospace;font-size:10.5px;letter-spacing:0.02em;">
-        {m.label}
-      </span>
-    </span>
-    <span style="position:absolute;top:9px;right:9px;display:inline-flex;gap:5px;">
+  <CardThumbnail kind={a.kind} title={a.title} thumbnailUrl={a.thumbnailUrl} {onOpen}>
+    {#snippet chips()}
       {#if bookmarked}
         <span
           title="Bookmarked"
@@ -102,8 +84,8 @@
           <Icon paths={STORAGE_ICON} size={13} width={1.8} />
         </span>
       {/if}
-    </span>
-  </button>
+    {/snippet}
+  </CardThumbnail>
 
   <!-- body -->
   <div style="padding:13px 14px 12px;display:flex;flex-direction:column;gap:10px;">

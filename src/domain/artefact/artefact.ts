@@ -37,6 +37,11 @@ export interface Artefact {
   // Derived metadata, recomputed whenever the payload is set. Drives host chrome
   // (the S12 switcher) only — never access/serving.
   usesStorage: boolean;
+  // S35 (AH25/AH26): the `payloadHash` the recorded thumbnail was rendered from;
+  // null until the first render lands. Derived host chrome — never access or
+  // serving. Written only by the repository's `recordThumbnail` compare-and-set,
+  // never by `save`, so edits leave it untouched and it goes stale instead.
+  thumbnailHash: string | null;
   createdAt: Date;
   updatedAt: Date;
   archivedAt: Date | null;
@@ -90,6 +95,7 @@ export function createArtefact(input: CreateArtefactInput): Artefact {
     payloadBytes: input.payload.bytes,
     payloadHash: input.payload.hash,
     usesStorage: input.usesStorage ?? false,
+    thumbnailHash: null, // AH26 — rendered after the create is persisted
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
@@ -192,6 +198,12 @@ export function editArtefact(a: Artefact, changes: EditArtefactChanges): Artefac
   }
 
   return next;
+}
+
+// S35 (AH26): the thumbnail is stale — missing, or rendered from an earlier
+// payload — while its hash differs from the current payload's.
+export function isThumbnailStale(a: Artefact): boolean {
+  return a.thumbnailHash !== a.payloadHash;
 }
 
 // Archive (S7, AH7): soft-delete. The artefact becomes inert — not served, hidden

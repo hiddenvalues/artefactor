@@ -234,6 +234,9 @@ export const artefact = sqliteTable(
     usesStorage: integer("uses_storage", { mode: "boolean" })
       .notNull()
       .default(true),
+    // AH26 (S35): the payload_hash the recorded thumbnail was rendered from; NULL
+    // until the first render. Written only by the recordThumbnail compare-and-set.
+    thumbnailHash: text("thumbnail_hash"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
     archivedAt: integer("archived_at", { mode: "timestamp_ms" }),

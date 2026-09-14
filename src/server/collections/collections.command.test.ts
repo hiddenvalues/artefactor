@@ -20,6 +20,7 @@ import { resolveEffectiveViewable } from "./effective";
 import { canViewArtefact } from "../../domain/artefact/access";
 import { createArtefact, type Artefact } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
+import { InMemoryThumbnailStore } from "../../domain/artefact/in-memory-thumbnail-store";
 import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
 import { InMemoryBookmarkRepository } from "../../domain/bookmark/in-memory-bookmark-repository";
 import { InMemoryDataRepository } from "../../domain/data/in-memory-data-repository";
@@ -54,6 +55,7 @@ let bookmarkRepo: InMemoryBookmarkRepository;
 let dataRepo: InMemoryDataRepository;
 let viewRepo: InMemoryViewRepository;
 let payloadStore: FakePayloadStore;
+let thumbnailStore: InMemoryThumbnailStore;
 let slugCounter: number;
 
 beforeEach(() => {
@@ -63,6 +65,7 @@ beforeEach(() => {
   dataRepo = new InMemoryDataRepository();
   viewRepo = new InMemoryViewRepository();
   payloadStore = new FakePayloadStore();
+  thumbnailStore = new InMemoryThumbnailStore();
   slugCounter = 0;
 });
 
@@ -309,7 +312,7 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
     );
     const counts = await deleteCollectionCommand(
       { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
-      { collectionRepo, artefactRepo, dataRepo, viewRepo, payloadStore, bookmarkRepo },
+      { collectionRepo, artefactRepo, dataRepo, viewRepo, payloadStore, bookmarkRepo, thumbnailStore },
     );
     expect(counts).toEqual({ collections: 0, artefacts: 1, evicted: 0 });
     // ("mine" was already evicted by the archive cascade above.)
@@ -464,6 +467,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
       viewRepo,
       payloadStore,
       bookmarkRepo,
+      thumbnailStore,
     };
     await expect(
       deleteCollectionCommand(
@@ -474,6 +478,8 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
 
     await bookmarkRepo.addCollection(OWNER, child.id);
     await bookmarkRepo.addArtefact(OWNER, "a2");
+    await thumbnailStore.put("a1", "t1", new Uint8Array([1]));
+    await thumbnailStore.put("a2", "t2", new Uint8Array([2]));
     const now = new Date();
     await dataRepo.save({
       id: "d1", artefactId: "a2", authorId: OWNER, blob: "[1]", authoredAgainstVersion: null,
@@ -494,6 +500,8 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     expect(await artefactRepo.findById("a1", SCOPE)).toBeNull();
     expect(await artefactRepo.findById("a2", SCOPE)).toBeNull();
     expect(payloadStore.deleted.sort()).toEqual(["ref-a1", "ref-a2"]);
+    expect(thumbnailStore.hashesOf("a1")).toEqual([]); // AH11 via CL8 (S35)
+    expect(thumbnailStore.hashesOf("a2")).toEqual([]);
     expect(await dataRepo.findByArtefactAndAuthor("a2", OWNER)).toBeNull();
     const marks = await bookmarkRepo.listByUser(OWNER);
     expect(marks).toEqual({ artefactIds: [], collectionIds: [] });
