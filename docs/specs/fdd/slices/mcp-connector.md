@@ -153,6 +153,8 @@ quarter"), write the whole blob back.
   every `PUT` to the `updatedAt` it was seeded with / last saved (`seedUpdatedAt` inlined by
   `render.ts`), never overlaps saves (except the forced `pagehide` flush), and on 412 stops
   writing and posts `artefactor:data-conflict` to the parent.
+  *(Amended by S36: all of this moved to the host shell — the pin, the dirty-only and
+  no-overlap rules and the 412 handling. The shim only posts `artefactor:data-changed`.)*
 - **Host shell (amends S12)** — a signed-in-only banner ("changed elsewhere … Reload") revealed
   by that message, accepted only from its own same-origin frame; Reload re-seeds the current
   data context.
@@ -186,6 +188,9 @@ quarter"), write the whole blob back.
   data tests green; non-owner (even on a shared artefact) / unknown / archived / out-of-scope →
   not found; a tool-written blob — including one built from the declared schema's `example`
   into an empty entry — is what the served artefact's localStorage shim seeds.
+  *(Amended by S36: the idle-tab, pin, adopt, serialise and 412 criteria now hold for the host
+  shell, not the shim; the pin is the shell's `seedUpdatedAt` (from its render or a mint), not
+  inlined in the frame; the shell detects the 412 itself rather than receiving a message.)*
 - **On S19a/AD9 — sharpener, not dependency** (as S30). The write path stamps the pin for free
   once S19a exists, because it is the same `putOwnDataEntry`; S19a's own tests assert it
   (`set_artefact_data` stamps exactly as `PUT …/data/me` does, and this tool needed no change).

@@ -60,6 +60,8 @@
   **`/a/:slug/frame`** (`?author=<id>` selects the context). Both routes resolve the slug and
   apply the same access matrix (deny → 404). Splitting them keeps the switcher chrome
   *outside* the artefact container, exactly as AD §"Data context" requires.
+  *(Amended by S36: the context is named by a minted frame token (`?t=`), never `?author=`, and
+  the frame routes live in `routes/frame.ts`, where they read no cookies.)*
 - **Server-rendered, not the SPA.** `/a/:slug` is the shareable link and serves
   unauthenticated/public viewers who never load the Svelte SPA, so the shell + picker are
   server-rendered (inline JS that fetches `…/data/authors` and re-points the iframe). The
@@ -112,6 +114,9 @@
   `pagehide`/`visibilitychange` flush. Over-cap → `QuotaExceededError` (and the write is
   reverted); a read-only context throws on every write. The seed/config is inlined as JSON
   with `<` escaped so a blob can't break out of the `<script>`. No `window.ARTEFACTOR`.
+  *(Amended by S36: the shim no longer fetches. It posts `artefactor:data-changed` with the whole
+  blob to the host shell, which sends the pinned `PUT …/data/me` itself — `shellFrameJs` in
+  `runtime/shell.ts`.)*
 - **Injection** (`injectBootstrap`): placed right after `<head>` (else `<html>`, else
   prepended) so it runs before any artefact script. The artefact is unchanged.
 - **Seeding** (`runtime/render.ts`): on serve, the BFF loads the viewer's own `DataEntry` and
@@ -125,6 +130,9 @@
   globals (seeded reads, write-through PUT, debounce/pagehide flush, over-cap + read-only →
   `QuotaExceededError`) plus injection/escaping tests; integration tests assert the bootstrap
   is injected and seeded with the viewer's own data (read-write) vs anonymous (read-only).
+  *(Amended by S36: the shim tests assert the post to the shell and that it never fetches; the
+  write-through `PUT`, debounce-then-save and pagehide keepalive are tested on the shell, in
+  `runtime/shell.test.ts`.)*
 
 ### S17 — Data merge-patch
 
