@@ -19,8 +19,10 @@ RUN pnpm install --frozen-lockfile && pnpm approve-builds --all
 
 COPY . .
 RUN pnpm build
-# Drop dev dependencies but keep the compiled native modules.
-RUN pnpm prune --prod
+# Drop dev dependencies but keep the compiled native modules. `CI=true` is what
+# tells pnpm 11 it may purge node_modules unattended (without it the build stops
+# at ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY).
+RUN CI=true pnpm prune --prod
 
 # ---- runtime stage --------------------------------------------------------
 FROM node:26-bookworm-slim AS runtime
