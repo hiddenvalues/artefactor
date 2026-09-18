@@ -12,6 +12,7 @@ const ctx: HostShellContext = {
   kind: "form",
   updatedAt: "2026-09-12T10:00:00.000Z",
   frameUrl: "/a/slug1/frame?t=tok0",
+  channel: "chan-0",
   mintEndpoint: "/api/artefacts/slug1/frame-token",
   dataEndpoint: "/api/artefacts/slug1/data/me",
   seedUpdatedAt: "2026-09-12T09:00:00.000Z",
@@ -57,10 +58,14 @@ const saved = (updatedAt: string): FakeResponse => ({
   ok: true,
   json: async () => ({ blob: "{}", updatedAt }),
 });
-const minted = (frameUrl: string, seedUpdatedAt: string | null): FakeResponse => ({
+const minted = (
+  frameUrl: string,
+  seedUpdatedAt: string | null,
+  channel = "chan-minted",
+): FakeResponse => ({
   status: 200,
   ok: true,
-  json: async () => ({ frameUrl, seedUpdatedAt }),
+  json: async () => ({ frameUrl, seedUpdatedAt, channel }),
 });
 const PRECONDITION_FAILED: FakeResponse = {
   status: 412,
@@ -74,6 +79,7 @@ const frameCfg: ShellFrameConfig = {
   mintEndpoint: ctx.mintEndpoint,
   dataEndpoint: ctx.dataEndpoint,
   seedUpdatedAt: "2026-09-12T09:00:00.000Z",
+  channel: "chan-0",
 };
 
 // Evaluate the shell's frame controller with injected globals, as the shim tests
@@ -109,8 +115,8 @@ function runShell(
   )(window, document, fetch, TextEncoder) as { select: (authorId: string) => void };
 
   const fromFrame = (data: unknown) => listeners["message"]!({ source: contentWindow, origin: "null", data });
-  const changed = (blob: Record<string, string>) =>
-    fromFrame({ type: "artefactor:data-changed", blob: JSON.stringify(blob) });
+  const changed = (blob: Record<string, string>, channel = cfg.channel) =>
+    fromFrame({ type: "artefactor:data-changed", blob: JSON.stringify(blob), channel });
   const puts = () => fetch.mock.calls.filter(([, init]) => init.method === "PUT");
   const mints = () => fetch.mock.calls.filter(([url]) => url === cfg.mintEndpoint);
   return {
@@ -167,11 +173,44 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(h["If-Match"]).toBeUndefined();
   });
 
+  // S36 — `event.source` names the browsing context, not the document: the
+  // sandboxed frame may navigate itself, and what it navigates to keeps the same
+  // window. Only the document the shell's own frame URL loaded knows the channel.
+  it("ignores a change that carries no channel, or another document's", async () => {
+    const s = runShell(frameCfg);
+    s.fromFrame({ type: "artefactor:data-changed", blob: '{"a":"1"}' });
+    s.changed({ a: "1" }, "chan-someone-else");
+    s.changed({ a: "1" }, null);
+    await settle();
+    expect(s.fetch).not.toHaveBeenCalled();
+  });
+
+  it("after a re-mint, the previous document's channel no longer saves", async () => {
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint
+        ? minted("/a/slug1/frame?t=fresh", "2026-09-12T09:00:00.000Z", "chan-1")
+        : saved("2026-09-12T12:00:00.000Z"),
+    );
+    s.fromFrame({ type: "artefactor:frame-token-expired" });
+    await settle();
+    await settle();
+    expect(s.frame.src).toBe("/a/slug1/frame?t=fresh");
+
+    s.changed({ a: "1" }, "chan-0");
+    await settle();
+    expect(s.puts()).toHaveLength(0);
+
+    s.changed({ a: "1" }, "chan-1");
+    await settle();
+    expect(s.puts()).toHaveLength(1);
+  });
+
   it("a message never chooses the URL: extra fields are ignored", async () => {
     const s = runShell(frameCfg);
     s.fromFrame({
       type: "artefactor:data-changed",
       blob: "{}",
+      channel: frameCfg.channel,
       endpoint: "/api/artefacts/other/visibility",
       author: "u2",
     });
@@ -278,7 +317,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.frame.src).toBe("/a/slug1/frame?t=tok1");
     expect(s.conflict.hidden).toBe(true);
 
-    s.changed({ a: "after-reload" });
+    s.changed({ a: "after-reload" }, "chan-minted");
     await settle();
     expect(s.puts()).toHaveLength(2);
     expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T11:00:00.000Z"');
@@ -314,7 +353,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     await settle();
     await settle();
     expect(s.frame.src).toBe("/a/slug1/frame?t=own");
-    s.changed({ a: "1" });
+    s.changed({ a: "1" }, "chan-minted");
     await settle();
     expect(headersOf(s.puts()[0]![1])["If-Match"]).toBe('"2026-09-12T13:00:00.000Z"');
   });

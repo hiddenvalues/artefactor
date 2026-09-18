@@ -538,14 +538,15 @@ amendments: `ddd/artefact-hosting.md` AH28, `ddd/artefact-data.md` AD10,
   `sandbox` (plus `allow="clipboard-write; fullscreen"`), and every frame response carries them as
   `Content-Security-Policy: sandbox …` with `Referrer-Policy: no-referrer`.
 - **Frame token** *(AD10)* — stateless HMAC-SHA256 over `artefactId`, `route`, `viewerId`,
-  `authorId`, `exp` (+ `tenantId` on a `raw` token), 5-minute TTL. The shell render embeds a
+  `authorId`, `exp` (+ `tenantId` on a `raw` token), 5-minute TTL, plus a derived **channel**
+  binding the frame's messages to the document that token loaded. The shell render embeds a
   tokened frame URL; `POST /api/artefacts/:ref/frame-token` mints another. Frame routes read only
   `?t=` (never cookies), re-run the route's access check at every redeem, and answer an expired
   token with a sandboxed page that asks the shell to re-mint.
 - **Persistence through the shell** *(AD10, S31)* — the shim posts
   `artefactor:data-changed` to the parent and never fetches; the shell accepts it only from its
-  frame's window while in the viewer's own context, and owns the pin, the no-overlap rule, the
-  412 → conflict banner and the `pagehide` keepalive.
+  frame's window, carrying that frame URL's channel, while in the viewer's own context, and owns
+  the pin, the no-overlap rule, the 412 → conflict banner and the `pagehide` keepalive.
 - **CSRF backstop** *(IA6)* — `/api/*` state changes (not `/api/auth/*`) with an untrusted
   `Origin` or a non-`same-origin` `Sec-Fetch-Site` → 403.
 - **Content origin** *(AH28)* — optional `ARTEFACTOR_CONTENT_ORIGIN`, validated at startup as a
@@ -570,13 +571,15 @@ amendments: `ddd/artefact-hosting.md` AH28, `ddd/artefact-data.md` AD10,
   artefact, or a `raw` token on a slug frame → 404. Revoking access (visibility → private) makes a
   still-unexpired token 404. An expired token → the expired page, seeding nothing.
 - **Mint.** `POST /api/artefacts/:ref/frame-token` → 401 anonymous, 404 for a viewer the matrix
-  denies, 200 `{ frameUrl, seedUpdatedAt }` for a viewer by slug and for the owner by id, with
-  `author` honoured. The shell render embeds a tokened frame URL for a signed-in viewer and a
-  token-less one for an anonymous viewer.
-- **Shim.** A `setItem` posts one `data-changed` with the whole blob to the parent at the app
+  denies, 200 `{ frameUrl, channel, seedUpdatedAt }` for a viewer by slug and for the owner by id,
+  with `author` honoured; the channel is the one inlined in the frame that URL loads. The shell
+  render embeds a tokened frame URL for a signed-in viewer and a token-less one for an anonymous
+  viewer.
+- **Shim.** A `setItem` posts one `data-changed` with the whole blob and its channel to the app
   origin after the debounce and never fetches; idle posts nothing; read-only throws
   `QuotaExceededError` and posts nothing; over-cap still throws.
-- **Shell.** A message from another source, or from the frame in an author context → no request.
+- **Shell.** A message from another source, from the frame in an author context, or without the
+  channel of the frame URL the shell loaded → no request.
   From the frame in own context → one `PUT` to the fixed endpoint with `If-None-Match: *`
   (unseeded) or `If-Match: "<seedUpdatedAt>"`, and the next pins the returned `updatedAt`. A
   change during an in-flight save goes after it, with the new pin, carrying only the latest blob.

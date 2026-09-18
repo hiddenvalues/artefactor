@@ -752,6 +752,7 @@ describe("MCP artefact tools (S18)", () => {
       const artefact = (await deps.repo.findById(a.id, SINGLETON_SCOPE))!;
       const served = await renderServedArtefact(artefact, "u1", deps, {
         targetOrigin: "http://localhost:3000",
+        channel: "chan",
       });
       expect(served).toContain(`"seed":${JSON.stringify(blob).replace(/</g, "\\u003c")}`);
       // S36 — the reloaded tab's shell pins its own later saves to the entry's

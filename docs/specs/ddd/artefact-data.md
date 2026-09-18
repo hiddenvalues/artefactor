@@ -374,10 +374,21 @@ authenticated by a frame token, never by cookies inside the frame.**
   `{ type: "artefactor:data-changed", blob }` to `window.parent` with `targetOrigin` = the app
   origin. An idle tab posts nothing. It never calls `fetch`.
 - **The shell decides.** It accepts a message only when `event.source === frame.contentWindow`
-  (there is no origin to check: the frame's is `"null"`), and only while its context is the
-  viewer's own (signed in, no author selected). The endpoint is fixed by the shell: a message
+  (there is no origin to check: the frame's is `"null"`), only when the message carries the
+  **channel** of the frame URL the shell loaded, and only while its context is the viewer's own
+  (signed in, no author selected). The endpoint is fixed by the shell: a message
   never chooses the artefact, the author or the URL. The shell posts nothing to the frame, and
   the frame receives no data it wasn't already seeded with.
+- **Channel — a message is bound to a document, not to a window.** `event.source` names the
+  browsing context: a sandboxed frame may navigate itself, and whatever it navigates to keeps the
+  same `WindowProxy`. So each frame token also derives a **channel** (HMAC under its own label),
+  inlined in that document's shim config and returned to the shell with the frame URL that minted
+  it. The shell saves a change only when the message carries the channel of the frame URL it
+  loaded, so a page the frame navigated itself to cannot forge one: frame responses are
+  `Referrer-Policy: no-referrer`, so neither the frame URL nor its token travels with the
+  navigation. A re-mint (author switch, conflict reload, expiry) replaces the channel, so the
+  previous document can no longer save. An anonymous, token-less frame has no channel; it is
+  read-only and never posts.
 - **Frame token.** A stateless HMAC-SHA256 token (key derived from `BETTER_AUTH_SECRET` under its
   own label, so it is never the session key), base64url, with claims `artefactId`, `route`
   (`slug` | `raw`), `viewerId` (or null), `authorId` (null = the viewer's own context), `exp`,
@@ -386,7 +397,7 @@ authenticated by a frame token, never by cookies inside the frame.**
 - **Mint.** The shell's server render (`/a/:slug`, `/api/artefacts/:id/raw`) embeds a first
   tokened frame URL for a signed-in viewer; an anonymous viewer gets a token-less one.
   `POST /api/artefacts/:ref/frame-token` (signed in; `:ref` = slug or id; body
-  `{ author?: string }`) returns `{ frameUrl, seedUpdatedAt }` for switching author or
+  `{ author?: string }`) returns `{ frameUrl, channel, seedUpdatedAt }` for switching author or
   refreshing. A slug ref is gated by the access matrix like `…/data/authors` and mints a `slug`
   token; an id ref is the owner preview, gated like `/:id/raw` (own, active, in scope), and
   mints a `raw` token. Anything else is a flat 404 (AH8).
@@ -402,6 +413,7 @@ authenticated by a frame token, never by cookies inside the frame.**
   mints a fresh URL for its current context and reloads the frame, which is what keeps an
   in-artefact `location.reload()` working after five minutes.
 
-A token in a frame URL is readable by the artefact it seeds. It grants nothing that artefact
-didn't already hold: the seeded data of that one context, for five minutes, read-only unless it is
-the viewer's own.
+A token in a frame URL, and the channel derived from it, are readable by the artefact it seeds.
+They grant nothing that artefact didn't already hold: the seeded data of that one context, for five
+minutes, read-only unless it is the viewer's own — and writing its own entry is what the shim does
+anyway.

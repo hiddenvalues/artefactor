@@ -12,7 +12,7 @@ import type { DataRepository } from "../../domain/data/data-repository";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import { resolveEffectiveViewable } from "../collections/effective";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
-import { verifyFrameToken, type FrameTokenClaims } from "../runtime/frame-token";
+import { frameChannel, verifyFrameToken, type FrameTokenClaims } from "../runtime/frame-token";
 import { frameTargetOrigin, type Framing } from "../runtime/framing";
 import { renderExpiredFramePage, renderServedArtefact } from "../runtime/render";
 import { frameSecurityHeaders } from "../runtime/sandbox";
@@ -57,6 +57,8 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
       viewerId: null,
       authorId: null,
     };
+    // An anonymous frame is read-only and never posts, so it has no channel.
+    let channel: string | null = null;
     if (token !== undefined) {
       const verdict = verifyFrameToken(token, deps.framing.secret, deps.framing.now());
       if (
@@ -69,6 +71,7 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
       }
       if (verdict.status === "expired") return expired(c);
       claims = verdict.claims;
+      channel = frameChannel(token, deps.framing.secret);
     }
     if (
       !artefact ||
@@ -80,7 +83,7 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
     ) {
       return c.notFound();
     }
-    return serve(c, artefact, claims);
+    return serve(c, artefact, claims, channel);
   });
 
   // The owner preview: token only, and only its owner, active, in the tenant
@@ -106,7 +109,7 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
         ownerId: verdict.claims.viewerId,
         scope: { tenantId: verdict.claims.tenantId },
       });
-      return serve(c, artefact, verdict.claims);
+      return serve(c, artefact, verdict.claims, frameChannel(token, deps.framing.secret));
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
       throw err;
@@ -117,10 +120,12 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
     c: Context,
     artefact: Artefact,
     claims: Pick<FrameTokenClaims, "viewerId" | "authorId">,
+    channel: string | null,
   ) {
     const html = await renderServedArtefact(artefact, claims.viewerId, deps, {
       authorId: claims.authorId,
       targetOrigin: frameTargetOrigin(deps.framing, c.req.url),
+      channel,
     });
     return c.html(html);
   }

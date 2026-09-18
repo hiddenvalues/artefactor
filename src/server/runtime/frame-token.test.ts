@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FRAME_TOKEN_TTL_MS,
+  frameChannel,
   signFrameToken,
   verifyFrameToken,
   type FrameTokenClaims,
@@ -87,6 +88,25 @@ describe("frame token (S36)", () => {
   it("reports a signed token past its exp as expired, not invalid", () => {
     const token = signFrameToken({ ...claims, exp: NOW - 1 }, SECRET);
     expect(verifyFrameToken(token, SECRET, NOW)).toEqual({ status: "expired", claims: { ...claims, exp: NOW - 1 } });
+  });
+
+  // S36 — the channel binds a frame's messages to the document the token loaded,
+  // so a page the frame navigated itself to can't forge a data change.
+  describe("frame channel", () => {
+    const token = signFrameToken(claims, SECRET);
+
+    it("is derived from the token, deterministically", () => {
+      expect(frameChannel(token, SECRET)).toBe(frameChannel(token, SECRET));
+      expect(frameChannel(token, SECRET)).toMatch(/^[A-Za-z0-9_-]{16,}$/);
+    });
+
+    it("differs per token and per secret, and is not the token or its signature", () => {
+      const other = signFrameToken({ ...claims, exp: claims.exp + 1 }, SECRET);
+      const channel = frameChannel(token, SECRET);
+      expect(channel).not.toBe(frameChannel(other, SECRET));
+      expect(channel).not.toBe(frameChannel(token, "another-secret-of-sufficient-length!!"));
+      expect(token).not.toContain(channel);
+    });
   });
 
   it("never signs with the raw secret itself (a derived key)", async () => {

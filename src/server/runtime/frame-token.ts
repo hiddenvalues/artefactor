@@ -34,6 +34,7 @@ export type FrameTokenVerdict =
   | { status: "invalid" };
 
 const KEY_LABEL = "artefactor/frame-token/v1";
+const CHANNEL_LABEL = "artefactor/frame-channel/v1";
 
 function derivedKey(secret: string): Buffer {
   return createHmac("sha256", secret).update(KEY_LABEL).digest();
@@ -46,6 +47,22 @@ function mac(payload: string, secret: string): Buffer {
 export function signFrameToken(claims: FrameTokenClaims, secret: string): string {
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${payload}.${mac(payload, secret).toString("base64url")}`;
+}
+
+// S36 (AD10) — the frame's message channel: a value derived from its token, given
+// to that document only (inlined in its shim config) and to the shell (with the
+// frame URL that minted it). The shell accepts `artefactor:data-changed` only
+// when it carries the channel of the frame URL it loaded.
+//
+// `event.source === frame.contentWindow` identifies the browsing context, not the
+// document in it: a sandboxed frame may navigate itself, and a page it navigated
+// to keeps the same `WindowProxy`. That page never learns the channel — frame
+// responses are `Referrer-Policy: no-referrer`, so the frame URL (and its token)
+// don't travel with the navigation.
+export function frameChannel(token: string, secret: string): string {
+  return createHmac("sha256", createHmac("sha256", secret).update(CHANNEL_LABEL).digest())
+    .update(token)
+    .digest("base64url");
 }
 
 export function verifyFrameToken(

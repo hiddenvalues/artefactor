@@ -11,7 +11,7 @@ import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
 import { recordArtefactView } from "../views/views.command";
 import { renderHostShell } from "../runtime/shell";
-import { frameUrl, type Framing } from "../runtime/framing";
+import { frameUrl, mintFrame, type Framing } from "../runtime/framing";
 import {
   createAttachSession,
   type AuthEnv,
@@ -97,18 +97,20 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
     const own = viewerId
       ? await deps.dataRepo.findByArtefactAndAuthor(artefact.id, viewerId)
       : null;
+    const minted = viewerId
+      ? mintFrame(deps.framing, "slug", slug, {
+          artefactId: artefact.id,
+          viewerId,
+          authorId: null,
+        })
+      : null;
     return c.html(
       renderHostShell({
         title: artefact.title,
         kind: artefact.kind,
         updatedAt: artefact.updatedAt.toISOString(),
-        frameUrl: viewerId
-          ? frameUrl(deps.framing, "slug", slug, {
-              artefactId: artefact.id,
-              viewerId,
-              authorId: null,
-            })
-          : frameUrl(deps.framing, "slug", slug),
+        frameUrl: minted?.frameUrl ?? frameUrl(deps.framing, "slug", slug),
+        channel: minted?.channel ?? null,
         mintEndpoint: `/api/artefacts/${encodeURIComponent(slug)}/frame-token`,
         dataEndpoint: `/api/artefacts/${encodeURIComponent(slug)}/data/me`,
         seedUpdatedAt: own?.updatedAt.toISOString() ?? null,

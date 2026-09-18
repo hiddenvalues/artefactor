@@ -28,6 +28,11 @@ export interface BootstrapContext {
   // The app origin the host shell runs on — the `targetOrigin` changes are posted
   // to, so a frame embedded anywhere else never hands its data over.
   targetOrigin: string;
+  // S36 — this document's message channel (derived from its frame token, see
+  // `frame-token.ts`). Sent with every change so the shell can tell this
+  // document from one the frame navigated itself to. Null when there is no
+  // token (an anonymous, read-only frame, which never posts).
+  channel: string | null;
   // The blob byte cap; an over-cap write throws QuotaExceededError.
   maxBytes: number;
   // Debounce window before a change is posted, in ms.
@@ -42,6 +47,7 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
     seed: ctx.seedBlob,
     writable: ctx.writable,
     targetOrigin: ctx.targetOrigin,
+    channel: ctx.channel,
     maxBytes: ctx.maxBytes,
     debounceMs: ctx.debounceMs ?? 600,
   };
@@ -67,7 +73,7 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
     if (!cfg.writable || !dirty) return;
     dirty = false;
     try {
-      window.parent.postMessage({ type: "artefactor:data-changed", blob: serialize() }, cfg.targetOrigin);
+      window.parent.postMessage({ type: "artefactor:data-changed", blob: serialize(), channel: cfg.channel }, cfg.targetOrigin);
     } catch (e) {}
   }
   function schedule(){

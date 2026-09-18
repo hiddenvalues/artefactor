@@ -122,6 +122,9 @@ export interface DataEntryResponse {
 // entry's `updatedAt` (null when none), the pin of the shell's next own save.
 export interface FrameTokenResponse {
   frameUrl: string;
+  // The message channel of the document that frame URL loads: the shell saves a
+  // change only when the message carries it (AD10).
+  channel: string;
   seedUpdatedAt: string | null;
 }
 

@@ -10,7 +10,7 @@ import type { CollectionRepository } from "../../domain/collection/collection-re
 import type { DataRepository } from "../../domain/data/data-repository";
 import { resolveEffectiveViewable } from "../collections/effective";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
-import { frameUrl, type Framing } from "../runtime/framing";
+import { mintFrame, type Framing, type MintedFrame } from "../runtime/framing";
 import { ownerId, requireAuth, type AuthEnv } from "../middleware/auth";
 import type { TenantScopeResolver } from "../middleware/tenant-scope";
 import type { FrameTokenResponse } from "../../shared/contracts";
@@ -49,7 +49,7 @@ export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
     const authorId = body.author && body.author !== viewerId ? body.author : null;
 
     const bySlug = await deps.artefactRepo.findBySlug(ref);
-    let url: string;
+    let minted: MintedFrame;
     let artefactId: string;
     if (bySlug) {
       const viewable = await canViewArtefactUnder(
@@ -59,7 +59,7 @@ export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
       );
       if (!viewable) return c.notFound();
       artefactId = bySlug.id;
-      url = frameUrl(deps.framing, "slug", ref, { artefactId, viewerId, authorId });
+      minted = mintFrame(deps.framing, "slug", ref, { artefactId, viewerId, authorId });
     } else {
       const scope = await deps.resolveScope(c);
       try {
@@ -73,7 +73,7 @@ export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
         if (err instanceof ArtefactNotFound) return c.notFound();
         throw err;
       }
-      url = frameUrl(deps.framing, "raw", artefactId, {
+      minted = mintFrame(deps.framing, "raw", artefactId, {
         artefactId,
         viewerId,
         authorId,
@@ -83,7 +83,8 @@ export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
 
     const entry = await deps.dataRepo.findByArtefactAndAuthor(artefactId, authorId ?? viewerId);
     return c.json<FrameTokenResponse>({
-      frameUrl: url,
+      frameUrl: minted.frameUrl,
+      channel: minted.channel,
       seedUpdatedAt: entry?.updatedAt.toISOString() ?? null,
     });
   });

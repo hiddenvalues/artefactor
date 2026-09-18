@@ -16,6 +16,9 @@ export interface ServeRenderOptions {
   authorId?: string | null;
   // S36 — the app origin the shim posts its changes to (the host shell's).
   targetOrigin: string;
+  // S36 — this document's message channel, from its frame token; null for an
+  // anonymous, token-less frame (read-only, so it never posts).
+  channel: string | null;
 }
 
 // Produce the HTML for a served artefact (S13): its trusted payload with the
@@ -45,6 +48,7 @@ export async function renderServedArtefact(
     seedBlob: entry?.blob ?? "{}",
     writable,
     targetOrigin: options.targetOrigin,
+    channel: options.channel,
     maxBytes: MAX_BLOB_BYTES,
   });
 }

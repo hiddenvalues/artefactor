@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 import type { ArtefactSummary } from "../shared/contracts";
 import { FRAME_SANDBOX_FLAGS } from "./runtime/sandbox";
-import { signFrameToken, verifyFrameToken } from "./runtime/frame-token";
+import { frameChannel, signFrameToken, verifyFrameToken } from "./runtime/frame-token";
 import { mintFrameToken, openFrame, type MintedFrame } from "../test/frame";
 
 // S36 — Isolated artefact serving: sandboxed frame, frame token, optional content
@@ -78,6 +78,7 @@ describe("isolated artefact serving (S36)", () => {
       seed: string;
       writable: boolean;
       targetOrigin: string;
+      channel: string | null;
     };
   const iframeTag = (body: string) => body.match(/<iframe[^>]*>/)![0];
   const shellCfg = (body: string) =>
@@ -334,6 +335,34 @@ describe("isolated artefact serving (S36)", () => {
       const cfg = shellCfg(body);
       expect(cfg.frameUrl).toMatch(new RegExp(`^/api/artefacts/${a.id}/raw/frame\\?t=`));
       expect((await app.request(cfg.frameUrl)).status).toBe(200);
+    });
+
+    // S36 — the shell accepts a change only when it carries the channel of the
+    // frame URL it loaded, so a page the frame navigated itself to (same window,
+    // no channel) can't forge one.
+    it("binds the frame to its shell: the mint's channel is the one inlined in that frame", async () => {
+      const a = await makeArtefact("authenticated");
+      const minted = await mint(a.publicSlug!, otherCookie);
+      expect(minted.channel).toBe(frameChannel(tokenOf(minted.frameUrl), SECRET));
+      expect(shimCfg(await (await app.request(minted.frameUrl)).text()).channel).toBe(
+        minted.channel,
+      );
+    });
+
+    it("gives each frame URL its own channel, and an anonymous frame none", async () => {
+      const a = await makeArtefact("public");
+      const first = await mint(a.publicSlug!, ownerCookie);
+      const second = await mint(a.publicSlug!, otherCookie);
+      expect(second.channel).not.toBe(first.channel);
+      const anon = await (await app.request(`/a/${a.publicSlug}/frame`)).text();
+      expect(shimCfg(anon).channel).toBeNull();
+    });
+
+    it("the shell render's channel matches its embedded frame URL", async () => {
+      const a = await makeArtefact("authenticated");
+      const body = await (await app.request(`/a/${a.publicSlug}`, { headers: { cookie: otherCookie } })).text();
+      const cfg = shellCfg(body) as unknown as { frameUrl: string; channel: string };
+      expect(cfg.channel).toBe(frameChannel(tokenOf(cfg.frameUrl), SECRET));
     });
 
     it("the shim posts to the app origin", async () => {

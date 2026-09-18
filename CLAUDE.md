@@ -73,7 +73,8 @@ prints the graph, the next build waves and the next free slice id). In-flight wo
   (`?t=`, viewer + author + route) that the shell render embeds and
   `POST /api/artefacts/:ref/frame-token` re-mints (author switch, reload, expiry), and they
   re-check access at every redeem. Both serving paths inject a seeded `localStorage` shim, so
-  artefacts persist with zero code changes; the shim **posts each change to the shell**, which
+  artefacts persist with zero code changes; the shim **posts each change to the shell** (carrying
+  the token-derived **channel**, so a page the frame navigated itself to can't forge one), which
   saves it under the viewer's session — writing only on change, pinned, never overlapping, and on
   a 412 it stops and offers a reload, so an open tab can neither block nor silently revert another
   writer. Optional `ARTEFACTOR_CONTENT_ORIGIN` serves frames from a separate registrable domain

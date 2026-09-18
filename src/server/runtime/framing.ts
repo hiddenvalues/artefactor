@@ -1,4 +1,9 @@
-import { FRAME_TOKEN_TTL_MS, signFrameToken, type FrameTokenClaims } from "./frame-token";
+import {
+  FRAME_TOKEN_TTL_MS,
+  frameChannel,
+  signFrameToken,
+  type FrameTokenClaims,
+} from "./frame-token";
 
 // S36 (AH28, AD10, IA6) — where frames live and who may talk to the API.
 //
@@ -58,21 +63,33 @@ export function framePath(route: "slug" | "raw", ref: string): string {
     : `/api/artefacts/${encodeURIComponent(ref)}/raw/frame`;
 }
 
-// A frame URL: on the content origin when there is one (absolute), else on the
-// app host (relative). With claims it carries a freshly minted token.
-export function frameUrl(
+// A token-less frame URL (an anonymous, read-only frame): on the content origin
+// when there is one (absolute), else on the app host (relative).
+export function frameUrl(framing: Framing, route: "slug" | "raw", ref: string): string {
+  return `${framing.contentOrigin ?? ""}${framePath(route, ref)}`;
+}
+
+// S36 — a freshly tokened frame URL and the message channel of the document it
+// will load: what the shell needs to load a frame and to accept its changes.
+export interface MintedFrame {
+  frameUrl: string;
+  channel: string;
+}
+
+export function mintFrame(
   framing: Framing,
   route: "slug" | "raw",
   ref: string,
-  claims?: Omit<FrameTokenClaims, "exp" | "route">,
-): string {
-  const base = `${framing.contentOrigin ?? ""}${framePath(route, ref)}`;
-  if (!claims) return base;
+  claims: Omit<FrameTokenClaims, "exp" | "route">,
+): MintedFrame {
   const token = signFrameToken(
     { ...claims, route, exp: framing.now() + FRAME_TOKEN_TTL_MS },
     framing.secret,
   );
-  return `${base}?t=${token}`;
+  return {
+    frameUrl: `${frameUrl(framing, route, ref)}?t=${token}`,
+    channel: frameChannel(token, framing.secret),
+  };
 }
 
 // The origin a frame's shim posts its changes to: the shell's. With a content

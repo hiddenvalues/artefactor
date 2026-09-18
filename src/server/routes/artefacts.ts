@@ -34,7 +34,7 @@ import {
   CollectionNotFound,
 } from "../../domain/collection/errors";
 import { renderHostShell } from "../runtime/shell";
-import { frameUrl, type Framing } from "../runtime/framing";
+import { mintFrame, type Framing } from "../runtime/framing";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { DataRepository } from "../../domain/data/data-repository";
@@ -157,6 +157,14 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
       });
       const scope = await deps.resolveScope(c);
       const own = await deps.dataRepo.findByArtefactAndAuthor(artefact.id, ownerId(c));
+      // S36 — the owner preview's frame opens on a `raw` token carrying the
+      // tenant scope this read ran under.
+      const minted = mintFrame(deps.framing, "raw", artefact.id, {
+        artefactId: artefact.id,
+        viewerId: ownerId(c),
+        authorId: null,
+        tenantId: scope.tenantId,
+      });
       return c.html(
         renderHostShell({
           title: artefact.title,
@@ -164,12 +172,8 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           updatedAt: artefact.updatedAt.toISOString(),
           // S36 — the owner preview's frame opens on a `raw` token carrying the
           // tenant scope this read ran under.
-          frameUrl: frameUrl(deps.framing, "raw", artefact.id, {
-            artefactId: artefact.id,
-            viewerId: ownerId(c),
-            authorId: null,
-            tenantId: scope.tenantId,
-          }),
+          frameUrl: minted.frameUrl,
+          channel: minted.channel,
           mintEndpoint: `/api/artefacts/${encodeURIComponent(artefact.id)}/frame-token`,
           dataEndpoint: `/api/artefacts/${encodeURIComponent(artefact.id)}/data/me`,
           seedUpdatedAt: own?.updatedAt.toISOString() ?? null,

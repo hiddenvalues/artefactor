@@ -36,6 +36,9 @@ export interface HostShellContext {
   // token-less for an anonymous viewer; absolute when frames live on a content
   // origin.
   frameUrl: string;
+  // S36 — that frame URL's message channel (null for an anonymous, token-less
+  // frame): what the shell requires on a change before it saves it.
+  channel: string | null;
   // S36 — `POST …/frame-token`: a fresh frame URL for another author, a reload,
   // or an expired token.
   mintEndpoint: string;
@@ -67,6 +70,9 @@ export interface ShellFrameConfig {
   mintEndpoint: string;
   dataEndpoint: string;
   seedUpdatedAt: string | null;
+  // S36 — the message channel of the frame URL above (null for an anonymous,
+  // token-less frame): what the shell requires on every change it saves.
+  channel: string | null;
 }
 
 // Chrome caps a keepalive request's body (64 KiB across in-flight ones); a larger
@@ -81,8 +87,10 @@ const KEEPALIVE_MAX_BYTES = 60 * 1024;
 // It loads the frame, mints fresh frame URLs (author switch, conflict reload,
 // expired token), and saves the viewer's own data under the S31 discipline: it
 // accepts `artefactor:data-changed` only when `event.source` is its frame's
-// window (the frame's origin is "null", so there is no origin to check) and only
-// in the viewer's own context; the endpoint is fixed here, never taken from a
+// window (the frame's origin is "null", so there is no origin to check), only
+// when the message carries the **channel** of the frame URL it loaded — so a page
+// the frame navigated itself to, which keeps the same window but never learns the
+// channel, can't forge a change — and only in the viewer's own context; the endpoint is fixed here, never taken from a
 // message; each PUT is pinned (`If-Match`, or `If-None-Match: *` with no entry);
 // saves never overlap (the latest blob waits); a 412 stops all writing and shows
 // the conflict banner. It posts nothing to the frame.
@@ -99,6 +107,7 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
   if (!cfg.viewerId) return { select: function(){} };
 
   var conflict = document.getElementById("ae-conflict");
+  var channel = cfg.channel;  // the loaded frame document's message channel
   var author = null;          // null = the viewer's own data
   var pin = cfg.seedUpdatedAt;
   var pending = null;         // the latest blob not yet sent
@@ -120,6 +129,7 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
       // The context changes only once its frame is really loading: a failed
       // mint leaves the current frame, and its saves, as they were.
       author = target;
+      channel = typeof d.channel === "string" ? d.channel : null;
       if (reseed && target === null) {
         gen++;
         pin = d.seedUpdatedAt || null;
@@ -177,6 +187,8 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
     if (!d || typeof d !== "object") return;
     if (d.type === "artefactor:data-changed") {
       if (author !== null || typeof d.blob !== "string") return;
+      // Only the document the current frame URL loaded knows this.
+      if (!channel || d.channel !== channel) return;
       pending = d.blob;
       // A change that arrives while the shell itself is unloading goes out now,
       // with keepalive — there is no later.
@@ -347,6 +359,7 @@ export function renderHostShell(ctx: HostShellContext): string {
     mintEndpoint: ctx.mintEndpoint,
     dataEndpoint: ctx.dataEndpoint,
     seedUpdatedAt: ctx.seedUpdatedAt,
+    channel: ctx.channel,
   })};
 
   // Anonymous viewers get no host tools (data-context switcher / future

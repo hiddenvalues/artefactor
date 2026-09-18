@@ -10,6 +10,7 @@ const baseCtx: BootstrapContext = {
   seedBlob: '{"greeting":"hi"}',
   writable: true,
   targetOrigin: "https://artefactor.test",
+  channel: "chan-abc",
   maxBytes: 5 * 1024 * 1024,
 };
 
@@ -65,7 +66,7 @@ function runShim(ctx: BootstrapContext) {
 }
 
 const changed = (blob: Record<string, string>) => [
-  { type: "artefactor:data-changed", blob: JSON.stringify(blob) },
+  { type: "artefactor:data-changed", blob: JSON.stringify(blob), channel: "chan-abc" },
   "https://artefactor.test",
 ];
 
@@ -170,6 +171,18 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     vi.runAllTimers();
     listeners["pagehide"]!();
     expect(parent.postMessage).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("carries the channel of the token that seeded it, so a navigated-to page can't forge a change", () => {
+    vi.useFakeTimers();
+    const { ls, parent } = runShim({ ...baseCtx, channel: "chan-xyz" });
+    ls.setItem("a", "1");
+    vi.runAllTimers();
+    expect(parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ channel: "chan-xyz" }),
+      baseCtx.targetOrigin,
+    );
     vi.useRealTimers();
   });
 

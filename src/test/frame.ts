@@ -6,6 +6,7 @@ import type { Hono } from "hono";
 
 export interface MintedFrame {
   frameUrl: string;
+  channel: string;
   seedUpdatedAt: string | null;
 }
 
