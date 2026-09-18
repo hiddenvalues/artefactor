@@ -493,10 +493,12 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
   401 for anonymous whatever the ref; a flat 404 for an unknown ref, not viewable, archived
   (owner included) and no thumbnail yet.
 - **Permanent delete** of an archived artefact removes its thumbnail files.
-- **Disabled by default** *(S37: the switch is now `ARTEFACTOR_RENDERER_URL`, unset by default)*
-  — with `ARTEFACTOR_THUMBNAILS` unset (or `off`, or no Chromium) the
+- **Disabled by default** — with `ARTEFACTOR_THUMBNAILS` unset (or `off`, or no Chromium) the
   server starts, logs once that thumbnails are disabled, never renders, every card shows the
-  placeholder, and all other behaviour is identical; `on` builds the renderer.
+  placeholder, and all other behaviour is identical; `on` builds the renderer. *Amended by S37:
+  that switch is gone and a leftover value is ignored. The renderer is built only when
+  `ARTEFACTOR_RENDERER_URL` is set, and it is the HTTP client of the isolated renderer role —
+  this server never launches Chromium. Unset, everything in this bullet still holds.*
 - **Renderer integration** (runs in CI; skips locally only without Chromium) — a fixture with
   CDN CSS, a web font and a canvas yields a valid 512×320 WebP; a loopback canary receives zero
   requests from `fetch`, `<img>`, `sendBeacon` and WebSocket; a public WebSocket is blocked; a
