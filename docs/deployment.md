@@ -12,9 +12,12 @@ push to main  (humlytech/artefactor)
        └─ curl Coolify deploy webhook
             └─ Coolify (your instance) → existing UpCloud VPS (se-sto1)
                  ├─ container: BFF :3000 serving API + SPA, NODE_ENV=production
+                 ├─ container: thumbnail renderer (same image, ARTEFACTOR_ROLE=renderer,
+                 │     no secrets, no volume, sandboxed Chromium — §9)
                  ├─ named volume artefactor-data → /data
                  │     ├─ /data/artefactor.db   (SQLite, DATABASE_PATH)
-                 │     └─ /data/payloads/        (artefact HTML, up to 100 MB each)
+                 │     ├─ /data/payloads/        (artefact HTML, up to 100 MB each)
+                 │     └─ /data/thumbnails/      (rendered card images)
                  └─ Coolify proxy: https://<domain>  (Let's Encrypt)
 UpCloud Backups: scheduled snapshots of the whole VPS (including the volume)
 ```
@@ -129,8 +132,11 @@ How much work this is depends on the **fork's visibility**:
      **inside the container** with `curl`; the runtime image (Debian `bookworm-slim`, which
      ships no curl/wget) installs `curl` precisely for this — see the [Dockerfile](../Dockerfile).
 4. **Persistent Storage → + Add Volume Mount:** name `artefactor-data`, destination `/data`.
-   The image declares `/data` as a volume; the named volume holds the SQLite DB **and** the
-   artefact payloads, and survives redeploys. The container runs as the unprivileged `node`
+   This mount is **required**: the image deliberately declares no `VOLUME` (S37 — an implicit
+   anonymous volume would follow the renderer container around too), so without it the SQLite DB
+   and the payloads would live in the container's writable layer and die with it. The named
+   volume holds the SQLite DB, the artefact payloads **and** their thumbnails, and survives
+   redeploys. The container runs as the unprivileged `node`
    user — its entrypoint starts as root only to `chown` `/data` to `node`, then drops
    privileges (`gosu`), so a fresh *or* previously root-owned volume becomes writable
    automatically (see [docker-entrypoint.sh](../docker-entrypoint.sh)).
@@ -144,6 +150,7 @@ How much work this is depends on the **fork's visibility**:
    | `GOOGLE_CLIENT_SECRET` | from the Google OAuth client | **Secret. Required in prod.** See §5a. |
    | `AUTH_ALLOWED_EMAIL_DOMAINS` | your org domain(s), e.g. `example.com,example.org` | **Set this in prod.** Comma-separated; account creation is restricted to these domains (every provider). The code default is `example.com` (dev only). |
    | `AUTH_TRUSTED_ORIGINS` | `https://<domain>` | Optional. The `BETTER_AUTH_URL` origin is trusted implicitly and the SPA is same-origin, so this is usually unnecessary — set it only if a separate origin must call the auth API. |
+   | `ARTEFACTOR_RENDERER_URL` | `http://renderer:3001` | Optional, and **only** once the isolated renderer of §9 is running and verified. Unset: no card thumbnails, everything else unchanged. Never point it at a renderer that is not isolated. |
 
    Already baked into the image (no need to set): `NODE_ENV=production`, `PORT=3000`,
    `DATABASE_PATH=/data/artefactor.db`, `ARTEFACTOR_PAYLOAD_DIR=/data/payloads`,
@@ -244,9 +251,62 @@ may display it as `ci / gate`).
 4. Push a trivial commit to the fork's `main` → confirm it auto-deploys end to end and
    `/health`'s `build` flips to the new SHA.
 
+## 9. Card thumbnails: the isolated renderer
+
+Thumbnails are rendered by **screenshotting the artefact's HTML**, which means running a
+stranger's JavaScript on the box. That happens in a second container from the same image, with
+Chromium's sandbox on, no secrets, no volume, one job per container and no route back to the app
+— the rationale, the layers and the verification checklist are in
+[renderer-isolation.md](renderer-isolation.md) (**read it before this section**). The app is
+perfectly happy without it: leave `ARTEFACTOR_RENDERER_URL` unset and every card shows its kind
+placeholder.
+
+**Coolify shape.** A Coolify *application*'s custom Docker options cover `--cap-drop` and
+`--security-opt` but **not** `--read-only`, `--tmpfs`, `--pids-limit` or `--user` — four of the
+renderer's defences. So the renderer is added as a **Docker Compose resource**, not as a second
+application:
+
+1. Coolify → the `humly-artefactor` project → **+ New Resource → Docker Compose**, on the same
+   server.
+2. Paste [`deploy/docker-compose.example.yml`](../deploy/docker-compose.example.yml), keeping the
+   `renderer` service and dropping the `app` service (the app stays the existing Docker Image
+   application). Point the image at `ghcr.io/humlytech/artefactor:latest`, and make sure the
+   `renderer` service keeps `user`, `read_only`, `tmpfs`, `cap_drop`, `security_opt`,
+   `pids_limit`, `mem_limit` and `restart: always`, and gains **no** volume and **no** `ports:`.
+3. The seccomp profile must exist on the server at the path `security_opt` names — copy
+   `deploy/chromium-seccomp.json` next to the compose file (Coolify's `content:` bind-mount
+   extension can create it for you) and reference it by that path.
+4. Put the app application and this resource on a shared network so `app` can resolve `renderer`
+   (Coolify → the application → **Connect to Predefined Network**), or move the app into the same
+   Compose resource.
+5. On the server, apply the firewall rules and make them survive a reboot:
+
+   ```bash
+   ssh root@<vps-ip>
+   /path/to/artefactor/deploy/renderer-egress.sh           # DOCKER-USER + INPUT rules
+   # re-run at boot (a systemd unit or @reboot cron): DOCKER-USER survives a Docker
+   # restart, but not a reboot.
+   ```
+
+   Adjust `LINK_IF` / `EGRESS_IF` if the networks have different bridge names:
+   `docker network inspect <network> -f '{{index .Options "com.docker.network.bridge.name"}}'`.
+6. **Verify** with
+   [renderer-isolation.md § Verify a deployment](renderer-isolation.md#verify-a-deployment).
+   Only when every check passes, set `ARTEFACTOR_RENDERER_URL=http://renderer:3001` on the app
+   and redeploy it. Upload an artefact: its card picks up an image within a few seconds.
+
+> **Not yet verified on Coolify.** The hardening above is verified on plain Docker (the S37 spike
+> and manual check). Whether Coolify passes every one of these Compose keys through untouched —
+> and tolerates a container that exits and restarts every ~10 s under load — has not been tried
+> on the real instance. The verification checklist is what settles it: if a check fails, leave
+> `ARTEFACTOR_RENDERER_URL` unset (thumbnails off) rather than run an unisolated renderer.
+
 ## Operations
 
-- **Logs:** Coolify → application → **Logs** (live container logs).
+- **Logs:** Coolify → application → **Logs** (live container logs). The renderer logs one line
+  per container life (`sandboxed Chromium launched — ready`); a restart every ~10 s under load is
+  the design (§9), not a crash loop. A repeated `unavailable:` line means the host blocks the
+  sandbox — see [renderer-isolation.md](renderer-isolation.md) § Host prerequisites.
 - **Restart / stop:** Coolify → application → Restart. The DB + payloads are on the volume;
   restarts are always safe.
 - **Redeploy current main:** GitHub → Actions → deploy → Run workflow (or Coolify's Redeploy

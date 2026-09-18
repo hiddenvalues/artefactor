@@ -34,9 +34,16 @@ jobs:
       # onlyBuiltDependencies (pnpm-workspace.yaml) lets install compile better-sqlite3
       # + esbuild from source — needed before tests run. ubuntu-latest ships the toolchain.
       - run: pnpm install --frozen-lockfile
-      # S35 — the thumbnail renderer's isolation tests need a real headless
+      # S35/S37 — the thumbnail renderer's isolation tests need a real headless
       # Chromium; without one they would skip instead of guarding the sandbox.
       - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
+      # S37 (AH29) — those tests launch Chromium with its OS sandbox ON, which
+      # needs an unprivileged user namespace. Ubuntu 24.04 runners ship
+      # kernel.apparmor_restrict_unprivileged_userns=1, which denies it to the
+      # unconfined processes CI runs. Lifting it on the throwaway runner keeps the
+      # tests honest; a real host uses the AppArmor profile instead (see
+      # docs/renderer-isolation.md).
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm test
       - run: pnpm check
       - run: pnpm lint:md

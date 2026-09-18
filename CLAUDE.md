@@ -50,16 +50,19 @@ prints the graph, the next build waves and the next free slice id). In-flight wo
   `If-Match` / `If-None-Match: *` → 412), plus `GET …/data/authors` and `GET …/data/:authorId`,
   which are access-matrix gated but **not** auth-gated (anonymous may read a `public`
   artefact's data). `GET /api/artefacts/:ref/viewers` lists who has viewed.
-- **Artefact thumbnails** (`src/server/thumbnails/`, `src/infra/render/`) — a derived 512×320
-  WebP per artefact for the dashboard and gallery cards, rendered server-side from the stored
-  payload alone (no bootstrap, no shell, no data) by a Playwright `chromium-headless-shell`
-  renderer at a synthetic origin, through an **in-process queue**: create / HTML replace enqueue
-  after the save and a startup sweep backfills, and a render is recorded only by a
-  compare-and-set against the current payload hash. Files live beside the payloads
-  (`ARTEFACTOR_THUMBNAIL_DIR`); `GET /api/artefacts/:ref/thumbnail` is signed-in only and
-  resolves like the download. Rendering is **opt-in** (`ARTEFACTOR_THUMBNAILS=on`) until renderer
-  isolation lands; off (the default) or without Chromium every card keeps its kind placeholder and
-  nothing else changes.
+- **Artefact thumbnails** (`src/server/thumbnails/`, `src/infra/render/`, `src/renderer/`) — a
+  derived 512×320 WebP per artefact for the dashboard and gallery cards, rendered from the stored
+  payload alone (no bootstrap, no shell, no data) at a synthetic origin, through an **in-process
+  queue**: create / HTML replace enqueue after the save and a startup sweep backfills, and a
+  render is recorded only by a compare-and-set against the current payload hash. Files live
+  beside the payloads (`ARTEFACTOR_THUMBNAIL_DIR`); `GET /api/artefacts/:ref/thumbnail` is
+  signed-in only and resolves like the download. Because a render runs the uploader's JavaScript,
+  Chromium never runs in the app: `src/renderer/` is a **separate role from the same image**
+  (`ARTEFACTOR_ROLE=renderer`) — its own entry point and env, no secrets, DB or storage, sandbox
+  **on**, one job per container, egress-restricted — and the app talks to it over HTTP
+  (`ARTEFACTOR_RENDERER_URL`, `HttpThumbnailRenderer`), never rendering payloads over
+  `MAX_RENDER_INPUT_BYTES` (10 MB). With the URL unset every card keeps its kind placeholder and
+  nothing else changes (AH25/AH29; `docs/renderer-isolation.md`, `deploy/`).
 - **Serving runtime** (`src/server/runtime/`) — `/a/:slug` is a server-rendered host **shell**
   (toolbar: data-context switcher, viewers, conflict banner) wrapping the artefact in an
   `<iframe>` at `/a/:slug/frame` (`?author=<id>` re-seeds another author's blob read-only). Both
@@ -255,7 +258,8 @@ pnpm db:studio                 # drizzle studio
 pnpm spec:dag [catalog]        # slice DAG → mermaid graph + build waves + next free id (default: core catalog)
 pnpm lint:md                   # markdownlint-cli2 over every tracked .md (.markdownlint-cli2.jsonc); CI gate
 pnpm lint:md:fix               # apply markdownlint's auto-fixes (over-long prose lines still rewrap by hand)
-pnpm exec playwright-core install chromium-headless-shell  # once, plus ARTEFACTOR_THUMBNAILS=on, to see thumbnails
+pnpm dev:renderer              # the isolated thumbnail renderer (S37), long-lived for local work
+pnpm exec playwright-core install chromium-headless-shell  # once, for the renderer + its browser tests
 
 # Identity (S1): regenerate BetterAuth's Drizzle tables after changing src/server/auth.ts
 # (e.g. the mcp/OIDC plugin tables added in S18), then re-run db:generate to emit the migration.
@@ -267,5 +271,9 @@ pnpm dlx @better-auth/cli generate --config src/server/auth.ts --output src/infr
 from source; needs `python3`/`make`/`g++`). The Dockerfile does this automatically. The project
 pins **Node 26.4.0** (`.nvmrc`); use it for every command so the native addon's ABI matches.
 
-**Docker:** multi-stage `Dockerfile` builds a single image; `docker-entrypoint.sh` runs
-migrations then starts the server. Mount a volume at `/data` (SQLite DB + artefact payloads).
+**Docker:** multi-stage `Dockerfile` builds a single image with two roles, chosen by
+`ARTEFACTOR_ROLE` in `docker-entrypoint.sh`: `app` (the default — migrations, then the server) and
+`renderer` (the isolated thumbnail renderer: no chown, no migrations, no `gosu`, refuses to run as
+root). The image declares **no** `VOLUME`, so mount an explicit volume at `/data` (SQLite DB +
+artefact payloads + thumbnails). `deploy/docker-compose.example.yml` runs both roles;
+`docs/renderer-isolation.md` is the operator's guide.

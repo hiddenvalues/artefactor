@@ -1,0 +1,96 @@
+# Artefactor — the app and its isolated thumbnail renderer (S37, AH29).
+#
+# Both services run the SAME image in different roles (ARTEFACTOR_ROLE). The app
+# holds the data and the secrets; the renderer holds nothing and runs untrusted
+# artefact HTML in sandboxed Chromium. Read docs/renderer-isolation.md before
+# changing anything below — most lines here are a defence, not a preference.
+#
+#   1. cp deploy/docker-compose.example.yml docker-compose.yml   # then edit the env
+#   2. sudo ./deploy/renderer-egress.sh                          # host firewall rules
+#   3. docker compose up -d
+#   4. docs/renderer-isolation.md § Verify a deployment
+#
+# Without step 2 the app cannot reach the renderer (the link network denies
+# container-to-container traffic until the script allows exactly app → renderer),
+# so thumbnails stay placeholders instead of failing open.
+
+name: artefactor
+
+services:
+  app:
+    image: ghcr.io/hiddenvalues/artefactor:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      # The isolated renderer. Unset this and thumbnails are simply off (AH25).
+      ARTEFACTOR_RENDERER_URL: http://renderer:3001
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set it, e.g. openssl rand -hex 32}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?the public https URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?}
+      AUTH_ALLOWED_EMAIL_DOMAINS: ${AUTH_ALLOWED_EMAIL_DOMAINS:?your org domain(s)}
+    volumes:
+      # The SQLite DB, the artefact payloads and their thumbnails.
+      - artefactor-data:/data
+    networks:
+      - artefactor-link
+    depends_on:
+      - renderer
+
+  renderer:
+    image: ghcr.io/hiddenvalues/artefactor:latest
+    # Every render is one job in a fresh container: the process exits 0 when it is
+    # done (after ≥ 10 s of uptime, which keeps Docker's restart delay at ~100 ms)
+    # and this policy starts a new one with an empty tmpfs.
+    restart: always
+    environment:
+      ARTEFACTOR_ROLE: renderer
+      # No secrets, no database, no storage paths — the renderer's own startup
+      # self-check refuses to run in production if any of them appear.
+      PORT: "3001"
+      NODE_ENV: production
+    # Unprivileged, and it stays that way: no capabilities, no setuid escalation.
+    user: node
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default profile plus clone/unshare/chroot — exactly what
+      # Chromium's unprivileged sandbox needs, and nothing that needs a capability.
+      - seccomp=./chromium-seccomp.json
+    # Nothing on disk survives a job: the root filesystem is read-only and the
+    # writable paths are tmpfs (Chromium's profile, its temp files and $HOME).
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=512m
+      - /home/node:mode=0700,uid=1000,gid=1000,size=64m
+    # No volume, no published port: nothing to read, and unreachable from outside.
+    networks:
+      - artefactor-link
+      - renderer-egress
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+
+volumes:
+  artefactor-data:
+
+networks:
+  # App ↔ renderer. `internal` keeps it off the internet; icc=false means even the
+  # two containers on it cannot talk until deploy/renderer-egress.sh allows the one
+  # direction that is wanted (app → renderer:3001), so a compromised renderer has
+  # no path back to the app.
+  artefactor-link:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.name: br-art-link
+      com.docker.network.bridge.enable_icc: "false"
+  # The renderer's way out: the public internet only (CDN CSS, fonts, images), with
+  # every private and link-local range dropped by deploy/renderer-egress.sh. The
+  # fixed bridge name is what those rules match on.
+  renderer-egress:
+    driver_opts:
+      com.docker.network.bridge.name: br-art-egress
+    ipam:
+      config:
+        - subnet: 172.31.240.0/24

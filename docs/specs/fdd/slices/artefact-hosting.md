@@ -514,7 +514,7 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
 
 ### S37 — Isolated thumbnail renderer
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S35
 - **Linear:** ALI-319
 

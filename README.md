@@ -88,7 +88,16 @@ docker run -p 3000:3000 -v artefactor-data:/data artefactor
 ```
 
 The image runs migrations on boot and serves on `:3000`. Mount a volume at `/data` — it holds
-the SQLite database and artefact payloads (the entire state of the monolith).
+the SQLite database, the artefact payloads and their thumbnails (the entire state of the
+monolith). The image declares no `VOLUME`, so the mount is yours to name.
+
+Card **thumbnails** are rendered by a second container from the same image
+(`ARTEFACTOR_ROLE=renderer`): it screenshots artefact HTML in sandboxed Chromium, holds no
+secrets or storage, and is thrown away after every job. Run the pair with
+[`deploy/docker-compose.example.yml`](deploy/docker-compose.example.yml) and read
+[`docs/renderer-isolation.md`](docs/renderer-isolation.md) first — it is a security boundary, not
+a convenience. Without `ARTEFACTOR_RENDERER_URL` the app never renders anything and cards show a
+kind placeholder.
 
 ## License
 
