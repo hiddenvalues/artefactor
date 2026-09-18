@@ -5,7 +5,11 @@
 # artefact HTML in sandboxed Chromium. Read docs/renderer-isolation.md before
 # changing anything below — most lines here are a defence, not a preference.
 #
-#   1. cp deploy/docker-compose.example.yml docker-compose.yml   # then edit the env
+#   1. cp deploy/docker-compose.example.yml docker-compose.yml \
+#        && cp deploy/chromium-seccomp.json .    # both files, then edit the env
+#      (`security_opt` resolves the profile relative to the Compose project
+#      directory, so the two must sit side by side — running the example in place
+#      with `docker compose -f deploy/docker-compose.example.yml` works as well.)
 #   2. sudo ./deploy/renderer-egress.sh                          # host firewall rules
 #   3. docker compose up -d
 #   4. docs/renderer-isolation.md § Verify a deployment
