@@ -444,7 +444,9 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
 - **Server** — `ARTEFACTOR_THUMBNAILS` (`on` | `off`, default **`off`**) and
   `ARTEFACTOR_THUMBNAIL_DIR` (default `./data/thumbnails`). Rendering is **opt-in** until
   renderer isolation (sandbox on, a separate renderer container without secrets or the data
-  volume, egress limits) lands; that follow-up flips the default to `on`. An in-process `ThumbnailService`:
+  volume, egress limits) lands; that follow-up flips the default to `on`. *Amended by S37:
+  `ARTEFACTOR_THUMBNAILS` is replaced by `ARTEFACTOR_RENDERER_URL`; Chromium runs only in the
+  isolated renderer role.* An in-process `ThumbnailService`:
   a synchronous, never-throwing `enqueue(job)` deduped by artefact id (latest wins); one worker
   that skips fresh jobs, drops a job whose payload is gone, renders, stores, records by
   compare-and-set (deleting its file when the record loses) and then deletes the superseded
@@ -509,3 +511,103 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
   object-storage store, a durable queue and per-tenant render quotas.
 - **Boundary:** **OSS** (the EE Postgres repository mirrors the column and the two repository
   methods).
+
+### S37 — Isolated thumbnail renderer
+
+- **Status:** in progress
+- **Depends on:** S35
+- **Linear:** ALI-319
+
+S35 screenshots uploaded HTML with Chromium inside the app's process and container, with the OS
+sandbox off, next to every payload and the app's secrets — so it shipped off. This slice moves
+rendering into a disposable, secret-free renderer role from the same image, with Chromium's
+sandbox on and no route to the app or private networks, and turns thumbnails on wherever that
+renderer is configured. (DDD amendment: `ddd/artefact-hosting.md` **AH29** with its isolation
+evidence note; AH25's disabled path restated; the AH17 note's projection gains `payloadSize`.)
+
+- **Domain** — `MAX_RENDER_INPUT_BYTES` = 10 MB beside `isThumbnailStale`; `ThumbnailJob` gains
+  `payloadSize`, filled by `thumbnailJobOf` and `listNeedingThumbnail` (in-memory, Drizzle and
+  the EE Postgres mirror). *(AH29, AH17)*
+- **Renderer role** (`src/renderer/`, bundled to `dist/renderer/index.js`) — its own env schema
+  (`PORT` 3001, `ARTEFACTOR_RENDERER_EXIT_AFTER_JOB` default `true`,
+  `ARTEFACTOR_RENDERER_MIN_UPTIME_MS` default 10000) and, in production, a startup self-check
+  that refuses to start with `BETTER_AUTH_SECRET` / `GOOGLE_CLIENT_SECRET` / `DATABASE_URL` set,
+  with the `DATABASE_PATH` or `ARTEFACTOR_PAYLOAD_DIR` directory present, or as uid 0. It never
+  imports the server env, DB, storage or auth. `PlaywrightThumbnailRenderer` moves here with the
+  same page isolation, but launches with `chromiumSandbox: true` (a failed launch makes the
+  renderer unavailable — never a retry unsandboxed) and closes the browser after every job. Hono,
+  concurrency 1: `GET /health` → `200 {"status":"ready"}` after a sandboxed probe launch, else
+  `503 {"status":"unavailable","reason"}`; `POST /render` (HTML body, `Content-Length` required,
+  else 411) → `200 image/webp` 512×320, `413` above the cap, `422` on a failed or timed-out
+  render, `503` + `Retry-After` when unavailable, busy or draining. With exit-after-job, any
+  answered render but a 413 drains the process: further work gets 503 and it exits `0` once its
+  uptime reaches the minimum, for the restart policy to bring back a clean container.
+  `pnpm dev:renderer` runs it without exiting.
+- **Server** — `ARTEFACTOR_RENDERER_URL` (optional absolute `http(s)` URL; an empty value is
+  unset) replaces `ARTEFACTOR_THUMBNAILS`. `thumbnailRendererFor(url)` builds an
+  `HttpThumbnailRenderer` only when it is set; `ThumbnailService.start()` logs once that
+  thumbnails are off and names the variable. `HttpThumbnailRenderer` POSTs the payload bytes to
+  `${url}/render` with a 30 s timeout: `200` → the image; `413`, `422`, any other status or a
+  timeout → a render failure (the hash is remembered as failed); connection refused / reset or
+  `503` → retry after a short delay (honouring `Retry-After`) for up to 60 s, then
+  `ThumbnailRendererUnavailable`. Nothing under `src/server/` imports `playwright-core`.
+  `ThumbnailService` skips a job whose `payloadSize` exceeds the cap before reading the payload,
+  and on `ThumbnailRendererUnavailable` **pauses** instead of disabling for the process: it clears
+  pending, logs once, drops enqueues and re-runs the sweep after `resumeAfterMs` (5 min, an
+  `unref`'d timer).
+- **Packaging** — `docker-entrypoint.sh` with `ARTEFACTOR_ROLE=renderer` execs the renderer with
+  no chown, migration or `gosu`, and refuses to run as root; the default role is unchanged. The
+  `Dockerfile` drops `VOLUME ["/data"]` (an explicit named volume was already required).
+  `deploy/docker-compose.example.yml` runs `app` + a hardened `renderer` from one image
+  (`user: node`, `read_only`, tmpfs, `cap_drop: ALL`, `no-new-privileges`,
+  `deploy/chromium-seccomp.json`, 1 GB / 1 CPU / 256 pids, no volume, no published port, no
+  secrets, `restart: always`) on an internal link network plus an egress network;
+  `deploy/renderer-egress.sh` adds the host firewall rules. `docs/renderer-isolation.md` holds the
+  threat model, the layers, host prerequisites and the verification; `docs/deployment.md` the
+  runbook. CI lifts Ubuntu's unprivileged-userns AppArmor restriction so the sandboxed browser
+  tests run.
+
+**Acceptance:**
+
+- **Renderer env** — parses with no secrets set; with `NODE_ENV=production` the self-check fails
+  for each of `BETTER_AUTH_SECRET` / `GOOGLE_CLIENT_SECRET` / `DATABASE_URL`, an existing
+  `DATABASE_PATH` or `ARTEFACTOR_PAYLOAD_DIR` directory, and uid 0; with `development` it passes.
+- **Import graph** — a test fails if anything reachable from `src/renderer/` imports
+  `src/server/env`, `src/infra/db`, `src/infra/storage` or `src/server/auth`, or if anything
+  under `src/server/` reaches `playwright-core` or the Playwright renderer.
+- **Sandboxed launch** — Chromium is launched with `chromiumSandbox: true`; when that launch
+  rejects, `GET /health` → 503 with a reason, `POST /render` → 503, and the launch spy saw
+  exactly one launch and none with the sandbox off.
+- **Input cap** — `POST /render` over `MAX_RENDER_INPUT_BYTES` → 413 with no launch.
+- **Busy** — `POST /render` while a job is in flight → 503 with `Retry-After`.
+- **Disposable** (fake clock, injected exit) — after a 200 at uptime 2 s the next request → 503
+  and `exit(0)` runs at uptime 10 s, not before; a 413 doesn't drain; with exit-after-job off
+  nothing exits and the next render launches a new browser.
+- **Browser** (runs in CI, sandbox on) — `POST /render` of a fixture returns a 512×320 WebP; a
+  busy-looping fixture → 422 within the cap; S35's loopback-canary and WebSocket isolation
+  still hold.
+- **App env** — `ARTEFACTOR_RENDERER_URL` unset → no renderer, `start()` logs exactly one line
+  naming the variable, nothing renders; set → an `HttpThumbnailRenderer`; a non-URL → a startup
+  validation error.
+- **HTTP adapter** (stub server) — 200 → bytes; 422 and 413 → a render failure, not
+  `ThumbnailRendererUnavailable`; 503 twice then 200 → bytes with `Retry-After` honoured;
+  connection refused past the 60 s budget (fake clock) → `ThumbnailRendererUnavailable`; no
+  response within the timeout → a render failure.
+- **Service** — `payloadSize` = cap + 1 → the payload is never read, the renderer never called,
+  `thumbnailHash` stays null; exactly the cap → rendered; `ThumbnailRendererUnavailable` → one
+  log line and pending cleared, and after `resumeAfterMs` the sweep renders what is still stale.
+- **Projection** — `listNeedingThumbnail` (in-memory + Drizzle) and `thumbnailJobOf` include
+  `payloadSize`.
+- **Image** — the entrypoint, with stubbed `node` / `gosu` / `id`: `ARTEFACTOR_ROLE=renderer` as
+  uid 1000 execs `dist/renderer/index.js` with no chown or migration; as uid 0 exits non-zero;
+  unset keeps today's app path. The `Dockerfile` has no `VOLUME`.
+- **Manual isolation check** (recorded in the PR) — on the compose example the renderer's env has
+  no secrets, `/data` is absent, the root filesystem is read-only, connections to the app, a
+  private IP and `169.254.169.254` fail while a public CDN succeeds, and one render makes the
+  container exit and return with an empty tmpfs.
+
+- **Out of scope:** gVisor or a microVM; deploying the renderer on Artefactor Cloud; humlytech's
+  own Coolify change; Chromium patch cadence; per-tenant render quotas; renderer replicas or
+  concurrency above 1; a durable queue; retrying failed hashes; object-storage thumbnails;
+  isolating served artefacts in the browser; scanning or sanitising HTML.
+- **Boundary:** **OSS** (the EE Postgres repository mirrors the `payloadSize` projection).

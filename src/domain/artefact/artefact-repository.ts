@@ -15,6 +15,9 @@ export interface ThumbnailJob {
   payloadRef: string;
   payloadHash: string;
   thumbnailHash: string | null;
+  // S37 (AH29) — bytes of the payload, so a job over the render input cap is
+  // skipped before the payload is read.
+  payloadSize: number;
 }
 
 // Port: persistence for the Artefact aggregate. The Drizzle adapter (infra/db)

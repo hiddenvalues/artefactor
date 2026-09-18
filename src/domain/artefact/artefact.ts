@@ -206,6 +206,11 @@ export function isThumbnailStale(a: Artefact): boolean {
   return a.thumbnailHash !== a.payloadHash;
 }
 
+// S37 (AH29): the largest payload ever sent to the isolated renderer. A bigger
+// one is never rendered and keeps the kind placeholder; the renderer role
+// refuses it too.
+export const MAX_RENDER_INPUT_BYTES = 10 * 1024 * 1024; // 10 MB
+
 // Archive (S7, AH7): soft-delete. The artefact becomes inert — not served, hidden
 // from default listings — and `archivedAt` is stamped. Visibility is left intact
 // so restore can return to the prior tier.

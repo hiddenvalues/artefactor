@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   archiveArtefact,
   createArtefact,
   editArtefact,
+  MAX_RENDER_INPUT_BYTES,
   type Artefact,
 } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
@@ -75,23 +76,29 @@ describe("ThumbnailService (S35)", () => {
   let logs: string[];
   let service: ThumbnailService;
 
-  function make(r: ThumbnailRenderer | null = renderer) {
+  function make(r: ThumbnailRenderer | null = renderer, resumeAfterMs?: number) {
     return new ThumbnailService({
       repo,
       payloadStore: payloads,
       thumbnailStore: thumbs,
       renderer: r,
       log: (message) => logs.push(message),
+      resumeAfterMs,
     });
   }
 
-  async function seed(id: string, html: string, hash = `h-${html}`): Promise<Artefact> {
+  async function seed(
+    id: string,
+    html: string,
+    hash = `h-${html}`,
+    bytes = html.length,
+  ): Promise<Artefact> {
     const a = createArtefact({
       id,
       ownerId: "owner",
       title: id,
       kind: "prototype",
-      payload: { ref: `ref-${hash}`, bytes: html.length, hash },
+      payload: { ref: `ref-${hash}`, bytes, hash },
     });
     payloads.live.set(a.payloadRef, enc(html));
     await repo.save(a);
@@ -120,6 +127,17 @@ describe("ThumbnailService (S35)", () => {
     renderer = new FakeRenderer();
     logs = [];
     service = make();
+  });
+
+  it("a job carries the artefact's payload size (S37)", async () => {
+    const a = await seed("a1", "<h1>one</h1>", "h1", 1234);
+    expect(thumbnailJobOf(a)).toEqual({
+      id: "a1",
+      payloadRef: "ref-h1",
+      payloadHash: "h1",
+      thumbnailHash: null,
+      payloadSize: 1234,
+    });
   });
 
   it("renders the stored payload, stores the image and records its hash", async () => {
@@ -327,6 +345,46 @@ describe("ThumbnailService (S35)", () => {
     expect((await stored("a2")).thumbnailHash).toBe("h-<p>fine</p>");
   });
 
+  describe("the render input cap (S37, AH29)", () => {
+    it("skips a payload over MAX_RENDER_INPUT_BYTES without reading it or calling the renderer", async () => {
+      const a = await seed("big", "<p>big</p>", "h-big", MAX_RENDER_INPUT_BYTES + 1);
+      const read = vi.spyOn(payloads, "get");
+
+      service.enqueue(thumbnailJobOf(a));
+      await service.idle();
+
+      expect(read).not.toHaveBeenCalled();
+      expect(renderer.calls).toEqual([]);
+      expect((await stored("big")).thumbnailHash).toBeNull();
+    });
+
+    it("renders a payload of exactly MAX_RENDER_INPUT_BYTES", async () => {
+      const a = await seed("edge", "<p>edge</p>", "h-edge", MAX_RENDER_INPUT_BYTES);
+
+      service.enqueue(thumbnailJobOf(a));
+      await service.idle();
+
+      expect((await stored("edge")).thumbnailHash).toBe(a.payloadHash);
+    });
+
+    it("start() reads past an oversized artefact to reach the rest", async () => {
+      service = new ThumbnailService({
+        repo,
+        payloadStore: payloads,
+        thumbnailStore: thumbs,
+        renderer,
+        log: (m) => logs.push(m),
+        sweepPageSize: 1,
+      });
+      await seed("big", "<p>big</p>", "h-big", MAX_RENDER_INPUT_BYTES + 1);
+      await seed("small", "<p>small</p>");
+
+      await service.start();
+
+      expect(renderer.calls).toEqual(["<p>small</p>"]);
+    });
+  });
+
   describe("disabled or unavailable renderer (AH25)", () => {
     it("with no renderer: start() logs once and nothing is ever rendered", async () => {
       service = make(null);
@@ -340,19 +398,47 @@ describe("ThumbnailService (S35)", () => {
       expect((await stored("a1")).thumbnailHash).toBeNull();
     });
 
-    it("when the renderer is unavailable: logs once and stops rendering", async () => {
-      renderer.failWith = new ThumbnailRendererUnavailable("no chromium");
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // S37 (AH25/AH29) — an unreachable renderer pauses the queue instead of
+    // disabling it for the process: pending is cleared, enqueues are dropped, and
+    // after `resumeAfterMs` the sweep picks up whatever is still stale.
+    it("when the renderer is unavailable: logs once, clears pending, and resumes with a sweep", async () => {
+      vi.useFakeTimers();
+      service = make(renderer, 60_000);
+      renderer.failWith = new ThumbnailRendererUnavailable("renderer unreachable");
       const a = await seed("a1", "<p>1</p>");
       const b = await seed("b1", "<p>2</p>");
 
       service.enqueue(thumbnailJobOf(a));
+      service.enqueue(thumbnailJobOf(b)); // pending when a's render fails
       await service.idle();
-      service.enqueue(thumbnailJobOf(b));
+      const c = await seed("c1", "<p>3</p>");
+      service.enqueue(thumbnailJobOf(c)); // dropped while paused
       await service.idle();
 
       expect(renderer.calls).toEqual(["<p>1</p>"]);
       expect(logs).toHaveLength(1);
       expect((await stored("b1")).thumbnailHash).toBeNull();
+
+      renderer.failWith = null;
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(renderer.calls).toEqual(["<p>1</p>"]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(async () => {
+        expect((await stored("c1")).thumbnailHash).toBe(c.payloadHash);
+      });
+      await service.idle();
+      expect((await stored("a1")).thumbnailHash).toBe(a.payloadHash);
+      expect((await stored("b1")).thumbnailHash).toBe(b.payloadHash);
+      expect(logs).toHaveLength(1);
+    });
+
+    it("pauses for five minutes by default", () => {
+      expect(make().resumeAfterMs).toBe(5 * 60_000);
     });
   });
 });

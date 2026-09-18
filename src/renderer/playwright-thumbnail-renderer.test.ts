@@ -1,16 +1,18 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { chromium, type Browser } from "playwright-core";
-import { ThumbnailRendererUnavailable } from "../../domain/artefact/errors";
+import { chromium, type Browser, type LaunchOptions } from "playwright-core";
+import { ThumbnailRendererUnavailable } from "../domain/artefact/errors";
+import { createRendererApp } from "./app";
 import { PlaywrightThumbnailRenderer, captureWebp } from "./playwright-thumbnail-renderer";
 
-// S35 (AH26) — the Playwright renderer against a real headless Chromium. CI
-// installs `chromium-headless-shell` first, so these always run there; locally
-// they skip only when no browser is installed
+// S35 (AH26) / S37 (AH29) — the Playwright renderer against a real headless
+// Chromium, **with its OS sandbox on**. CI installs `chromium-headless-shell`
+// first (and lifts Ubuntu's unprivileged-userns restriction), so these always
+// run there; locally they skip only when no browser is installed
 // (`pnpm exec playwright-core install chromium-headless-shell`).
 const chromiumAvailable = await chromium
-  .launch()
+  .launch({ chromiumSandbox: true })
   .then((b) => b.close())
   .then(
     () => true,
@@ -63,7 +65,6 @@ describe.skipIf(!runBrowserTests)("PlaywrightThumbnailRenderer (S35)", () => {
   });
 
   afterAll(async () => {
-    await renderer.close();
     await new Promise((r) => canary.close(r));
   });
 
@@ -128,27 +129,81 @@ describe.skipIf(!runBrowserTests)("PlaywrightThumbnailRenderer (S35)", () => {
     expect(webpSize(image)).toEqual({ width: 512, height: 320 });
   }, 45_000);
 
-  it("launches the browser lazily and closes it after being idle", async () => {
-    let launches = 0;
-    const idle = new PlaywrightThumbnailRenderer({
-      idleCloseMs: 200,
+  it("launches a fresh sandboxed browser for every render and closes it after", async () => {
+    const launched: { options: LaunchOptions; browser: Browser }[] = [];
+    const fresh = new PlaywrightThumbnailRenderer({
       settleMs: 0,
-      launch: () => {
-        launches++;
-        return chromium.launch();
+      launch: async (options) => {
+        const browser = await chromium.launch(options);
+        launched.push({ options, browser });
+        return browser;
       },
     });
-    expect(launches).toBe(0);
 
-    await idle.render(enc("<h1>one</h1>"));
-    await idle.render(enc("<h1>two</h1>"));
-    expect(launches).toBe(1);
+    await fresh.render(enc("<h1>one</h1>"));
+    await fresh.render(enc("<h1>two</h1>"));
 
-    await new Promise((r) => setTimeout(r, 600));
-    await idle.render(enc("<h1>three</h1>"));
-    expect(launches).toBe(2);
-    await idle.close();
+    expect(launched.map((l) => l.options.chromiumSandbox)).toEqual([true, true]);
+    expect(launched.map((l) => l.browser.isConnected())).toEqual([false, false]);
   }, 30_000);
+});
+
+describe.skipIf(!runBrowserTests)("renderer role over HTTP, sandbox on (S37)", () => {
+  const post = (app: { request: (r: Request) => Response | Promise<Response> }, html: string) => {
+    const body = enc(html);
+    return app.request(
+      new Request("http://renderer/render", {
+        method: "POST",
+        headers: { "content-length": String(body.byteLength) },
+        body,
+      }),
+    );
+  };
+
+  function role() {
+    const launches: LaunchOptions[] = [];
+    const r = createRendererApp({
+      engine: new PlaywrightThumbnailRenderer({
+        launch: (options) => {
+          launches.push(options);
+          return chromium.launch(options);
+        },
+      }),
+      exitAfterJob: false,
+      minUptimeMs: 0,
+      uptimeMs: () => 0,
+      exit: () => {},
+      log: () => {},
+    });
+    return { ...r, launches };
+  }
+
+  it("POST /render of a fixture returns a 512×320 WebP, each render in a new browser", async () => {
+    const r = role();
+    await r.ready;
+    expect((await r.app.request("/health")).status).toBe(200);
+    const afterProbe = r.launches.length;
+
+    const first = await post(r.app, "<!doctype html><h1 style='font-size:96px'>Deck</h1>");
+    expect(first.status).toBe(200);
+    expect(first.headers.get("content-type")).toBe("image/webp");
+    expect(webpSize(new Uint8Array(await first.arrayBuffer()))).toEqual({ width: 512, height: 320 });
+
+    expect((await post(r.app, "<h1>again</h1>")).status).toBe(200);
+    expect(r.launches.length - afterProbe).toBe(2);
+    expect(r.launches.every((l) => l.chromiumSandbox === true)).toBe(true);
+  }, 45_000);
+
+  it("a busy-looping fixture answers 422 within the cap", async () => {
+    const r = role();
+    await r.ready;
+    const started = Date.now();
+
+    const res = await post(r.app, "<!doctype html><script>while(true){}</script>");
+
+    expect(res.status).toBe(422);
+    expect(Date.now() - started).toBeLessThan(25_000);
+  }, 45_000);
 });
 
 describe("PlaywrightThumbnailRenderer without a browser (S35, AH25)", () => {

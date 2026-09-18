@@ -387,7 +387,8 @@ cannot be edited, like its tier). Password length ≥ 8. Setting a gate does not
 
 ## Amendment (post-v0.2) — Artefact thumbnails
 
-> **Status:** DDD amendment (FDD slice **S35**). Adds a **derived** preview image per artefact
+> **Status:** DDD amendment (FDD slice **S35**; renderer isolation, AH29, **S37**). Adds a
+> **derived** preview image per artefact
 > that drives **host chrome only** (the dashboard and gallery cards) — never access, serving,
 > listing or the data API.
 
@@ -404,13 +405,9 @@ server-side from what is stored.
 **AH25 — the thumbnail is derived host chrome.** It never gates access (AH8), serving, listing
 or the data API. A missing thumbnail always renders the kind placeholder. Rendering runs
 **after** the create or edit is persisted and **never blocks or fails** the command: a
-disabled, missing, failing or timed-out renderer leaves `thumbnailHash` untouched.
-
-> **Implementation status (not an invariant).** Rendering is **opt-in**
-> (`ARTEFACTOR_THUMBNAILS=on`, default `off`) until renderer isolation lands: the renderer runs
-> untrusted HTML in Chromium with its OS sandbox off, in the app's own container. With it off,
-> AH25's disabled path is the default — no browser starts and every card shows the kind
-> placeholder. The isolation follow-up flips the default to `on`.
+disabled, missing, failing or timed-out renderer leaves `thumbnailHash` untouched. The
+disabled path is **no renderer configured or reachable** (AH29): no isolated renderer URL is
+set, or the renderer stays unreachable past its retry budget.
 
 **AH26 — pristine and payload-bound.** A thumbnail is rendered from the **stored payload
 alone** — no S13 localStorage bootstrap, no S12 shell, no `DataEntry` — so it is a function of
@@ -428,6 +425,51 @@ slug or id, effective tier per AH20, `AccessPolicy` per AH18). Unknown, not view
 (owner too, AH7) and no thumbnail yet all return the same flat 404. The route adds no access
 logic of its own — the matrix stays single-sourced (AH18).
 
+**AH29 — untrusted payload HTML is rendered only by an isolated renderer** *(S37)*. To draw
+an artefact, Chromium runs the uploader's JavaScript, so a render is treated as hostile code.
+The renderer:
+
+- runs **outside the app process and container**;
+- holds **no secrets, no payload/thumbnail storage and no database access** — the app sends it
+  the stored payload bytes (AH26) and stores what comes back;
+- runs Chromium with its **OS sandbox on**, never falling back to unsandboxed;
+- **can't open connections** to the app, private or link-local networks;
+- keeps **no state from one render to the next**.
+
+If no such renderer is configured or reachable, AH25's disabled path applies. Inputs above
+`MAX_RENDER_INPUT_BYTES` (10 MB) are never sent: the artefact keeps its placeholder. This is
+isolation, not sanitisation — the locked decision "artefacts are trusted HTML, served as-is" is
+untouched, and scanning uploaded HTML was rejected (exploits are ordinary, runtime-assembled JS
+that no signature matches, while legitimate artefacts do exactly what a scanner would flag).
+`docs/renderer-isolation.md` is the operator's view of the same layers.
+
+> **Isolation evidence (S37 spike, not an invariant).** Measured with `playwright-core` 1.63 /
+> `chromium-headless-shell` in `node:26-bookworm-slim`, as uid `node`, `read_only`, tmpfs `/tmp`
+> and `$HOME`, `cap_drop: ALL`, `no-new-privileges`, no `SYS_ADMIN`, no `--privileged`
+> (Docker Desktop 29.4, linuxkit 6.12, cgroup v2):
+>
+> - **Seccomp.** Docker's default profile refuses the sandboxed launch ("No usable sandbox"): it
+>   allows `clone` with `CLONE_NEW*` flags, `unshare` and `chroot` only to a container holding
+>   `CAP_SYS_ADMIN` / `CAP_SYS_CHROOT`. `deploy/chromium-seccomp.json` — Docker's default plus
+>   one rule allowing exactly `clone`, `unshare` and `chroot` — launches it. The renderer
+>   processes then run in their own user and pid namespaces under seccomp-bpf (`Seccomp: 2`). No
+>   capability is added and nothing runs unconfined.
+> - **AppArmor.** Docker Desktop has no AppArmor, and no stock Ubuntu 24.04 Docker host was
+>   available, so `kernel.apparmor_restrict_unprivileged_userns` inside a container is
+>   **unverified**; the renderer's `/health` answers `503` naming the launch failure if the host
+>   blocks it, and `docs/renderer-isolation.md` gives the check and the fixes. On a bare GitHub
+>   `ubuntu-latest` runner (24.04, restriction on) CI lifts the sysctl for the browser tests.
+> - **`/dev/shm`.** Nothing needed: Playwright launches Chromium with
+>   `--disable-dev-shm-usage`, so Docker's 64 MB default suffices.
+> - **Restart backoff.** A container exiting `0` after ≥ 10 s of uptime restarts in ~90 ms
+>   every time; one exiting after 2 s backs off 0.1 → 0.2 → 0.4 → … → 12.8 s. Hence the 10 s
+>   minimum uptime before a disposable renderer exits.
+> - **Cycle.** Container start → ready → one render → exit → restart measured on the compose
+>   example: see *Cycle time* in `docs/renderer-isolation.md`.
+> - **Coolify.** An *application*'s custom Docker options omit `--read-only`, `--tmpfs`,
+>   `--pids-limit` and `--user`, so the renderer runs as a Docker Compose resource; that
+>   Coolify keeps every hardening key is unverified until the deployment check passes.
+
 **AH11 amendment.** Permanent delete — of the artefact, or of it through a collection's CL8
 cascade — also removes the artefact's thumbnail files.
 
@@ -437,7 +479,8 @@ inherited when S32 lands, and a card whose image fails to load falls back to the
 
 **AH17 note.** The render sweep that finds artefacts needing a thumbnail is a **system** read:
 tenant-agnostic, internal, never exposed through any API, and returning only what the renderer
-needs (`id`, `payloadRef`, `payloadHash`, `thumbnailHash`).
+needs (`id`, `payloadRef`, `payloadHash`, `thumbnailHash`, and — for the AH29 input cap, S37 —
+`payloadSize`).
 
 **Storage.** Thumbnails are WebP files at `<thumbnailRoot>/<artefactId>/<payloadHash>.webp`,
 a sibling of the payload root and never inside it (a payload-retention policy, the S19b seam,

@@ -7,12 +7,16 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_PATH: z.string().min(1).default("./data/artefactor.db"),
   ARTEFACTOR_PAYLOAD_DIR: z.string().min(1).default("./data/payloads"),
-  // S35 — artefact card thumbnails. **Opt-in** until renderer isolation lands:
-  // the renderer runs untrusted HTML in Chromium with its OS sandbox off, in the
-  // app's own container. `off` (the default) never starts a browser; every card
-  // shows the kind placeholder and nothing else changes (AH25). Thumbnails live
-  // beside the payloads, never inside that directory.
-  ARTEFACTOR_THUMBNAILS: z.enum(["on", "off"]).default("off"),
+  // S37 (AH29) — the isolated thumbnail renderer (`ARTEFACTOR_ROLE=renderer`, a
+  // separate hardened container from the same image; see
+  // docs/renderer-isolation.md). Unset (or empty): no renderer — every card shows
+  // the kind placeholder and nothing else changes (AH25). S35's
+  // `ARTEFACTOR_THUMBNAILS` is gone; a leftover value is ignored.
+  ARTEFACTOR_RENDERER_URL: z.preprocess(
+    (v) => (v === "" ? undefined : v),
+    z.url({ protocol: /^https?$/, message: "ARTEFACTOR_RENDERER_URL must be an absolute http(s) URL" }).optional(),
+  ),
+  // S35 — thumbnails live beside the payloads, never inside that directory.
   ARTEFACTOR_THUMBNAIL_DIR: z.string().min(1).default("./data/thumbnails"),
   MIGRATIONS_DIR: z.string().min(1).default("./src/infra/db/migrations"),
   CLIENT_DIR: z.string().min(1).default("./dist/client"),

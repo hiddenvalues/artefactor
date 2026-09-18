@@ -6,9 +6,11 @@
   "license": "MIT",
   "scripts": {
     "dev": "concurrently -k -n client,server -c cyan,magenta \"vite\" \"tsx watch src/server/index.ts\"",
+    "dev:renderer": "ARTEFACTOR_RENDERER_EXIT_AFTER_JOB=false tsx src/renderer/index.ts",
     "build": "pnpm build:client && pnpm build:server",
     "build:client": "vite build",
-    "build:server": "esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server/index.js && esbuild src/infra/db/migrate.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server/migrate.js",
+    "build:server": "esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server/index.js && esbuild src/infra/db/migrate.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/server/migrate.js && pnpm build:renderer",
+    "build:renderer": "esbuild src/renderer/index.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/renderer/index.js",
     "start": "node dist/server/index.js",
     "test": "vitest run",
     "test:watch": "vitest",

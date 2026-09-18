@@ -33,6 +33,7 @@ export class InMemoryArtefactRepository implements ArtefactRepository {
         payloadRef: a.payloadRef,
         payloadHash: a.payloadHash,
         thumbnailHash: a.thumbnailHash,
+        payloadSize: a.payloadBytes,
       }));
   }
 

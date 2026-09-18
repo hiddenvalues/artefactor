@@ -9,8 +9,8 @@ const dir = mkdtempSync(join(tmpdir(), "artefactor-test-"));
 process.env.NODE_ENV = "test";
 process.env.DATABASE_PATH = join(dir, "test.db");
 process.env.ARTEFACTOR_PAYLOAD_DIR = join(dir, "payloads");
-// S35 — tests seed thumbnails through the store. ARTEFACTOR_THUMBNAILS stays
-// unset, so the suite runs on the default (off); render tests opt in explicitly.
+// S35 — tests seed thumbnails through the store. ARTEFACTOR_RENDERER_URL stays
+// unset (S37), so the suite runs with no renderer; render tests opt in explicitly.
 process.env.ARTEFACTOR_THUMBNAIL_DIR = join(dir, "thumbnails");
 process.env.BETTER_AUTH_SECRET = "test-secret-at-least-32-characters-long";
 process.env.BETTER_AUTH_URL = "http://localhost:3000";

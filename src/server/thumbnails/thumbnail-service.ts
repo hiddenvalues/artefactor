@@ -1,4 +1,4 @@
-import type { Artefact } from "../../domain/artefact/artefact";
+import { MAX_RENDER_INPUT_BYTES, type Artefact } from "../../domain/artefact/artefact";
 import type {
   ArtefactRepository,
   ThumbnailJob,
@@ -23,6 +23,7 @@ export function thumbnailJobOf(a: Artefact): ThumbnailJob {
     payloadRef: a.payloadRef,
     payloadHash: a.payloadHash,
     thumbnailHash: a.thumbnailHash,
+    payloadSize: a.payloadBytes,
   };
 }
 
@@ -36,25 +37,28 @@ export function enqueueThumbnail(queue: ThumbnailQueue | undefined, a: Artefact)
   }
 }
 
-// S35 — the renderer for an `ARTEFACTOR_THUMBNAILS` setting: built only when
-// `on`, otherwise none (placeholder mode). `make` is called lazily so `off` never
-// even constructs one.
+// S37 (AH29) — the renderer for `ARTEFACTOR_RENDERER_URL`: the isolated renderer
+// at that URL, or none (placeholder mode) when it is unset. `make` is called
+// lazily so an unset URL never even constructs one.
 export function thumbnailRendererFor(
-  setting: "on" | "off",
-  make: () => ThumbnailRenderer,
+  url: string | undefined,
+  make: (url: string) => ThumbnailRenderer,
 ): ThumbnailRenderer | null {
-  return setting === "on" ? make() : null;
+  return url ? make(url) : null;
 }
 
 export interface ThumbnailServiceDeps {
   repo: Pick<ArtefactRepository, "recordThumbnail" | "listNeedingThumbnail">;
   payloadStore: PayloadStore;
   thumbnailStore: ThumbnailStore;
-  // null = thumbnails disabled (`ARTEFACTOR_THUMBNAILS=off`): placeholders only.
+  // null = thumbnails disabled (`ARTEFACTOR_RENDERER_URL` unset): placeholders only.
   renderer: ThumbnailRenderer | null;
   log?: (message: string, err?: unknown) => void;
   // Rows per sweep read (the startup backfill pages through them).
   sweepPageSize?: number;
+  // S37 — how long the queue pauses after the renderer is unavailable before
+  // sweeping again. Default 5 minutes.
+  resumeAfterMs?: number;
 }
 
 const defaultLog = (message: string, err?: unknown) =>
@@ -72,19 +76,25 @@ export class ThumbnailService implements ThumbnailQueue {
   // Payload hashes whose render failed in this process — never retried here.
   private readonly failed = new Set<string>();
   private running: Promise<void> | null = null;
-  private disabled: boolean;
+  // No renderer configured: never renders in this process.
+  private readonly disabled: boolean;
+  // S37 — the renderer was unreachable: enqueues are dropped until the resume
+  // sweep, which finds whatever they would have rendered.
+  private paused = false;
   private readonly log: (message: string, err?: unknown) => void;
   private readonly sweepPageSize: number;
+  readonly resumeAfterMs: number;
 
   constructor(private readonly deps: ThumbnailServiceDeps) {
     this.disabled = deps.renderer === null;
     this.log = deps.log ?? defaultLog;
     this.sweepPageSize = deps.sweepPageSize ?? 100;
+    this.resumeAfterMs = deps.resumeAfterMs ?? 5 * 60_000;
   }
 
   enqueue(job: ThumbnailJob): void {
     try {
-      if (this.disabled) return;
+      if (this.disabled || this.paused) return;
       this.pending.delete(job.id);
       this.pending.set(job.id, job);
       this.kick();
@@ -103,13 +113,13 @@ export class ThumbnailService implements ThumbnailQueue {
   async start(): Promise<void> {
     if (this.disabled) {
       this.log(
-        "thumbnail rendering disabled (set ARTEFACTOR_THUMBNAILS=on to enable) — cards show the kind placeholder",
+        "thumbnail rendering disabled (set ARTEFACTOR_RENDERER_URL to an isolated renderer to enable) — cards show the kind placeholder",
       );
       return;
     }
     const attempted = new Set<string>();
     try {
-      while (!this.disabled) {
+      while (!this.paused) {
         // Rows that stay stale (a failed or discarded render) keep reappearing
         // at the head of the read, so read past everything already attempted.
         const rows = await this.deps.repo.listNeedingThumbnail(
@@ -126,6 +136,21 @@ export class ThumbnailService implements ThumbnailQueue {
     } catch (err) {
       this.log("thumbnail sweep failed", err);
     }
+  }
+
+  // S37 — stop rendering for `resumeAfterMs`, then sweep again. The timer never
+  // keeps the process alive.
+  private pause(err: unknown): void {
+    this.paused = true;
+    this.pending.clear();
+    this.log(
+      `thumbnail renderer unavailable — pausing for ${Math.round(this.resumeAfterMs / 1000)} s; cards show the kind placeholder`,
+      err,
+    );
+    setTimeout(() => {
+      this.paused = false;
+      void this.start();
+    }, this.resumeAfterMs).unref();
   }
 
   private kick(): void {
@@ -148,9 +173,11 @@ export class ThumbnailService implements ThumbnailQueue {
 
   private async process(job: ThumbnailJob): Promise<void> {
     const { renderer, payloadStore, thumbnailStore, repo } = this.deps;
-    if (this.disabled || !renderer) return;
+    if (this.disabled || this.paused || !renderer) return;
     if (job.thumbnailHash === job.payloadHash) return;
     if (this.failed.has(job.payloadHash)) return;
+    // AH29 — never sent to the renderer, so never even read.
+    if (job.payloadSize > MAX_RENDER_INPUT_BYTES) return;
 
     let html: Uint8Array;
     try {
@@ -164,9 +191,7 @@ export class ThumbnailService implements ThumbnailQueue {
       image = await renderer.render(html);
     } catch (err) {
       if (err instanceof ThumbnailRendererUnavailable) {
-        this.disabled = true;
-        this.pending.clear();
-        this.log("thumbnail renderer unavailable — cards show the kind placeholder", err);
+        this.pause(err);
         return;
       }
       this.failed.add(job.payloadHash);

@@ -129,7 +129,14 @@ describe("createArtefactCommand (S2)", () => {
       );
       await Promise.resolve();
       expect(thumbnails.jobs).toEqual([
-        { id: a.id, payloadRef: a.payloadRef, payloadHash: a.payloadHash, thumbnailHash: null },
+        {
+          id: a.id,
+          payloadRef: a.payloadRef,
+          payloadHash: a.payloadHash,
+          thumbnailHash: null,
+          // S37 (AH29) — the size the render input cap is checked against.
+          payloadSize: a.payloadBytes,
+        },
       ]);
       expect(savedWhenEnqueued).toBe(true);
       expect(a.thumbnailHash).toBeNull();

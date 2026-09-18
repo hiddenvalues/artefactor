@@ -47,7 +47,8 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
   }
 
   // S35 (AH17 note) — the render sweep's system read: tenant-agnostic by design,
-  // internal only, and projecting just what the renderer needs.
+  // internal only, and projecting just what the renderer needs (S37: plus the
+  // payload size, for the render input cap).
   async listNeedingThumbnail(limit: number): Promise<ThumbnailJob[]> {
     return this.db
       .select({
@@ -55,6 +56,7 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
         payloadRef: artefact.payloadRef,
         payloadHash: artefact.payloadHash,
         thumbnailHash: artefact.thumbnailHash,
+        payloadSize: artefact.payloadBytes,
       })
       .from(artefact)
       .where(

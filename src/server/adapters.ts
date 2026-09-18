@@ -7,7 +7,7 @@ import { DrizzleViewRepository } from "../infra/db/view-repository.drizzle";
 import { DrizzleUserDirectory } from "../infra/db/user-directory.drizzle";
 import { FilesystemPayloadStore } from "../infra/storage/payload-store";
 import { FilesystemThumbnailStore } from "../infra/storage/thumbnail-store";
-import { PlaywrightThumbnailRenderer } from "../infra/render/playwright-thumbnail-renderer";
+import { HttpThumbnailRenderer } from "../infra/render/http-thumbnail-renderer";
 import { thumbnailRendererFor } from "./thumbnails/thumbnail-service";
 import { env } from "./env";
 import type { ArtefactRepository } from "../domain/artefact/artefact-repository";
@@ -54,15 +54,15 @@ export const viewRepository = new DrizzleViewRepository(db);
 export const payloadStore = new FilesystemPayloadStore(
   env.ARTEFACTOR_PAYLOAD_DIR,
 );
-// S35 — thumbnails beside the payloads, and the renderer that makes them: none
-// unless `ARTEFACTOR_THUMBNAILS=on` (off by default; cards show the kind
-// placeholder). The browser launches lazily on the first render.
+// S35 — thumbnails beside the payloads. S37 (AH29) — they are rendered only by
+// the isolated renderer at `ARTEFACTOR_RENDERER_URL`, never in this process;
+// unset, there is no renderer and cards show the kind placeholder.
 export const thumbnailStore = new FilesystemThumbnailStore(
   env.ARTEFACTOR_THUMBNAIL_DIR,
 );
 export const thumbnailRenderer: ThumbnailRenderer | null = thumbnailRendererFor(
-  env.ARTEFACTOR_THUMBNAILS,
-  () => new PlaywrightThumbnailRenderer(),
+  env.ARTEFACTOR_RENDERER_URL,
+  (url) => new HttpThumbnailRenderer(url),
 );
 // S12 — host data-context switcher: resolve author ids → name/email for the
 // picker label (reads the BetterAuth user table).

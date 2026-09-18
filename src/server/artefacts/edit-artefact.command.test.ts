@@ -147,6 +147,8 @@ describe("editArtefactCommand (S3)", () => {
           payloadRef: edited.payloadRef,
           payloadHash: edited.payloadHash,
           thumbnailHash: null,
+          // S37 (AH29) — the size the render input cap is checked against.
+          payloadSize: edited.payloadBytes,
         },
       ]);
     });

@@ -107,7 +107,7 @@ describe.each(adapters)("ArtefactRepository thumbnails — %s (S35)", (name, mak
     await repo.recordThumbnail(id("need-stale"), "s1");
     const recorded = (await repo.findById(id("need-stale"), SINGLETON_SCOPE))!;
     await repo.save(
-      editArtefact(recorded, { payload: { ref: "ref-s2", bytes: 10, hash: "s2" } }),
+      editArtefact(recorded, { payload: { ref: "ref-s2", bytes: 20, hash: "s2" } }),
     );
 
     await repo.save(artefact(id("need-fresh"), "f1"));
@@ -118,8 +118,9 @@ describe.each(adapters)("ArtefactRepository thumbnails — %s (S35)", (name, mak
     const jobs = await repo.listNeedingThumbnail(1000);
     const mine = jobs.filter((j) => j.id.startsWith(id("need-")));
     expect(mine.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
-      { id: id("need-null"), payloadRef: `ref-${id("need-null")}`, payloadHash: "n1", thumbnailHash: null },
-      { id: id("need-stale"), payloadRef: "ref-s2", payloadHash: "s2", thumbnailHash: "s1" },
+      // S37 (AH29) — the payload size rides along for the render input cap.
+      { id: id("need-null"), payloadRef: `ref-${id("need-null")}`, payloadHash: "n1", thumbnailHash: null, payloadSize: 10 },
+      { id: id("need-stale"), payloadRef: "ref-s2", payloadHash: "s2", thumbnailHash: "s1", payloadSize: 20 },
     ]);
   });
 

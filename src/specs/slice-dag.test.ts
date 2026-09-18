@@ -692,10 +692,10 @@ describe("the real specs", () => {
     expect(validateSliceDag(coreDag)).toEqual([]);
   });
 
-  it("loads exactly the core slices S0–S35 plus S34b (S19 split into S19a + S19b)", () => {
+  it("loads exactly the core slices S0–S35 and S37 plus S34b (S19 split into S19a + S19b)", () => {
     const expected = Array.from({ length: 36 }, (_, n) => `S${n}`)
       .flatMap((id) => (id === "S19" ? ["S19a", "S19b"] : [id]))
-      .concat("S34b");
+      .concat("S34b", "S37");
     expect(coreDag.map((s) => s.id).sort()).toEqual(expected.sort());
   });
 
