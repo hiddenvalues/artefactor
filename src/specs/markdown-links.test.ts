@@ -24,7 +24,9 @@ const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 
 /**
  * The repo-relative targets `markdown` links to as files, resolved against `file`'s own directory
- * (or the repo root for a root-absolute target). Fragments, external URLs and placeholders drop out.
+ * (or the repo root for a root-absolute target). Fragments, external URLs and placeholders drop
+ * out; an angle-bracket destination is unwrapped, so `[x](<docs/a.md>)` is still a path to check
+ * while a template's `[ALI-N](<linear url>)` — whitespace, so never a path here — is not.
  */
 function fileTargets(markdown: string, file: string): { target: string; path: string }[] {
   const dir = posix.dirname(file);
@@ -32,8 +34,9 @@ function fileTargets(markdown: string, file: string): { target: string; path: st
   for (const [, raw] of markdown.matchAll(LINK)) {
     // `[x](./a.md "Title")` — the title is not part of the destination.
     const target = raw!.trim().replace(/\s+["'].*["']$/, "");
-    const [path] = target.split("#");
-    if (path === "" || SCHEME.test(target) || target.startsWith("<")) continue;
+    const destination = /^<([^<>]*)>$/.exec(target)?.[1] ?? target;
+    const [path] = destination.split("#");
+    if (path === "" || SCHEME.test(destination) || /\s/.test(destination)) continue;
     targets.push({
       target,
       path: posix.normalize(path!.startsWith("/") ? path!.slice(1) : posix.join(dir, path!)),
@@ -42,10 +45,16 @@ function fileTargets(markdown: string, file: string): { target: string; path: st
   return targets;
 }
 
-/** `<file> → <target>` for every link in `markdown` whose target is missing from disk. */
+/**
+ * `<file> → <target>` for every link in `markdown` whose target is missing. A target that climbs
+ * out of the repository is broken whatever sits at that path on the host — it is not ours to link.
+ */
 function brokenLinks(markdown: string, file: string): string[] {
   return fileTargets(markdown, file)
-    .filter(({ path }) => !existsSync(posix.join(root, path)))
+    .filter(
+      ({ path }) =>
+        path === ".." || path.startsWith("../") || !existsSync(posix.join(root, path)),
+    )
     .map(({ target }) => `${file} → ${target}`);
 }
 
@@ -83,6 +92,19 @@ describe("markdown links", () => {
 
   it("ignores a template's angle-bracket placeholder", () => {
     expect(brokenLinks("Implements [ALI-N](<linear url>).", ".claude/skills/implement/SKILL.md")).toEqual([]);
+  });
+
+  it("still checks an angle-bracket destination that names a path", () => {
+    expect(brokenLinks("[x](<renderer-isolation.md>)", "docs/deployment.md")).toEqual([]);
+    expect(brokenLinks("[x](<does-not-exist.md>)", "docs/deployment.md")).toEqual([
+      "docs/deployment.md → <does-not-exist.md>",
+    ]);
+  });
+
+  it("reports a target that climbs out of the repository", () => {
+    // Enough `..` to clamp at `/` from any checkout depth: the file exists, but it is not ours.
+    const escaping = "[x](../../../../../../../../../../../../etc/passwd)";
+    expect(brokenLinks(escaping, "docs/specs/README.md")).toHaveLength(1);
   });
 
   it("leaves every link in every tracked Markdown file resolving", () => {
