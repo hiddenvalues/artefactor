@@ -64,3 +64,38 @@
 The pinned `better-auth` (1.6.20) ships no api-key plugin, and a raw token REST API was
 judged unnecessary. Programmatic access is the **MCP connector (S18)**, authenticated by
 OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access").
+
+### S38 — Configurable sign-in methods
+
+- **Status:** specced
+- **Depends on:** S1
+
+Make the production sign-in method **configuration**, not a hard-coded rule. S1 fixed
+production to Google-only (`emailAndPassword.enabled = NODE_ENV !== "production"`, and an
+`env.ts` `superRefine` that *requires* the Google credentials in production), which leaves a
+self-hoster who does not want a Google dependency unable to sign in to their own production
+deploy at all. The invariant that matters is **"production has at least one working sign-in
+method"**, not "production has Google".
+
+The default is unchanged: with `AUTH_EMAIL_PASSWORD` unset, production stays Google-only and
+dev/test keep email+password, so existing deployments behave byte-identically.
+
+- `AUTH_EMAIL_PASSWORD` (boolean, default unset) drives `emailAndPassword.enabled`
+  (`env.AUTH_EMAIL_PASSWORD ?? NODE_ENV !== "production"`). The production guard requires
+  **Google credentials *or* email+password**, and fails when neither is available.
+- The BFF advertises the enabled methods: `GET /api/config` gains `emailPasswordEnabled`
+  alongside `allowedEmailDomains` (`src/shared/contracts.ts`).
+- `AuthScreen.svelte` reads that flag from the config call it already makes on mount, instead
+  of the **build-time** `import.meta.env.DEV` constant — which compiles the form out of every
+  production bundle regardless of server configuration.
+- The sign-up domain allowlist (IA 4) is untouched and still gates every provider on the
+  create path, so enabling email+password does not widen *who* may hold an account — only how
+  they authenticate. Email+password accounts remain **unverified** (no mail transport in OSS):
+  a deployment that enables it accepts that anyone able to type an allowlisted address can
+  claim one.
+- **Acceptance:** with `AUTH_EMAIL_PASSWORD=true` and no Google credentials, a production-mode
+  app boots, `GET /api/config` reports `emailPasswordEnabled: true`, and an allowlisted address
+  can sign up and sign in; with neither Google nor email+password configured, production
+  startup fails with a clear message; with `AUTH_EMAIL_PASSWORD` unset, production still
+  requires the Google credentials and rejects email+password (S1 behaviour preserved); a
+  disallowed domain is still refused on the email+password path (IA 4).
