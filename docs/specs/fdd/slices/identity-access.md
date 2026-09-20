@@ -90,12 +90,34 @@ dev/test keep email+password, so existing deployments behave byte-identically.
   production bundle regardless of server configuration.
 - The sign-up domain allowlist (IA 4) is untouched and still gates every provider on the
   create path, so enabling email+password does not widen *who* may hold an account — only how
-  they authenticate. Email+password accounts remain **unverified** (no mail transport in OSS):
-  a deployment that enables it accepts that anyone able to type an allowlisted address can
-  claim one.
+  they authenticate.
+- `AUTH_ALLOW_SIGNUP` (boolean, default **closed in production**, open in dev/test) gates
+  account **creation** in `databaseHooks.user.create.before`, beside the allowlist — the one
+  enforcement point, so it covers every provider. Closed, the deployment creates no accounts at
+  all, by any route; a first-time Google sign-in is refused along with an email+password
+  sign-up. It gates creation only: existing accounts still sign in, and the MCP connector's
+  OAuth flow authorises an existing Account rather than creating one, so connector access is
+  unaffected. A deployment for a fixed team opens it, creates its accounts, and closes it again.
+  *(IA 4)*
+- **Why the gate is a switch and not a better allowlist.** Neither a domain nor an exact-address
+  allowlist proves **ownership** of an address (CWE-290): without mail transport there is no
+  verification step, so whoever reaches the sign-up route first claims the address and receives
+  a session for it. Narrowing the allowlist shrinks that surface without closing it, and the
+  first account is often the most valuable one to take. Closing creation removes the path
+  instead of narrowing it.
+- **The residual risk, stated rather than papered over.** While `AUTH_ALLOW_SIGNUP` is open, an
+  email+password account is still **unverified**: anyone who can reach the deployment and type
+  an allowlisted address can claim it. A deployment that opens it accepts that for as long as it
+  stays open. Verified email+password sign-up needs a mail transport, which OSS does not have —
+  tracked as EE's `EI1 — Mail transport + magic-link sign-in`.
 - **Acceptance:** with `AUTH_EMAIL_PASSWORD=true` and no Google credentials, a production-mode
-  app boots, `GET /api/config` reports `emailPasswordEnabled: true`, and an allowlisted address
-  can sign up and sign in; with neither Google nor email+password configured, production
-  startup fails with a clear message; with `AUTH_EMAIL_PASSWORD` unset, production still
-  requires the Google credentials and rejects email+password (S1 behaviour preserved); a
-  disallowed domain is still refused on the email+password path (IA 4).
+  app boots, `GET /api/config` reports `emailPasswordEnabled: true`, and (signup open) an
+  allowlisted address can sign up and sign in; with neither Google nor email+password
+  configured, production startup fails with a clear message; with `AUTH_EMAIL_PASSWORD` unset,
+  production still requires the Google credentials and rejects email+password (S1 behaviour
+  preserved); a disallowed domain is still refused on the email+password path (IA 4).
+- **Acceptance (signup gate):** with `AUTH_ALLOW_SIGNUP` closed, an allowlisted address is
+  refused on **both** the email+password and the Google create paths, while an account created
+  earlier still signs in and an existing MCP Account still completes the OAuth flow; production
+  with the flag unset defaults to closed; dev/test with it unset default to open, so S1's suite
+  is unchanged.
