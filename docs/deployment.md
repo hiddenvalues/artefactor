@@ -165,10 +165,9 @@ How much work this is depends on the **fork's visibility**:
    payloads, never inside `ARTEFACTOR_PAYLOAD_DIR`, so keep the two directories distinct if you
    do move them.
 
-   Rendering is not a switch: there is no `ARTEFACTOR_THUMBNAILS` flag (S35 had one; S37 —
-   Isolated thumbnail renderer removed it, and a leftover value is ignored). What decides it is
-   `ARTEFACTOR_RENDERER_URL` — set and reachable, cards get rendered previews; unset, the app
-   renders nothing at all and every card shows its kind placeholder, with nothing else changed.
+   `ARTEFACTOR_RENDERER_URL` alone decides whether cards carry a rendered preview: set and
+   reachable, thumbnails are rendered; unset, the app renders nothing at all and every card shows
+   its kind placeholder, with nothing else changed.
 
 Don't deploy yet — the image doesn't exist until the first workflow run (step 7).
 
