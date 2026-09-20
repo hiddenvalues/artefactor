@@ -62,7 +62,7 @@ The *why* of an edge belongs in the slice body. Other headings (`# <Context>`,
 
 | Context | File | Slices |
 |---|---|---|
-| Artefact Data | [artefact-data.md](slices/artefact-data.md) | S11, S12, S13, S17, S19a, S20 |
+| Artefact Data | [artefact-data.md](fdd/slices/artefact-data.md) | S11, S12, S13, S17, S19a, S20 |
 
 ## High-water marks
 
@@ -70,7 +70,9 @@ The *why* of an edge belongs in the slice body. Other headings (`# <Context>`,
 ```
 
 - **Context** equals the file's H1; **File** is a link whose target is the file's path,
-  relative to the catalog; **Slices** lists the file's slice ids in file order.
+  relative to the catalog; **Slices** lists the file's slice ids in file order. (The sample row
+  above targets `fdd/slices/…` so that it resolves from *this* README; inside the catalog itself
+  the cell reads `slices/artefact-data.md`.)
 - **High-water marks** — one `- **<prefix>:** <id>` line per id prefix in use. A mark is the
   highest number ever allocated for that prefix; a sub-lettered id counts by its number (`S34b`
   sits at `S34`). A number is never reused, so a mark may sit above the highest slice, never
