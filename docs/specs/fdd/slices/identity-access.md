@@ -91,14 +91,23 @@ dev/test keep email+password, so existing deployments behave byte-identically.
 - The sign-up domain allowlist (IA 4) is untouched and still gates every provider on the
   create path, so enabling email+password does not widen *who* may hold an account — only how
   they authenticate.
-- `AUTH_ALLOW_SIGNUP` (boolean, default **closed in production**, open in dev/test) gates
-  account **creation** in `databaseHooks.user.create.before`, beside the allowlist — the one
-  enforcement point, so it covers every provider. Closed, the deployment creates no accounts at
-  all, by any route; a first-time Google sign-in is refused along with an email+password
-  sign-up. It gates creation only: existing accounts still sign in, and the MCP connector's
-  OAuth flow authorises an existing Account rather than creating one, so connector access is
-  unaffected. A deployment for a fixed team opens it, creates its accounts, and closes it again.
-  *(IA 4)*
+- `AUTH_ALLOW_SIGNUP` (boolean) gates account **creation** in
+  `databaseHooks.user.create.before`, beside the allowlist — the one enforcement point, so it
+  covers every provider. Closed, the deployment creates no accounts at all, by any route; a
+  first-time Google sign-in is refused along with an email+password sign-up. It gates creation
+  only: existing accounts still sign in, and the MCP connector's OAuth flow authorises an
+  existing Account rather than creating one, so connector access is unaffected. A deployment for
+  a fixed team opens it, creates its accounts, and closes it again. *(IA 4)*
+- **The default tracks whether an unverified credential path is open**, rather than being a
+  blanket production rule: unset, the gate is **closed when email+password is enabled in
+  production**, and **open** otherwise. This is a rule about verification, not a compatibility
+  concession. Google has already proven the address it asserts, so a Google-only deployment's
+  first sign-in creates an account against a *verified* identity and needs no gate — it behaves
+  exactly as it did under S1. Email+password has no such proof while OSS carries no mail
+  transport, so the deployment that enables it is the one that gets a closed door by default. A
+  deployment enabling both in production is closed by default, because the unverified path
+  exists. Dev and test are open, so S1's suite is unchanged. An explicit `AUTH_ALLOW_SIGNUP`
+  overrides the default either way.
 - **Why the gate is a switch and not a better allowlist.** Neither a domain nor an exact-address
   allowlist proves **ownership** of an address (CWE-290): without mail transport there is no
   verification step, so whoever reaches the sign-up route first claims the address and receives
@@ -118,6 +127,9 @@ dev/test keep email+password, so existing deployments behave byte-identically.
   preserved); a disallowed domain is still refused on the email+password path (IA 4).
 - **Acceptance (signup gate):** with `AUTH_ALLOW_SIGNUP` closed, an allowlisted address is
   refused on **both** the email+password and the Google create paths, while an account created
-  earlier still signs in and an existing MCP Account still completes the OAuth flow; production
-  with the flag unset defaults to closed; dev/test with it unset default to open, so S1's suite
-  is unchanged.
+  earlier still signs in and an existing MCP Account still completes the OAuth flow; with the
+  flag unset, a production deployment that enables email+password defaults to **closed** while a
+  Google-only production deployment defaults to **open** and creates an account on first sign-in
+  exactly as under S1; a production deployment enabling both defaults to closed; dev/test with
+  it unset default to open; an explicit value wins over the default in every one of those
+  cases.
