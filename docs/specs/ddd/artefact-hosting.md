@@ -515,8 +515,11 @@ change visibility and access lists, archive and delete, write data.
   the access matrix (AH8, on the effective tier of AH20, under the policy of AH18) is
   re-evaluated at every token redeem, so a revocation takes effect at once.
 - **Optional content origin.** When `ARTEFACTOR_CONTENT_ORIGIN` is set, frames are served only
-  on that origin, which must be a **separate registrable domain** from the app (startup refuses
-  the app host itself, a subdomain of it, or a parent domain of it). That host answers only the
+  on that origin, which must be a **separate registrable domain** from the app. Startup refuses
+  the app host itself, a subdomain of it, and a parent domain of it; it compares **hosts, not
+  registrable domains** (no public-suffix list), so a sibling under one registrable domain —
+  `content.example.com` beside `app.example.com` — is *accepted*, and keeping them apart stays
+  the operator's responsibility. That host answers only the
   two frame routes and `/health`, and the app host answers no frame route. Unset, frames are
   served on the app host, isolated by the sandbox alone.
 

@@ -549,9 +549,10 @@ amendments: `ddd/artefact-hosting.md` AH28, `ddd/artefact-data.md` AD10,
   the pin, the no-overlap rule, the 412 → conflict banner and the `pagehide` keepalive.
 - **CSRF backstop** *(IA6)* — `/api/*` state changes (not `/api/auth/*`) with an untrusted
   `Origin` or a non-`same-origin` `Sec-Fetch-Site` → 403.
-- **Content origin** *(AH28)* — optional `ARTEFACTOR_CONTENT_ORIGIN`, validated at startup as a
-  separate registrable domain; that host answers only the frame routes and `/health`, the app
-  host answers no frame route.
+- **Content origin** *(AH28)* — optional `ARTEFACTOR_CONTENT_ORIGIN`, validated at startup
+  against the app host (equal, subdomain or parent refused; a sibling sharing one registrable
+  domain is not detected — no public-suffix list); that host answers only the frame routes and
+  `/health`, the app host answers no frame route.
 - **Authoring guide** — `skills/artefactor/SKILL.md` and the MCP `instructions` warn that
   `sessionStorage`, IndexedDB and cookies are never saved and throw in the sandbox, name the
   libraries that silently use IndexedDB, and say top-targeted links don't navigate.
@@ -591,7 +592,9 @@ amendments: `ddd/artefact-hosting.md` AH28, `ddd/artefact-data.md` AD10,
   `GET` with `Origin: null`, `POST /mcp` with a bearer and `Origin: null`, and `/api/auth/*` are not
   blocked by it.
 - **Content origin.** A value equal to, a subdomain of, or a parent of the `BETTER_AUTH_URL` host,
-  or carrying a path, fails startup validation; unset is fine. When set, the content host answers
+  or carrying a path, fails startup validation; a sibling sharing the app's registrable domain
+  passes (the documented limit — hosts are compared, not registrable domains); unset is fine.
+  When set, the content host answers
   `/a/:slug/frame?t=…` 200 and `/health` 200, and 404 for `/a/:slug`, `/api/me`, `/`, `/mcp` and
   `/.well-known/oauth-authorization-server`; the app host answers `/a/:slug/frame` 404; the
   shell's iframe `src` and the mint's `frameUrl` are absolute on the content origin, and the

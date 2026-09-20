@@ -27,6 +27,13 @@ describe("ARTEFACTOR_CONTENT_ORIGIN validation (S36)", () => {
     expect(contentOriginProblem("https://example.com", APP)).toMatch(/registrable domain/);
   });
 
+  // The documented limit of this check (S36 decided against a public-suffix-list
+  // dependency): it compares hosts, not registrable domains, so a sibling under
+  // one registrable domain is accepted and stays the operator's responsibility.
+  it("accepts a sibling host sharing the app's registrable domain, by design", () => {
+    expect(contentOriginProblem("https://content.example.com", "https://artefactor.example.com")).toBeNull();
+  });
+
   it("refuses a value that isn't a bare http(s) origin", () => {
     for (const value of [
       "https://humlycontent.com/frames",
