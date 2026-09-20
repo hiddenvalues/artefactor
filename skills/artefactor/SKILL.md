@@ -28,13 +28,14 @@ the user** (OAuth), so everything you create is owned by them. Tools:
   artefact id, slug, and share URL (when shared).
 - **`update_artefact`** `{ id, title?, kind?, html? }` — replace fields on an artefact you own.
   `html` is a **full replacement**, not a patch — send the whole document.
-- **`list_artefacts`** / **`get_artefact`** — find what the user already has (use these before
-  creating a duplicate; update in place when iterating). `get_artefact` returns
+- **`list_artefacts`** `{ include_archived? }` / **`get_artefact`** `{ id }` — find what the user
+  already has (use these before creating a duplicate; update in place when iterating). Archived
+  artefacts are hidden from the list unless you ask for them. `get_artefact` returns
   **`dataAuthorCount`** — how many users have saved data in this artefact.
-- **`get_artefact_html`** `{ id }` — the artefact's **stored HTML**, exactly as served. Use it
-  to derive a new artefact from an existing one, or to re-read an artefact before updating it
-  when you no longer have the source (`update_artefact` replaces the HTML wholesale, so you
-  need the current document to change it safely).
+- **`get_artefact_html`** `{ id }` — the artefact's **stored HTML**, exactly as served, plus
+  `dataAuthorCount`. Use it to derive a new artefact from an existing one, or to re-read an
+  artefact before updating it when you no longer have the source (`update_artefact` replaces the
+  HTML wholesale, so you need the current document to change it safely).
 - **`get_artefact_data`** `{ id }` — **your own** saved data for the artefact, verbatim, plus
   the shape the artefact **declares** for itself. Read it before any change to the data shape.
   Returns `blob` (your entry, `null` if you have none), `bytes`, `updatedAt`, `schema` (the
@@ -44,11 +45,17 @@ the user** (OAuth), so everything you create is owned by them. Tools:
   for the artefact. **Whole-blob replacement: not a patch, nothing is merged — any key you leave
   out is deleted.** Returns `{ id, bytes, updatedAt }`. See "Editing the user's saved data" below
   before using it.
-- **`set_visibility`** / **`archive_artefact`** / **`restore_artefact`** — manage sharing and
-  lifecycle.
+- **`set_visibility`** `{ id, visibility }` / **`archive_artefact`** / **`restore_artefact`** —
+  manage sharing and lifecycle. An artefact the user has filed in a collection takes its
+  visibility from that collection, so `set_visibility` refuses it — say so rather than retrying.
 - **`get_authoring_guide`** — returns this guide. If you're working through the connector
   without this skill loaded (e.g. in Claude design), call it before writing artefact HTML to
   get the persistence contract, template, and checklist below.
+
+Every tool works on the user's **own** artefacts only — an unknown id and someone else's
+artefact both come back as "not found", and the data tools reach no author's entry but the
+user's. An **archived** artefact is out of reach the same way: `restore_artefact` brings it back;
+every other tool refuses it until you do.
 
 Both read-back tools **refuse** a result too large for a tool call (roughly 1 MB of HTML,
 256 KB of data) rather than truncating it — truncated HTML can't be edited and truncated JSON
