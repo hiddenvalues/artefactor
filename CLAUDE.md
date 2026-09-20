@@ -10,110 +10,75 @@ prints the graph, the next build waves and the next free slice id). In-flight wo
 
 ## Architecture at a glance
 
+Orientation only: what each part is and where its code lives. The **specs own the detail** —
+routes, invariants, mechanics — so each bullet ends with the spec that governs it (paths under
+[`docs/specs/`](docs/specs/): `ddd/` for the domain model, `fdd/slices/` for the slices). Read
+that spec before changing anything in the area.
+
 - **Monolith**: one Hono process (`src/server`) serves the BFF API (`/api`, `/health`), the
   artefact serving routes (`/a/*`), the MCP server (`/mcp`) and the built Svelte SPA
   (`dist/client`, with SPA fallback). Entry `src/server/index.ts`.
 - **Pure domain layer** (`src/domain`) — aggregates + invariants, **no framework imports**;
-  defines repository/store **ports**. This is the primary TDD surface (tested against
-  in-memory repos). Adapters live in `src/infra` (Drizzle in `db/`, filesystem payloads in
-  `storage/`). The server is the composition root wiring routes → domain → adapters.
-- **Client** (`src/client`) is a Vite + Svelte 5 SPA; shared BFF contracts in `src/shared`.
+  defines repository/store **ports**. The primary TDD surface (tested against in-memory repos).
+  Adapters live in `src/infra` (Drizzle in `db/`, filesystem payloads in `storage/`); the server
+  is the composition root wiring routes → domain → adapters.
+- **Client** (`src/client`) is a Vite + Svelte 5 SPA — the human-facing app, not a stub; shared
+  BFF contracts in `src/shared`.
 - **Composition + enabler seams.** `createApp` takes the persistence adapter set
-  (`src/server/adapters.ts` is the OSS default: SQLite + filesystem) and the BetterAuth instance
-  as injected dependencies, plus a `TenantScopeResolver` and an `AccessPolicy`. These are
-  **enabler seams**: behaviour-preserving extension points that let a closed superset extend
-  the core without forking it, each wired with an OSS default that keeps OSS behaviour
-  byte-identical. The access matrix (`domain/artefact/access.ts`) stays single-sourced; the
-  policy decides only its one overridable cell (a signed-in non-owner on the `authenticated`
-  tier).
-- **Identity** (`src/server/auth.ts`) — BetterAuth via its Drizzle adapter: Google OAuth in
-  production, email + password in dev/test only, a sign-up email-domain allowlist (with a `*`
-  allow-all option), session middleware + the `requireAuth` guard, protected `GET /api/me`, and
-  an `Origin` / `Sec-Fetch-Site` check refusing cross-origin state changes under `/api` (IA6;
-  `/api/auth/*` is BetterAuth's own).
-- **Artefact Hosting** (`src/domain/artefact/`, `src/server/artefacts/`) — the `Artefact`
-  aggregate, a Drizzle `ArtefactRepository`, the pure access matrix, and commands for
-  create / edit / set-visibility / manage access list / archive / restore / permanent delete.
-  Routes: `POST|GET /api/artefacts`, `GET|PATCH|DELETE /api/artefacts/:id` (+ `/:id/raw` owner
-  preview), `PUT …/:id/visibility`, `GET|POST|DELETE …/:id/access(/:userId)`,
-  `POST …/:id/archive|restore`, `PUT …/:id/collection`, `PUT|DELETE …/:id/bookmark`,
-  `GET /api/shared`, `GET /api/users/search`, and the export `GET /api/artefacts/:ref/download`
-  (the **stored** payload verbatim — no bootstrap, no shell — so download → edit → re-upload
-  round-trips).
-- **Artefact Collections** (`docs/specs/ddd/artefact-collections.md`) — an owner-only nestable
-  folder tree whose **root's** access the contained artefacts inherit at read time; the root's
-  access list doubles as its contributor list. Archive / restore / permanent delete cascade and
-  evict foreign artefacts rather than touching them. Per-user bookmarks. Routes under
-  `/api/collections` and `GET /api/shared/collections`.
-- **Artefact Data** (`src/domain/data/`, `src/server/data/`) — the `DataEntry` aggregate: an
-  opaque ≤ 5 MB JSON blob, one per `(artefact, author)`, stamped on every write with the
-  payload hash it was authored against (advisory). `GET|PUT|DELETE /api/artefacts/:ref/data/me`
-  (`:ref` = slug **or** id, access-matrix gated; `PUT` optionally pinned with
-  `If-Match` / `If-None-Match: *` → 412), plus `GET …/data/authors` and `GET …/data/:authorId`,
-  which are access-matrix gated but **not** auth-gated (anonymous may read a `public`
-  artefact's data). `GET /api/artefacts/:ref/viewers` lists who has viewed.
-- **Artefact thumbnails** (`src/server/thumbnails/`, `src/infra/render/`, `src/renderer/`) — a
-  derived 512×320 WebP per artefact for the dashboard and gallery cards, rendered from the stored
-  payload alone (no bootstrap, no shell, no data) at a synthetic origin, through an **in-process
-  queue**: create / HTML replace enqueue after the save and a startup sweep backfills, and a
-  render is recorded only by a compare-and-set against the current payload hash. Files live
-  beside the payloads (`ARTEFACTOR_THUMBNAIL_DIR`); `GET /api/artefacts/:ref/thumbnail` is
-  signed-in only and resolves like the download. Because a render runs the uploader's JavaScript,
-  Chromium never runs in the app: `src/renderer/` is a **separate role from the same image**
-  (`ARTEFACTOR_ROLE=renderer`) — its own entry point and env, no secrets, DB or storage, sandbox
-  **on**, one job per container, egress-restricted — and the app talks to it over HTTP
-  (`ARTEFACTOR_RENDERER_URL`, `HttpThumbnailRenderer`), never rendering payloads over
-  `MAX_RENDER_INPUT_BYTES` (10 MB). With the URL unset every card keeps its kind placeholder and
-  nothing else changes (AH25/AH29; `docs/renderer-isolation.md`, `deploy/`).
+  (`src/server/adapters.ts` is the OSS default: SQLite + filesystem), the BetterAuth instance, a
+  `TenantScopeResolver` and an `AccessPolicy` as injected dependencies — **enabler seams**: each
+  keeps OSS behaviour byte-identical while letting a closed superset extend the core without
+  forking it. Security-critical logic stays single-sourced: the access matrix
+  (`domain/artefact/access.ts`) is one table, and the policy decides only its one overridable
+  cell.
+  → [`fdd/slices/platform.md`](docs/specs/fdd/slices/platform.md)
+- **Identity & Access** (`src/server/auth.ts`) — BetterAuth via its Drizzle adapter; the domain
+  owns no user or session aggregate, the BetterAuth user id *is* the `ownerId`.
+  → [`ddd/identity-access.md`](docs/specs/ddd/identity-access.md),
+  [`fdd/slices/identity-access.md`](docs/specs/fdd/slices/identity-access.md)
+- **Artefact Hosting** (`src/domain/artefact/`, `src/server/artefacts/`) — the core context: the
+  `Artefact` aggregate, the pure access matrix, and the commands and `/api/artefacts` routes that
+  create, edit, share, archive and export artefacts.
+  → [`ddd/artefact-hosting.md`](docs/specs/ddd/artefact-hosting.md),
+  [`fdd/slices/artefact-hosting.md`](docs/specs/fdd/slices/artefact-hosting.md)
+- **Artefact Collections** — an owner-only nestable folder tree whose **root's** access the
+  contained artefacts inherit at read time. Routes under `/api/collections`.
+  → [`ddd/artefact-collections.md`](docs/specs/ddd/artefact-collections.md),
+  [`fdd/slices/artefact-collections.md`](docs/specs/fdd/slices/artefact-collections.md)
+- **Artefact Data** (`src/domain/data/`, `src/server/data/`) — the `DataEntry` aggregate: one
+  **opaque** JSON blob per `(artefact, author)`, under `/api/artefacts/:ref/data/*`. The backend
+  never interprets it, so there is **no merge-patch**: agents read-modify-write their own entry
+  whole, and the artefact owns its own data-shape compatibility.
+  → [`ddd/artefact-data.md`](docs/specs/ddd/artefact-data.md),
+  [`fdd/slices/artefact-data.md`](docs/specs/fdd/slices/artefact-data.md)
+- **Artefact Views** — who has viewed an artefact, surfaced in the serving shell.
+  → [`ddd/artefact-views.md`](docs/specs/ddd/artefact-views.md),
+  [`fdd/slices/artefact-views.md`](docs/specs/fdd/slices/artefact-views.md)
 - **Serving runtime** (`src/server/runtime/`) — `/a/:slug` is a server-rendered host **shell**
-  (toolbar: data-context switcher, viewers, conflict banner) wrapping the artefact in a
-  **sandboxed, opaque-origin** `<iframe>` (no `allow-same-origin`; the frame responses carry the
-  same flags as a `sandbox` CSP). Frames (`/a/:slug/frame`, `/api/artefacts/:id/raw/frame`,
-  `routes/frame.ts`) never read cookies: they are opened with a short-lived HMAC **frame token**
-  (`?t=`, viewer + author + route) that the shell render embeds and
-  `POST /api/artefacts/:ref/frame-token` re-mints (author switch, reload, expiry), and they
-  re-check access at every redeem. Both serving paths inject a seeded `localStorage` shim, so
-  artefacts persist with zero code changes; the shim **posts each change to the shell** (carrying
-  the token-derived **channel**, so a page the frame navigated itself to can't forge one), which
-  saves it under the viewer's session — writing only on change, pinned, never overlapping, and on
-  a 412 it stops and offers a reload, so an open tab can neither block nor silently revert another
-  writer. Optional `ARTEFACTOR_CONTENT_ORIGIN` serves frames from a separate registrable domain
-  that answers nothing else.
-- **MCP connector** (`src/server/mcp/`) — `POST /mcp` (Streamable HTTP via `@hono/mcp`,
-  stateless JSON responses) behind an OAuth bearer from BetterAuth's `mcp` plugin (discovery at
-  `/.well-known/oauth-*`, dynamic client registration, authorize / consent / token under
-  `/api/auth/mcp/*`, OIDC tables `oauth_application|oauth_access_token|oauth_consent`). Tools
-  wrap the Hosting and Data commands, each attributed to the token's Account:
-  `create_artefact`, `update_artefact`, `list_artefacts`, `get_artefact`, `set_visibility`,
-  `archive_artefact`, `restore_artefact`, the read-backs `get_artefact_html` and
-  `get_artefact_data` (the caller's **own** blob verbatim + the declared schema + the
-  `currentPayloadVersion` / `authoredAgainstVersion` pin), the write `set_artefact_data`, and
-  `get_authoring_guide`. Read-backs hard-error above a context cap (~1 MB HTML / 256 KB blob)
-  instead of truncating, pointing at the GUI download. Because connector-only clients (e.g.
-  Claude design) **can't load the `artefactor` Agent Skill**, the server's `instructions` carry
-  a compact persistence summary (ambient, before any tool call) and `get_authoring_guide`
-  returns the full `skills/artefactor/SKILL.md` body (the Dockerfile copies `skills/` into the
-  runtime image). `src/server/mcp/authoring-guide.ts` and the skill are kept in sync.
-- **Data blobs stay opaque — no merge-patch.** A backend merge would have to parse the blob,
-  breaking opacity. The server parses only to enforce the size/JSON bound. Agents edit data by
-  **read-modify-write**: `get_artefact_data`, transform **agent-side**, write the **whole** blob
-  back with `set_artefact_data` through the same `putOwnDataEntry` as `PUT …/data/me`, only to
-  the caller's own entry, optionally pinned (`if_unmodified_since` → `DataConflict`).
-  `get_artefact` / `update_artefact` return `dataAuthorCount` so a breaking HTML change can be
-  flagged; the artefact owns its data-shape compatibility (versioned `localStorage` keys + a
-  forward migration shipped in its own HTML, and a declared data schema in
-  `<script type="application/artefactor-schema+json">`).
-- **Two publishing paths.** *Path A* — the MCP connector pushes HTML; it cannot carry base64
+  wrapping the artefact in a **sandboxed, opaque-origin** `<iframe>` that carries no cookies
+  (a short-lived HMAC frame token authenticates it) and whose seeded `localStorage` shim posts
+  every change to the shell to be saved.
+  → [`ddd/artefact-hosting.md`](docs/specs/ddd/artefact-hosting.md),
+  [`ddd/artefact-data.md`](docs/specs/ddd/artefact-data.md)
+- **Artefact thumbnails** (`src/server/thumbnails/`, `src/infra/render/`, `src/renderer/`) — a
+  derived WebP per artefact. A render runs the uploader's JavaScript, so Chromium never runs in
+  the app: `src/renderer/` is a **separate role from the same image**
+  (`ARTEFACTOR_ROLE=renderer`), reached over HTTP; unset `ARTEFACTOR_RENDERER_URL` and every card
+  keeps its kind placeholder.
+  → [`ddd/artefact-hosting.md`](docs/specs/ddd/artefact-hosting.md),
+  [`docs/renderer-isolation.md`](docs/renderer-isolation.md)
+- **MCP connector** (`src/server/mcp/`) — `POST /mcp` behind an OAuth bearer from BetterAuth's
+  `mcp` plugin; its tools wrap the Hosting and Data commands, attributed to the token's Account,
+  and add no authority of their own. Connector-only clients (e.g. Claude design) **can't load the
+  `artefactor` Agent Skill**, so the server's `instructions` carry a compact persistence summary
+  and `get_authoring_guide` returns the full `skills/artefactor/SKILL.md` body —
+  `src/server/mcp/authoring-guide.ts` and the skill are kept in sync.
+  → [`fdd/slices/mcp-connector.md`](docs/specs/fdd/slices/mcp-connector.md)
+- **Two publishing paths.** *Path A* — the MCP connector pushes HTML, but cannot carry base64
   raster image bytes through a tool call. *Path B* — the **manual HTML upload** dialog in the
-  client (`lib/components/UploadModal.svelte`: drag-drop or pick a single `.html` file, title +
-  kind; the same dialog replaces an existing artefact's HTML) — is the supported way to publish
-  an artefact that embeds raster images. Both run the same create/edit commands, so invariants
-  are identical. (See `skills/artefactor/SKILL.md` and the MCP `instructions`.)
-- **Client UI** (`src/client`) is the human-facing app, not a stub: sign-in; a dashboard of
-  owned / "shared with you" / archived artefacts (grouped by kind, searchable, filterable by
-  access); a collections sidebar, collection pages and an archive view; manual upload;
-  manage-access (`ManageAccessModal.svelte`); archive / restore / permanent delete
-  (`ConfirmDialog.svelte`); "Download HTML" in an owned artefact's `MoreMenu`.
+  client, the supported way to publish an artefact that embeds raster images. Both run the same
+  create/edit commands, so invariants are identical.
+  → [`skills/artefactor/SKILL.md`](skills/artefactor/SKILL.md)
 
 ## What this is
 
@@ -126,9 +91,8 @@ app.
 
 The domain and build plan live in `docs/specs/` and are the **source of truth**:
 
-- `docs/specs/ddd/` — domain model: ubiquitous language, the **Identity & Access**,
-  **Artefact Hosting**, and **Artefact Data** bounded contexts, with aggregates and
-  invariants.
+- `docs/specs/ddd/` — domain model: the ubiquitous language, and one file per bounded
+  context with its aggregates and invariants.
 - `docs/specs/fdd/slice-dag.md` — the feature slice DAG's catalog, listing one file per context
   under `docs/specs/fdd/slices/` with every slice's status, dependencies and acceptance criteria
   (the seeds for TDD tests). `s0-scaffold.md` has the full S0 spec.
