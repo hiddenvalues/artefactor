@@ -54,8 +54,9 @@ the user** (OAuth), so everything you create is owned by them. Tools:
 
 Every tool works on the user's **own** artefacts only — an unknown id and someone else's
 artefact both come back as "not found", and the data tools reach no author's entry but the
-user's. An **archived** artefact is out of reach the same way: `restore_artefact` brings it back;
-every other tool refuses it until you do.
+user's. An **archived** artefact is reachable only by `list_artefacts` with
+`include_archived: true` and by `restore_artefact`; every other tool reads it as not found, so
+restore it before updating it or touching its data.
 
 Both read-back tools **refuse** a result too large for a tool call (roughly 1 MB of HTML,
 256 KB of data) rather than truncating it — truncated HTML can't be edited and truncated JSON

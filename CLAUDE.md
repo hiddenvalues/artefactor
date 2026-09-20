@@ -11,9 +11,10 @@ prints the graph, the next build waves and the next free slice id). In-flight wo
 ## Architecture at a glance
 
 Orientation only: what each part is and where its code lives. The **specs own the detail** —
-routes, invariants, mechanics — so each bullet ends with the spec that governs it (paths under
-[`docs/specs/`](docs/specs/): `ddd/` for the domain model, `fdd/slices/` for the slices). Read
-that spec before changing anything in the area.
+routes, invariants, mechanics — so every bullet that a spec governs ends with a link to it (paths
+under [`docs/specs/`](docs/specs/): `ddd/` for the domain model, `fdd/slices/` for the slices);
+read that spec before changing anything in the area. The first three bullets describe the repo's
+shape rather than a bounded context, so no spec governs them.
 
 - **Monolith**: one Hono process (`src/server`) serves the BFF API (`/api`, `/health`), the
   artefact serving routes (`/a/*`), the MCP server (`/mcp`) and the built Svelte SPA
@@ -41,8 +42,10 @@ that spec before changing anything in the area.
   create, edit, share, archive and export artefacts.
   → [`ddd/artefact-hosting.md`](docs/specs/ddd/artefact-hosting.md),
   [`fdd/slices/artefact-hosting.md`](docs/specs/fdd/slices/artefact-hosting.md)
-- **Artefact Collections** — an owner-only nestable folder tree whose **root's** access the
-  contained artefacts inherit at read time. Routes under `/api/collections`.
+- **Artefact Collections** — a nestable folder tree, owned by one user and never spanning owners;
+  its structure, access and lifecycle are owner-only, but the **root's** access list doubles as a
+  contributor list, so a contributor may place their own artefacts in the tree — and those
+  artefacts inherit the root's access at read time. Routes under `/api/collections`.
   → [`ddd/artefact-collections.md`](docs/specs/ddd/artefact-collections.md),
   [`fdd/slices/artefact-collections.md`](docs/specs/fdd/slices/artefact-collections.md)
 - **Artefact Data** (`src/domain/data/`, `src/server/data/`) — the `DataEntry` aggregate: one
