@@ -55,6 +55,37 @@ describe("env schema — sign-in methods (S38)", () => {
     const res = envSchema.safeParse({ ...base, NODE_ENV: "development" });
     expect(res.success).toBe(true);
   });
+
+  // deploy/docker-compose.example.yml passes `${GOOGLE_CLIENT_ID:-}`, so an
+  // operator who configures no Google client hands the container an **empty
+  // string**, not an absent variable. That has to read as "no Google", or the
+  // email+password route out of IA7 would be unreachable through the supplied
+  // Compose file.
+  it("treats empty Google credentials as unset", () => {
+    const empty = { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" };
+    const res = prod({ ...empty, AUTH_EMAIL_PASSWORD: "true" });
+    expect(res.success).toBe(true);
+    expect(res.data!.GOOGLE_CLIENT_ID).toBeUndefined();
+    expect(res.data!.GOOGLE_CLIENT_SECRET).toBeUndefined();
+
+    // ...and with no method at all it is IA7 that refuses, not a string-length
+    // complaint about a variable the operator deliberately left blank.
+    const neither = prod(empty);
+    expect(neither.success).toBe(false);
+    expect(messages(neither)).toContain("production needs a sign-in method");
+  });
+
+  it("reads a blank Google credential as unset, not as configured", () => {
+    // Half-configured is the dangerous shape: a whitespace-only id would
+    // otherwise enable the provider and render a button that cannot work.
+    const res = prod({
+      GOOGLE_CLIENT_ID: "   ",
+      GOOGLE_CLIENT_SECRET: "google-client-secret",
+      AUTH_EMAIL_PASSWORD: "true",
+    });
+    expect(res.success).toBe(true);
+    expect(res.data!.GOOGLE_CLIENT_ID).toBeUndefined();
+  });
 });
 
 describe("env schema — the auth booleans (S38)", () => {

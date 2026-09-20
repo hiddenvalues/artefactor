@@ -2,6 +2,15 @@ import { z } from "zod";
 import { contentOriginProblem } from "./runtime/content-origin";
 import { resolveAuthConfig, type AuthConfig } from "../domain/identity/auth-config";
 
+// An optional string an operator may leave blank: `${VAR:-}` in a compose file
+// hands the process an empty string, which means "not configured", not "a value
+// of length zero". (`ARTEFACTOR_RENDERER_URL` in the schema below does the same inline.)
+const blankAsUnset = <T extends z.ZodType>(inner: T) =>
+  z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    inner,
+  );
+
 // S38 — an optional operator boolean. `true|false|1|0` case-insensitively; an
 // **empty string parses as unset**, so a `${AUTH_EMAIL_PASSWORD:-}` pass-through
 // in compose means "take the default", not a boot failure.
@@ -71,8 +80,12 @@ const schema = z.object({
   // Google OAuth (BetterAuth social sign-in). Enabled exactly when both are set.
   // In production they are required *unless* AUTH_EMAIL_PASSWORD=true — a
   // production deployment needs at least one sign-in method (S38, IA7).
-  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
-  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  // A **blank** value reads as unset rather than as a length violation: the
+  // compose file passes `${GOOGLE_CLIENT_ID:-}`, so a deployment that configures
+  // no Google client hands us an empty string, and half a credential pair would
+  // otherwise enable a provider that cannot work.
+  GOOGLE_CLIENT_ID: blankAsUnset(z.string().min(1).optional()),
+  GOOGLE_CLIENT_SECRET: blankAsUnset(z.string().min(1).optional()),
   // S38 (IA7) — the credential provider. Unset: on outside production, off in it
   // (S1's behaviour). Set it to open email+password on a deployment that does not
   // want a Google dependency.
