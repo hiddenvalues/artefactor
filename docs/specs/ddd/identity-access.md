@@ -17,14 +17,15 @@ This keeps Identity thin: there is no rich `Account` aggregate to invariant-chec
 
 ## Authentication
 
-Two methods, both via BetterAuth, gated by environment:
+Two methods, both via BetterAuth:
 
-1. **Google OAuth** (BetterAuth social sign-in) — the **production** method. Google verifies
-   the email; the domain allowlist (below) then gates who may have an account.
-2. **Email + password** (BetterAuth credential provider) — enabled **only outside
-   production**, for zero-config local dev and the test suite. It is **disabled in
-   production** (`emailAndPassword.enabled = NODE_ENV !== "production"`), so the open,
-   unverified sign-up path cannot exist in prod.
+1. **Google OAuth** (BetterAuth social sign-in) — the **default production** method. Google
+   verifies the email; the domain allowlist (below) then gates who may have an account.
+2. **Email + password** (BetterAuth credential provider) — the zero-config method for local dev
+   and the test suite, and **off in production by default**. Which methods a deployment enables
+   is **configuration**, not a hard rule of the environment: see the *configurable sign-in
+   methods* amendment below (IA7), which also states why an enabled email+password path is an
+   **unverified** one.
 
 Both are additive and can link to the same user. Sessions are issued and validated by
 BetterAuth and surfaced to the Hono BFF as the current authenticated user. Every BFF endpoint
@@ -122,6 +123,51 @@ another site whenever a cookie is sent cross-site) could change state as the vie
 A request with neither header (a non-browser client) passes. **Exemptions:** `GET`/`HEAD`/
 `OPTIONS` are never checked; `/api/auth/*` is left to BetterAuth, which applies its own
 `trustedOrigins` check; `/mcp` is not under `/api` and is authenticated by bearer only (IA2/IA3).
+
+## Amendment (post-v0.2) — configurable sign-in methods & the sign-up gate
+
+> **Status:** DDD amendment (FDD slice **S38**). Default behaviour is unchanged: with both flags
+> unset, production is Google-only with sign-up open, and dev/test keep email+password.
+
+**Problem.** S1 encoded "production is Google-only" as a rule of the *environment*
+(`emailAndPassword.enabled = NODE_ENV !== "production"`, plus an env guard that *required* the
+Google credentials in production). A deployment that does not want a Google dependency therefore
+could not sign in to its own production instance at all. The rule that actually matters is
+**"production has at least one working sign-in method"**.
+
+**IA7 — a production deployment has at least one enabled sign-in method.** Which methods are
+enabled is deployment configuration: `AUTH_EMAIL_PASSWORD` drives the credential provider
+(defaulting to "on outside production"), and the Google provider is enabled exactly when both
+Google credentials are configured. In production the configuration must yield at least one of the
+two; the env schema refuses to boot otherwise, naming both ways out. The rules live in one pure
+function (`domain/identity/auth-config.ts`), and the BFF advertises the resolved methods on
+`GET /api/config` so the sign-in screen renders what the server will actually accept — and can
+never render zero.
+
+**IA4 (amended) — an Account may be created only when sign-up is open *and* the email's domain is
+allowed; this holds for every authentication provider.** The gate (`AUTH_ALLOW_SIGNUP`) sits beside
+the allowlist in the single `databaseHooks.user.create.before` hook — the one create path every
+provider runs through — and is checked *first*, so a closed deployment does not disclose which
+domains it allows. It gates **creation only**: accounts created earlier still sign in, and the MCP
+connector's OAuth flow authorises an *existing* Account rather than creating one (IA2 unaffected).
+
+**The gate's default tracks verification, not environment.** Unset, it is **closed** when
+email+password is enabled in production and **open** otherwise. Google has already proven the
+address it asserts, so a Google-only deployment creates accounts against a verified identity and
+needs no gate — it behaves exactly as under S1. Email+password has no such proof while OSS carries
+no mail transport, so the deployment that enables it is the one that gets a closed door; a
+production deployment enabling both is closed, because the unverified path exists.
+
+**Residual risk, stated rather than papered over.** While the gate is open, an email+password
+account is **unverified** (CWE-290): whoever reaches `POST /api/auth/sign-up/email` first claims any
+allowlisted address, and neither a domain nor an exact-address allowlist proves *ownership* — it
+narrows the surface without closing it. A deployment that opens the gate accepts that for as long
+as it stays open; the intended lifecycle is open it, create the intended accounts, close it again.
+Verified email+password sign-up needs a mail transport, which OSS does not have — tracked as EE's
+`EI1 — Mail transport + magic-link sign-in`.
+
+**IA1, IA2, IA3, IA5 and IA6 are unchanged.** Nothing here changes *who* may hold an account, only
+*how* they authenticate and *whether the door is open*.
 
 ## Open questions
 

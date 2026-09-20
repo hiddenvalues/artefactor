@@ -31,8 +31,15 @@ services:
       ARTEFACTOR_RENDERER_URL: http://renderer:3001
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set it, e.g. openssl rand -hex 32}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?the public https URL}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?}
+      # Sign-in methods (S38 / IA7): production needs at least one, so set the
+      # Google pair *or* AUTH_EMAIL_PASSWORD=true — the server refuses to boot
+      # with neither. Empty means "unset", i.e. take the default.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      AUTH_EMAIL_PASSWORD: ${AUTH_EMAIL_PASSWORD:-}
+      # Account creation (IA 4). Default: closed when production has the
+      # unverified email+password path open, otherwise open.
+      AUTH_ALLOW_SIGNUP: ${AUTH_ALLOW_SIGNUP:-}
       AUTH_ALLOWED_EMAIL_DOMAINS: ${AUTH_ALLOWED_EMAIL_DOMAINS:?your org domain(s)}
     volumes:
       # The SQLite DB, the artefact payloads and their thumbnails.

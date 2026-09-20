@@ -12,7 +12,7 @@ import {
   user,
   verification,
 } from "../infra/db/schema";
-import { env } from "./env";
+import { authConfig, env } from "./env";
 import { isEmailDomainAllowed } from "../domain/identity/email-domain";
 
 // S1 — Identity & Access. BetterAuth owns users, sessions, and credential
@@ -20,14 +20,15 @@ import { isEmailDomainAllowed } from "../domain/identity/email-domain";
 // only ever consumes the stable BetterAuth user id as `ownerId` (see
 // docs/specs/ddd/identity-access.md).
 //
-// Two methods, both via BetterAuth:
-//   - Google OAuth (social sign-in) — the production method. Google verifies the
-//     email; the allowlist below then gates it to the configured domains.
-//   - Email + password — enabled only outside production, for zero-config local
-//     dev and the test suite.
-const googleConfigured = Boolean(
-  env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET,
-);
+// Two methods, both via BetterAuth, and which of them a deployment enables is
+// configuration, not a rule of the environment (S38 / IA7 — resolved once in
+// env.ts as `authConfig`):
+//   - Google OAuth (social sign-in) — enabled when both credentials are set, the
+//     production default. Google verifies the email; the allowlist below then
+//     gates it to the configured domains.
+//   - Email + password — `AUTH_EMAIL_PASSWORD`, defaulting to on outside
+//     production and off in it. It is an **unverified** path while OSS carries no
+//     mail transport, which is what the sign-up gate below exists for.
 
 export const auth = betterAuth({
   baseURL: env.BETTER_AUTH_URL,
@@ -36,10 +37,10 @@ export const auth = betterAuth({
   // Vite SPA on :5273 can drive the auth API during development.
   trustedOrigins: env.AUTH_TRUSTED_ORIGINS,
   emailAndPassword: {
-    // Production is Google-only — see the module comment.
-    enabled: env.NODE_ENV !== "production",
+    // S38 — deployment configuration; see the module comment.
+    enabled: authConfig.emailPasswordEnabled,
   },
-  socialProviders: googleConfigured
+  socialProviders: authConfig.googleEnabled
     ? {
         google: {
           clientId: env.GOOGLE_CLIENT_ID!,
@@ -50,14 +51,23 @@ export const auth = betterAuth({
         },
       }
     : undefined,
-  // IA invariant 4 — account creation is restricted to the allowed email
-  // domains. Enforced on the create path so it covers *every* provider (Google
-  // and dev email+password); a disallowed domain can never create an account,
-  // and therefore can never sign in.
+  // IA invariant 4 (as amended by S38) — an Account may be created only when
+  // sign-up is open **and** the email's domain is allowed. Enforced on the create
+  // path so it covers *every* provider (Google and email+password); a refused
+  // create can never sign in afterwards. It gates creation only: accounts that
+  // already exist still sign in, and the MCP connector's OAuth flow authorises an
+  // existing Account rather than creating one (IA2).
   databaseHooks: {
     user: {
       create: {
         before: async (newUser) => {
+          // The gate is checked first, so a closed deployment does not disclose
+          // which domains it allows.
+          if (!authConfig.signupAllowed) {
+            throw new APIError("FORBIDDEN", {
+              message: "Sign-up is closed on this deployment.",
+            });
+          }
           if (
             !isEmailDomainAllowed(
               newUser.email,

@@ -1,5 +1,20 @@
 import { z } from "zod";
 import { contentOriginProblem } from "./runtime/content-origin";
+import { resolveAuthConfig, type AuthConfig } from "../domain/identity/auth-config";
+
+// S38 — an optional operator boolean. `true|false|1|0` case-insensitively; an
+// **empty string parses as unset**, so a `${AUTH_EMAIL_PASSWORD:-}` pass-through
+// in compose means "take the default", not a boot failure.
+const optionalBoolean = (name: string) =>
+  z.preprocess((v) => {
+    if (v === undefined || v === "") return undefined;
+    if (typeof v !== "string") return v;
+    const s = v.trim().toLowerCase();
+    if (s === "") return undefined;
+    if (s === "true" || s === "1") return true;
+    if (s === "false" || s === "0") return false;
+    return v;
+  }, z.boolean({ error: `${name} must be true, false, 1 or 0` }).optional());
 
 const schema = z.object({
   NODE_ENV: z
@@ -53,10 +68,20 @@ const schema = z.object({
   // (e.g. https://humlycontent.com). That host answers only the frame routes and
   // /health. Unset: frames live on the app host, isolated by the sandbox alone.
   ARTEFACTOR_CONTENT_ORIGIN: z.string().min(1).optional(),
-  // Google OAuth (BetterAuth social sign-in). Required in production, which is
-  // Google-only; optional in dev/test where email+password is the method.
+  // Google OAuth (BetterAuth social sign-in). Enabled exactly when both are set.
+  // In production they are required *unless* AUTH_EMAIL_PASSWORD=true — a
+  // production deployment needs at least one sign-in method (S38, IA7).
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  // S38 (IA7) — the credential provider. Unset: on outside production, off in it
+  // (S1's behaviour). Set it to open email+password on a deployment that does not
+  // want a Google dependency.
+  AUTH_EMAIL_PASSWORD: optionalBoolean("AUTH_EMAIL_PASSWORD"),
+  // S38 (IA4, amended) — the account-creation gate, checked beside the domain
+  // allowlist in the one user-create hook, so it covers every provider. Unset, it
+  // is closed only when production has the unverified email+password path open
+  // (see domain/identity/auth-config.ts).
+  AUTH_ALLOW_SIGNUP: optionalBoolean("AUTH_ALLOW_SIGNUP"),
   // Account creation is restricted to these email domains, for every provider
   // (IA invariant 4). Comma-separated; matched case-insensitively, exact domain.
   AUTH_ALLOWED_EMAIL_DOMAINS: z
@@ -81,22 +106,24 @@ const schema = z.object({
       message: "BETTER_AUTH_SECRET must be set in production",
     });
   }
-  // Production is Google-only (email+password is disabled there), so the Google
-  // credentials are mandatory — without them no human could sign in.
+  // S38 / IA7 — a production deployment must have at least one enabled sign-in
+  // method, or no human could ever sign in. Which methods are enabled is
+  // configuration (the pure `resolveAuthConfig`); this is the boot-time check on
+  // its result, and the message names both ways out.
   if (cfg.NODE_ENV === "production") {
-    if (!cfg.GOOGLE_CLIENT_ID) {
+    const authConfig = resolveAuthConfig({
+      nodeEnv: cfg.NODE_ENV,
+      emailPassword: cfg.AUTH_EMAIL_PASSWORD,
+      allowSignup: cfg.AUTH_ALLOW_SIGNUP,
+      googleConfigured: Boolean(cfg.GOOGLE_CLIENT_ID && cfg.GOOGLE_CLIENT_SECRET),
+    });
+    if (!authConfig.emailPasswordEnabled && !authConfig.googleEnabled) {
       ctx.addIssue({
         code: "custom",
-        path: ["GOOGLE_CLIENT_ID"],
-        message: "GOOGLE_CLIENT_ID must be set in production (Google-only auth)",
-      });
-    }
-    if (!cfg.GOOGLE_CLIENT_SECRET) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["GOOGLE_CLIENT_SECRET"],
+        path: ["NODE_ENV"],
         message:
-          "GOOGLE_CLIENT_SECRET must be set in production (Google-only auth)",
+          "production needs a sign-in method: set GOOGLE_CLIENT_ID + " +
+          "GOOGLE_CLIENT_SECRET, or AUTH_EMAIL_PASSWORD=true",
       });
     }
   }
@@ -137,3 +164,14 @@ if (!parsed.success) {
 }
 
 export const env: Env = parsed.data;
+
+// S38 — the resolved sign-in configuration, decided once at boot so the
+// BetterAuth instances (`auth.ts`, `ee/server/auth.pg.ts`) and the public config
+// route all read one value rather than re-deriving the rules. IA7 has already
+// been checked above, so in production at least one method is enabled here.
+export const authConfig: AuthConfig = resolveAuthConfig({
+  nodeEnv: env.NODE_ENV,
+  emailPassword: env.AUTH_EMAIL_PASSWORD,
+  allowSignup: env.AUTH_ALLOW_SIGNUP,
+  googleConfigured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
+});

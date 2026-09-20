@@ -113,8 +113,12 @@ code in sync in the same commit.
 ### Locked product decisions (v0.2)
 
 - **Tenancy:** multi-user; login required.
-- **Auth:** delegated to **BetterAuth** via its Drizzle adapter. **Email + password during
-  development**, **Google OAuth added later**. Programmatic access is the **MCP connector**
+- **Auth:** delegated to **BetterAuth** via its Drizzle adapter. Both **email + password** and
+  **Google OAuth** exist; which are enabled is **deployment configuration**
+  (`AUTH_EMAIL_PASSWORD`, the Google credentials), with **at least one required in production**
+  (IA7, S38). Account **creation** is gated by `AUTH_ALLOW_SIGNUP` beside the domain allowlist —
+  defaulting to closed exactly when production has the unverified email+password path open.
+  Programmatic access is the **MCP connector**
   (S18), authenticated by **OAuth** via BetterAuth's `mcp` plugin — there is **no API-key
   credential** (the pinned better-auth has no api-key plugin; S8/S9 dropped). The domain treats
   the BetterAuth user id as `ownerId` — no hand-rolled user/session aggregate.

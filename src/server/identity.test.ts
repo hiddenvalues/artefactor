@@ -32,6 +32,23 @@ describe("identity (S1)", () => {
     expect(body.allowedEmailDomains).toEqual(["example.com", "example.org"]);
   });
 
+  // S38 (IA7) — the sign-in screen renders what the server will accept. The test
+  // env is email+password on, no Google credentials, gate open.
+  it("advertises the enabled sign-in methods via /api/config (S38)", async () => {
+    const res = await app.request("/api/config");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      emailPasswordEnabled: boolean;
+      googleEnabled: boolean;
+      signupAllowed: boolean;
+    };
+    expect(body).toMatchObject({
+      emailPasswordEnabled: true,
+      googleEnabled: false,
+      signupAllowed: true,
+    });
+  });
+
   it("signs a user up and exposes their ownerId via /api/me", async () => {
     const signUp = await app.request("/api/auth/sign-up/email", {
       method: "POST",

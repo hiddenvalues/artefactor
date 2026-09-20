@@ -17,6 +17,13 @@ export interface HealthResponse {
 // show which accounts may sign in without hardcoding domains in the client.
 export interface PublicConfigResponse {
   allowedEmailDomains: string[];
+  // S38 (IA7) — the sign-in methods this deployment actually accepts, and
+  // whether account creation is open, so the sign-in screen renders what the
+  // server will honour. Presentation signals only: the user-create hook and the
+  // env guard remain the enforcement points.
+  emailPasswordEnabled: boolean;
+  googleEnabled: boolean;
+  signupAllowed: boolean;
 }
 
 // S1 — Identity. The current authenticated identity, as returned by the

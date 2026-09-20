@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { env } from "../env";
+import { authConfig, env } from "../env";
 import type { Adapters } from "../adapters";
 import {
   createAttachSession,
@@ -85,12 +85,18 @@ export function createApiRoutes(
 
   api.get("/ping", (c) => c.json({ pong: true }));
 
-  // Public config the sign-in screen reads before any session exists — exposes
-  // the allowed email domains so the UI can show them without hardcoding (these
-  // aren't secret; they're shown in the UI hint anyway).
+  // Public config the sign-in screen reads before any session exists — the
+  // allowed email domains so the UI can show them without hardcoding (these
+  // aren't secret; they're shown in the UI hint anyway), plus the enabled
+  // sign-in methods and the sign-up gate (S38, IA7) so the screen renders only
+  // what this deployment will accept. Advertising them changes no enforcement:
+  // the env guard and the user-create hook remain the boundaries.
   api.get("/config", (c) =>
     c.json<PublicConfigResponse>({
       allowedEmailDomains: env.AUTH_ALLOWED_EMAIL_DOMAINS,
+      emailPasswordEnabled: authConfig.emailPasswordEnabled,
+      googleEnabled: authConfig.googleEnabled,
+      signupAllowed: authConfig.signupAllowed,
     }),
   );
 

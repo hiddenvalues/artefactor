@@ -149,8 +149,10 @@ How much work this is depends on the **fork's visibility**:
    | --- | --- | --- |
    | `BETTER_AUTH_SECRET` | `openssl rand -hex 32` | **Secret. Required in prod** — the BFF refuses to boot with the dev placeholder. Rotating it signs everyone out. |
    | `BETTER_AUTH_URL` | `https://<domain>` | Public base URL BetterAuth issues session cookies/callbacks against. |
-   | `GOOGLE_CLIENT_ID` | from the Google OAuth client | **Required in prod** (Google-only auth). See §5a. |
-   | `GOOGLE_CLIENT_SECRET` | from the Google OAuth client | **Secret. Required in prod.** See §5a. |
+   | `GOOGLE_CLIENT_ID` | from the Google OAuth client | **Required in prod unless `AUTH_EMAIL_PASSWORD=true`** — production needs at least one sign-in method. See §5a. |
+   | `GOOGLE_CLIENT_SECRET` | from the Google OAuth client | **Secret. Required in prod unless `AUTH_EMAIL_PASSWORD=true`.** See §5a. |
+   | `AUTH_EMAIL_PASSWORD` | `true` / `false` (or `1` / `0`) | Optional. Enables email + password sign-in. Unset: on outside production, off in it. Set it to `true` to run production without a Google dependency — but read the callout below first: it is an **unverified** path. |
+   | `AUTH_ALLOW_SIGNUP` | `true` / `false` (or `1` / `0`) | Optional. Gates account **creation**, for every provider. Unset: **closed** when production has email+password enabled, **open** otherwise. Empty counts as unset. |
    | `AUTH_ALLOWED_EMAIL_DOMAINS` | your org domain(s), e.g. `example.com,example.org` | **Set this in prod.** Comma-separated; account creation is restricted to these domains (every provider). The code default is `example.com` (dev only). |
    | `AUTH_TRUSTED_ORIGINS` | `https://<domain>` | Optional. The `BETTER_AUTH_URL` origin is trusted implicitly and the SPA is same-origin, so this is usually unnecessary — set it only if a separate origin must call the auth API. |
    | `ARTEFACTOR_RENDERER_URL` | `http://renderer:3001` | Optional, and **only** once the isolated renderer of §9 is running and verified. Unset: no card thumbnails, everything else unchanged. Never point it at a renderer that is not isolated. |
@@ -171,15 +173,33 @@ How much work this is depends on the **fork's visibility**:
 
 Don't deploy yet — the image doesn't exist until the first workflow run (step 7).
 
-> **Production is Google-only.** The image sets `NODE_ENV=production`, which disables
-> email+password sign-in, so `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` are **mandatory** —
-> the BFF's env schema refuses to boot without them. Set them (next section) **before** the
-> first deploy; otherwise the new container exits on boot and Coolify rolls back. Sign-up is
-> restricted to the domains in `AUTH_ALLOWED_EMAIL_DOMAINS` (set in prod) for every provider.
+> **Production needs at least one sign-in method.** The image sets `NODE_ENV=production`, where
+> email+password is off by default — so out of the box `GOOGLE_CLIENT_ID` +
+> `GOOGLE_CLIENT_SECRET` are what makes the deployment usable, and the BFF's env schema refuses
+> to boot with **neither** them nor `AUTH_EMAIL_PASSWORD=true`. Set one of the two (next
+> section) **before** the first deploy; otherwise the new container exits on boot and Coolify
+> rolls back. Sign-up stays restricted to the domains in `AUTH_ALLOWED_EMAIL_DOMAINS` for every
+> provider.
+>
+> **If you choose `AUTH_EMAIL_PASSWORD=true`,** know what it opens: Artefactor has no mail
+> transport, so nothing verifies that whoever types an address owns it. While account creation is
+> open, the first person to reach the sign-up form claims any allowlisted address. Hence the gate,
+> and its lifecycle on a fixed-team deployment:
+>
+> 1. Deploy with `AUTH_ALLOW_SIGNUP=true`.
+> 2. Have each intended person create their account.
+> 3. Set `AUTH_ALLOW_SIGNUP=false` and redeploy. Existing accounts keep signing in, and existing
+>    MCP connector tokens keep working; only *creation* stops.
+>
+> With `AUTH_ALLOW_SIGNUP` unset, a production deployment that enables email+password starts
+> **closed** (create the first account with the flag briefly on), and a Google-only one starts
+> **open** — Google has already verified the address it asserts, so the allowlist is the gate
+> there, exactly as before.
 
 ## 5a. Google OAuth client (Google Cloud Console)
 
-Create one OAuth client and reuse it for prod (and optionally local dev):
+Skip this section if the deployment runs on `AUTH_EMAIL_PASSWORD=true` alone. Otherwise create
+one OAuth client and reuse it for prod (and optionally local dev):
 
 1. **Google Cloud Console** → pick/create a project (ideally in your Workspace org).
 2. **APIs & Services → OAuth consent screen.** Fill app name + support email; no scopes beyond

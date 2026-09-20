@@ -11,7 +11,9 @@
 
 - Users sign in with **Google OAuth** (the production method) and, in dev/test only, **email +
   password**. Production disables email+password (`emailAndPassword.enabled = NODE_ENV !==
-  "production"`), removing the open unverified sign-up path from prod.
+  "production"`), removing the open unverified sign-up path from prod. *(Which methods are
+  enabled became deployment configuration in S38 — Configurable sign-in methods; this remains the
+  default.)*
 - Account creation is restricted to allowed email domains (`AUTH_ALLOWED_EMAIL_DOMAINS`,
   default `example.com` for dev; org domains set in prod), enforced for every provider via the
   user-create hook. *(IA 4)*
@@ -26,7 +28,8 @@
   `GOOGLE_CLIENT_SECRET` are set), and `trustedOrigins` for the dev client origin. Secret +
   base URL + trusted origins are env-driven (`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
   `AUTH_TRUSTED_ORIGINS`); production refuses the placeholder secret **and requires the Google
-  creds** (`env.ts` superRefine).
+  creds** (`env.ts` superRefine). *(S38 replaced the Google requirement with IA7 — production
+  needs Google credentials **or** `AUTH_EMAIL_PASSWORD=true`.)*
 - **Domain allowlist (IA 4):** pure `domain/identity/email-domain.ts`
   (`isEmailDomainAllowed`), enforced in `databaseHooks.user.create.before` (throws
   `APIError("FORBIDDEN")` for a disallowed domain). Domains from
@@ -45,7 +48,9 @@
 - **Client** (`src/client/lib/auth.ts`): `createAuthClient` from `better-auth/svelte`;
   `AuthScreen.svelte` leads with **Continue with Google** (`signIn.social`, with an
   `errorCallbackURL` so a rejected out-of-domain account shows a friendly message) and exposes the
-  email+password form only in dev (`import.meta.env.DEV`).
+  email+password form only in dev (`import.meta.env.DEV`). **Superseded by S38 — Configurable
+  sign-in methods:** both methods now render behind server-sent flags from `GET /api/config`, not
+  the build-time `import.meta.env.DEV` constant.
 - **Tests:** `requireAuth` guard unit test plus an end-to-end `identity.test.ts` that signs a
   user up against a throwaway SQLite db and round-trips `/api/me` (IA 1) and rejects a
   disallowed-domain sign-up (IA 4); pure `email-domain.test.ts` for the allowlist predicate. A
@@ -67,8 +72,9 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
 
 ### S38 — Configurable sign-in methods
 
-- **Status:** specced
+- **Status:** done
 - **Depends on:** S1
+- **Linear:** ALI-331
 
 Make the production sign-in method **configuration**, not a hard-coded rule. S1 fixed
 production to Google-only (`emailAndPassword.enabled = NODE_ENV !== "production"`, and an
@@ -83,11 +89,20 @@ dev/test keep email+password, so existing deployments behave byte-identically.
 - `AUTH_EMAIL_PASSWORD` (boolean, default unset) drives `emailAndPassword.enabled`
   (`env.AUTH_EMAIL_PASSWORD ?? NODE_ENV !== "production"`). The production guard requires
   **Google credentials *or* email+password**, and fails when neither is available.
-- The BFF advertises the enabled methods: `GET /api/config` gains `emailPasswordEnabled`
-  alongside `allowedEmailDomains` (`src/shared/contracts.ts`).
-- `AuthScreen.svelte` reads that flag from the config call it already makes on mount, instead
+- The rules live in one pure function, `resolveAuthConfig` (`src/domain/identity/auth-config.ts`),
+  following the `email-domain.ts` precedent; `env.ts` resolves it once and exports `authConfig`, so
+  `auth.ts`, `ee/server/auth.pg.ts` and the config route all read one value.
+- The BFF advertises the enabled methods: `GET /api/config` gains `emailPasswordEnabled`,
+  `googleEnabled` and `signupAllowed` alongside `allowedEmailDomains`
+  (`src/shared/contracts.ts`). These are presentation signals; the create hook and the env guard
+  remain the only enforcement.
+- `AuthScreen.svelte` reads those flags from the config call it already makes on mount, instead
   of the **build-time** `import.meta.env.DEV` constant — which compiles the form out of every
-  production bundle regardless of server configuration.
+  production bundle regardless of server configuration. Each method renders behind its flag, so a
+  Google-less deployment shows no Google button and a closed deployment shows no "Create account"
+  tab; nothing renders until the call settles, rather than flashing a method the server would
+  reject. If the call **fails**, it shows both methods with sign-up open — the server rejects
+  whatever is not configured, so failing that way never hides a method that works.
 - The sign-up domain allowlist (IA 4) is untouched and still gates every provider on the
   create path, so enabling email+password does not widen *who* may hold an account — only how
   they authenticate.
@@ -122,9 +137,20 @@ dev/test keep email+password, so existing deployments behave byte-identically.
 - **Acceptance:** with `AUTH_EMAIL_PASSWORD=true` and no Google credentials, a production-mode
   app boots, `GET /api/config` reports `emailPasswordEnabled: true`, and (signup open) an
   allowlisted address can sign up and sign in; with neither Google nor email+password
-  configured, production startup fails with a clear message; with `AUTH_EMAIL_PASSWORD` unset,
-  production still requires the Google credentials and rejects email+password (S1 behaviour
-  preserved); a disallowed domain is still refused on the email+password path (IA 4).
+  configured, production startup fails with a clear message naming **both** routes out; with
+  `AUTH_EMAIL_PASSWORD` unset, production still requires the Google credentials and rejects
+  email+password (S1 behaviour preserved); a disallowed domain is still refused on the
+  email+password path (IA 4).
+- **Acceptance (config surface):** `GET /api/config` reports `emailPasswordEnabled`,
+  `googleEnabled` and `signupAllowed` beside `allowedEmailDomains`, resolved from the one
+  `authConfig`; `AUTH_EMAIL_PASSWORD` and `AUTH_ALLOW_SIGNUP` each accept `true`/`TRUE`/`1`/
+  `false`/`0`, treat the **empty string as unset** (so a `${VAR:-}` compose pass-through means
+  "default", not a boot failure), and reject any other string.
+- The slice keeps the **operator-facing** config honest in the same change: `.env.example`
+  carries the four auth vars, `deploy/docker-compose.example.yml` no longer refuses to start
+  without the Google credentials (`${GOOGLE_CLIENT_ID:-}`) and passes both flags through, and
+  `docs/deployment.md` §5 documents IA7 plus the gate's lifecycle — open it, create the intended
+  accounts, close it.
 - **Acceptance (signup gate):** with `AUTH_ALLOW_SIGNUP` closed, an allowlisted address is
   refused on **both** the email+password and the Google create paths, while an account created
   earlier still signs in and an existing MCP Account still completes the OAuth flow; with the
