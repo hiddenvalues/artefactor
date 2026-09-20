@@ -4,15 +4,17 @@ Artefactor hosts and serves **trusted HTML artefacts** produced by [claude.ai](h
 and Claude design — UX/UI prototypes, slide decks, forms, and interactive documents — and
 gives them **server-side persistence for free** by transparently hijacking `localStorage`.
 
-Upload a self-contained HTML file (or push one via the API), share it privately, with signed-in
-users, or publicly by link, and any data the artefact saves is persisted per-user on the
-backend with no changes to the artefact's code.
+Upload a self-contained HTML file (or push one from Claude over the MCP connector), share it
+privately, with signed-in users, or publicly by link, and any data the artefact saves is
+persisted per-user on the backend with no changes to the artefact's code.
 
 ## Status
 
-Early development. **S0 (project scaffold) is complete** — the monolith builds, runs,
-migrates, and tests green. Feature slices (auth, artefact CRUD, sharing, the data store) are
-built next, test-first, per the spec.
+Usable, still pre-1.0. Hosting and sharing, collections, per-user artefact data, the MCP
+connector and card thumbnails are in place; artefacts are served in a sandboxed frame. What is
+built, in progress or still specced lives in the slice DAG —
+[`docs/specs/fdd/slice-dag.md`](docs/specs/fdd/slice-dag.md) and the context files it catalogues
+— which is the single, test-enforced source of truth for status.
 
 ## Highlights
 
@@ -21,8 +23,12 @@ built next, test-first, per the spec.
 - **Zero-change persistence** — Artefactor replaces `localStorage` with a backend-backed,
   per-user store, seeded server-side so reads stay synchronous. Artefacts just use the
   standard `localStorage` API.
-- **Two ingestion paths** — manual upload and authenticated API push — enforcing identical
-  domain invariants.
+- **Two ingestion paths** — manual upload and the MCP connector (OAuth-authenticated, so Claude
+  publishes and updates artefacts directly) — enforcing identical domain invariants.
+- **Collections** — an owner-only nestable folder tree whose root's access the artefacts inside
+  it inherit, with per-user bookmarks and an archive that cascades.
+- **Card thumbnails** — a rendered preview per artefact for the dashboard and gallery, produced
+  by an isolated renderer container that runs the uploader's JavaScript far from the app.
 - **Single deployable monolith** — one Hono process serves the API and the Svelte SPA.
 
 ## Tech stack
@@ -33,7 +39,7 @@ built next, test-first, per the spec.
 | Frontend | [Svelte 5](https://svelte.dev/) (Vite SPA) |
 | Design system | [shadcn-svelte](https://www.shadcn-svelte.com/) + [Tailwind CSS v4](https://tailwindcss.com/) |
 | ORM / DB | [Drizzle](https://orm.drizzle.team/) over SQLite (`better-sqlite3`) |
-| Auth | [BetterAuth](https://www.better-auth.com/) (email+password in dev, Google OAuth later) |
+| Auth | [BetterAuth](https://www.better-auth.com/) (Google OAuth in production; email+password in dev/test only) |
 | Deploy | Docker monolith on a [Coolify](https://coolify.io/)-managed VPS |
 
 ## How it's built
@@ -50,7 +56,9 @@ The specs are the source of truth and live in [`docs/specs/`](docs/specs/). Star
 
 ## Quick start
 
-Requires Node 24+ and pnpm 11+.
+Requires Node **26.4.0** (pinned in [`.nvmrc`](.nvmrc)) and pnpm 11+. Use that version for every
+command: `better-sqlite3` is a native addon compiled from source against the Node you install
+with, and a different Node then refuses to load it (ABI mismatch).
 
 ```bash
 pnpm install
@@ -72,10 +80,12 @@ pnpm build && pnpm start      # production build, then run the bundled server
 ```text
 src/
   domain/     pure domain model — aggregates, invariants, ports (no framework imports)
-  infra/      adapters: Drizzle/SQLite (db/), filesystem payload store (storage/)
-  server/     Hono BFF — composition root, env, routes, static serving
+  infra/      adapters: Drizzle/SQLite (db/), filesystem payload store (storage/), rendering (render/)
+  server/     Hono BFF — composition root, env, routes, artefact serving, MCP connector
+  renderer/   the isolated thumbnail renderer — a separate role from the same image
   client/     Svelte SPA + Tailwind + shadcn-svelte components
   shared/     contracts shared between the BFF and the client
+deploy/       Compose example, seccomp profile and egress rules for the two-container deployment
 docs/specs/   DDD + FDD specifications (source of truth)
 skills/       Agent Skill teaching Claude to author artefacts that persist correctly
 ```
