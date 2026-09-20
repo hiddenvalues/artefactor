@@ -7,7 +7,7 @@ HTTPS, and automatic deploys on every push to `main`."
 ```text
 push to main  (humlytech/artefactor)
   └─ GitHub Actions  (.github/workflows/deploy.yml)
-       ├─ gate: pnpm test + pnpm check        (.github/workflows/ci.yml)
+       ├─ gate: pnpm test + check + lint:md   (.github/workflows/ci.yml)
        ├─ docker build → push ghcr.io/humlytech/artefactor  (:latest + :<sha>)
        └─ curl Coolify deploy webhook
             └─ Coolify (your instance) → existing UpCloud VPS (se-sto1)
@@ -78,6 +78,9 @@ Cleanup** (Server → settings) is enabled so old images are pruned.
 
 Add an **A record**: `<domain> → <vps-ip>` (the existing VPS's IP). Do this
 before creating the app so Let's Encrypt validation succeeds on the first deploy.
+
+Serving artefact frames from their own domain (§5b) means a second A record, on a **separate
+registrable domain**, pointing at the same IP.
 
 ## 4. Let the VPS pull from GHCR
 
@@ -151,12 +154,21 @@ How much work this is depends on the **fork's visibility**:
    | `AUTH_ALLOWED_EMAIL_DOMAINS` | your org domain(s), e.g. `example.com,example.org` | **Set this in prod.** Comma-separated; account creation is restricted to these domains (every provider). The code default is `example.com` (dev only). |
    | `AUTH_TRUSTED_ORIGINS` | `https://<domain>` | Optional. The `BETTER_AUTH_URL` origin is trusted implicitly and the SPA is same-origin, so this is usually unnecessary — set it only if a separate origin must call the auth API. |
    | `ARTEFACTOR_RENDERER_URL` | `http://renderer:3001` | Optional, and **only** once the isolated renderer of §9 is running and verified. Unset: no card thumbnails, everything else unchanged. Never point it at a renderer that is not isolated. |
+   | `ARTEFACTOR_CONTENT_ORIGIN` | `https://<content-domain>` | Optional, defence in depth. `scheme://host[:port]`, no path: the origin artefact frames are served on, on a **separate registrable domain** from `<domain>`. See §5b. |
 
    Already baked into the image (no need to set): `NODE_ENV=production`, `PORT=3000`,
    `DATABASE_PATH=/data/artefactor.db`, `ARTEFACTOR_PAYLOAD_DIR=/data/payloads`,
-   `CLIENT_DIR=/app/dist/client`, `MIGRATIONS_DIR=/app/migrations`. `DATABASE_PATH` and
-   `ARTEFACTOR_PAYLOAD_DIR` already point into the `/data` volume — that's what survives
-   redeploys; override them only if you change the mount.
+   `ARTEFACTOR_THUMBNAIL_DIR=/data/thumbnails`, `CLIENT_DIR=/app/dist/client`,
+   `MIGRATIONS_DIR=/app/migrations`. `DATABASE_PATH`, `ARTEFACTOR_PAYLOAD_DIR` and
+   `ARTEFACTOR_THUMBNAIL_DIR` already point into the `/data` volume — that's what survives
+   redeploys; override them only if you change the mount. Thumbnails live **beside** the
+   payloads, never inside `ARTEFACTOR_PAYLOAD_DIR`, so keep the two directories distinct if you
+   do move them.
+
+   Rendering is not a switch: there is no `ARTEFACTOR_THUMBNAILS` flag (S35 had one; S37 —
+   Isolated thumbnail renderer removed it, and a leftover value is ignored). What decides it is
+   `ARTEFACTOR_RENDERER_URL` — set and reachable, cards get rendered previews; unset, the app
+   renders nothing at all and every card shows its kind placeholder, with nothing else changed.
 
 Don't deploy yet — the image doesn't exist until the first workflow run (step 7).
 
@@ -194,13 +206,40 @@ Create one OAuth client and reuse it for prod (and optionally local dev):
 > they're in separate Workspaces). Google's single-domain `hd` option isn't used because more
 > than one domain may be allowed.
 
+## 5b. A separate content origin for artefact frames (optional)
+
+Artefacts are **trusted HTML served as-is**: the uploader's JavaScript runs in the viewer's
+browser. It runs inside a sandboxed, opaque-origin `<iframe>` (no `allow-same-origin`, the same
+flags repeated as a `Content-Security-Policy: sandbox` header on every frame response), so it
+reaches no cookie and no storage of the app's. `ARTEFACTOR_CONTENT_ORIGIN` adds the second layer:
+served from a **different registrable domain**, the frame is cross-site to the app whatever a
+browser bug or a future flag does to the sandbox.
+
+1. Register (or reuse) a domain that is **not** `<domain>`, not a subdomain of it and not a
+   parent of it — e.g. serve the app at `artefactor.example.com` and frames at
+   `artefactor-content.com`.
+2. Add an **A record** for it → `<vps-ip>`, as in step 3.
+3. Coolify → the application → **Domains**: add `https://<content-domain>` next to
+   `https://<domain>`, so the proxy routes it to the same container and issues its certificate.
+4. Set `ARTEFACTOR_CONTENT_ORIGIN=https://<content-domain>` (§5) and redeploy.
+
+Startup validates it and **refuses to boot** if it is the app's own host, a subdomain of it or a
+parent domain of it. The check compares *hosts*, not registrable domains (there is no
+public-suffix list in the app), so `content.example.com` beside `app.example.com` is accepted
+though it is the same site — keeping them genuinely separate is yours to get right.
+
+Once set, that host answers **only** the two frame routes and `/health`; the app host answers no
+frame route. Verify after the deploy: `curl -sI https://<content-domain>/api/me` → 404, and an
+artefact at `https://<domain>/a/<slug>` still renders (its frame now loads from the content
+host). Leave the variable unset and frames stay on the app host, isolated by the sandbox alone.
+
 ## 6. GitHub Actions → automatic deploys
 
 The workflow [.github/workflows/deploy.yml](../.github/workflows/deploy.yml): on every push to
-`main` it gates (`pnpm test` + `pnpm check`), builds the Docker image (stamping the commit via
-the `GIT_SHA` build-arg), pushes `:latest` + `:<sha>` to GHCR, then triggers Coolify. It needs
-two repository secrets **on the `humlytech` fork** (Settings → Secrets and variables →
-Actions):
+`main` it gates (`pnpm test` + `pnpm check` + `pnpm lint:md`), builds the Docker image (stamping
+the commit via the `GIT_SHA` build-arg), pushes `:latest` + `:<sha>` to GHCR, then triggers
+Coolify. It needs two repository secrets **on the `humlytech` fork** (Settings → Secrets and
+variables → Actions):
 
 | Secret | Where to get it |
 | --- | --- |
