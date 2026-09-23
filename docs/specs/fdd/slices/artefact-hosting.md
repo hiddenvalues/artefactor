@@ -331,6 +331,7 @@ S15 permanent delete must give the policy its chance to purge.
 
 - **Status:** specced
 - **Depends on:** S6, S11, S12, S21, S25, S30
+- **Linear:** ALI-299
 
 It depends on every non-owner read path it gates (S6, S11, S12, S21, S30) and on S25, because a
 root's gate governs its contained artefacts. (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24.)

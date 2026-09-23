@@ -120,3 +120,21 @@ superset can wire a different backend (Postgres) without forking the composition
 - **Boundary:** **OSS** (the composition lives in core). The Postgres adapter set, pg schema, RLS,
   and the EE entry that injects them are the EE **Postgres persistence** context. Behaviour-
   preserving; also a testability win for OSS.
+
+### S39 — Deployment export bundle
+
+- **Status:** specced
+- **Depends on:** S1, S2, S11, S21, S25
+- **Linear:** ALI-351
+
+*Not yet specced in detail; `/refine` pins the bundle format and acceptance.*
+
+An operator command that writes a whole deployment's state as one self-describing, versioned
+**bundle**: Accounts (id, email, name — never credentials or sessions), every artefact with its
+payload file, data entries, collections and their tree, access lists, slugs, link state and views.
+Read-only against the source, taken from one consistent snapshot, and verifiable (payload hashes
+travel with the bundle). It is a self-host backup/move format in its own right, and the contract
+the EE importer (EM1 — Import an OSS export bundle as a cloud org) consumes — the first user being
+the humlytech → `artefactor.cloud` move.
+
+- **Boundary:** **OSS**.
