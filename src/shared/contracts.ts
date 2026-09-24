@@ -54,6 +54,9 @@ export interface ArtefactSummary {
   // AH16: whether the artefact persists data (uses localStorage). The client
   // shows a small indicator for it in the dashboard/gallery card + row.
   usesStorage: boolean;
+  // S41 (AH30) — whether viewers may load each other's saved data (`shared`) or
+  // only their own (`own`; the owner always sees all). Per artefact.
+  dataVisibility: "shared" | "own";
   // S35 (AH25) — the card preview, `/api/artefacts/<id>/thumbnail?v=<hash>`, while
   // the artefact is active and a render is recorded (the previous one stays until
   // the next lands); otherwise null and the card shows the kind placeholder.
@@ -87,6 +90,12 @@ export interface SharedListResponse {
 // on the access list managed via the S16 endpoints below.
 export interface SetVisibilityRequest {
   visibility: ArtefactSummary["visibility"];
+}
+
+// S41 — Owner-set data visibility. `own` narrows each non-owner viewer to their
+// own saved data; `shared` lets viewers load each other's (AD11).
+export interface SetDataVisibilityRequest {
+  dataVisibility: ArtefactSummary["dataVisibility"];
 }
 
 // S16 — Share with specific people. A registered user as seen by the owner: a

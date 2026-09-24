@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ARTEFACT_KINDS } from "../../domain/artefact/kind";
-import { VISIBILITIES } from "../../domain/artefact/visibility";
+import { DATA_VISIBILITIES, VISIBILITIES } from "../../domain/artefact/visibility";
 import type { Artefact } from "../../domain/artefact/artefact";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
@@ -17,6 +17,7 @@ import {
 import { createArtefactCommand } from "../artefacts/create-artefact.command";
 import { editArtefactCommand } from "../artefacts/edit-artefact.command";
 import { setArtefactVisibilityCommand } from "../artefacts/set-visibility.command";
+import { setDataVisibilityCommand } from "../artefacts/set-data-visibility.command";
 import {
   archiveArtefactCommand,
   restoreArtefactCommand,
@@ -570,6 +571,30 @@ export function registerArtefactTools(
       run(async () => {
         const updated = await setArtefactVisibilityCommand(
           { artefactId: id, requesterId: userId, visibility, scope },
+          { repo },
+        );
+        return summarize(updated);
+      }),
+  );
+
+  // S41 (AH30, AD11) — owner-set data visibility. Owner, active and in scope,
+  // like every other tool: anything else is not found.
+  server.registerTool(
+    "set_data_visibility",
+    {
+      title: "Set data visibility",
+      description:
+        "Choose whether viewers of an artefact can load each other's saved data (\"shared\") or only their own (\"own\"; the owner always sees everyone's). New artefacts start \"own\" — keep it for surveys and forms, where respondents shouldn't read each other's answers.",
+      inputSchema: {
+        id: z.string().min(1),
+        dataVisibility: z.enum(DATA_VISIBILITIES),
+      },
+    },
+    async ({ id, dataVisibility }) =>
+      run(async () => {
+        await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
+        const updated = await setDataVisibilityCommand(
+          { artefactId: id, requesterId: userId, dataVisibility, scope },
           { repo },
         );
         return summarize(updated);

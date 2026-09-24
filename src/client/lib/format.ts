@@ -80,6 +80,17 @@ export const VIS_ORDER: Visibility[] = [
   "public",
 ];
 
+// S41 (AH30) — whose saved data a viewer may load. Offered in the visibility
+// popover's "Saved data" section, only for artefacts that persist data.
+export type DataVisibility = ArtefactSummary["dataVisibility"];
+
+export const DATA_VIS: Record<DataVisibility, { label: string; desc: string }> = {
+  shared: { label: "Shared with viewers", desc: "Viewers can open each other's data" },
+  own: { label: "Only each viewer's own", desc: "You still see everyone's" },
+};
+
+export const DATA_VIS_ORDER: DataVisibility[] = ["own", "shared"];
+
 // S25 — Collections. Folder + bookmark glyphs and a stable per-collection tint
 // (derived from the id — no stored color; the design prototype seeded colors,
 // the real app hashes so a collection keeps its hue for life).

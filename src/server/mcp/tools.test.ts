@@ -111,6 +111,7 @@ describe("MCP artefact tools (S18)", () => {
         "list_artefacts",
         "restore_artefact",
         "set_artefact_data",
+        "set_data_visibility",
         "set_visibility",
         "update_artefact",
       ].sort(),
@@ -262,6 +263,58 @@ describe("MCP artefact tools (S18)", () => {
     expect(all.artefacts.map((x: { id: string }) => x.id).sort()).toEqual(
       [a.id, b.id].sort(),
     );
+  });
+
+  describe("set_data_visibility (S41)", () => {
+    const create = async (client: Client) =>
+      json(await call(client, "create_artefact", { title: "S", kind: "form", html: "<i>s</i>" }));
+
+    it("get_artefact and list_artefacts report a new artefact's own-only default", async () => {
+      const client = await clientFor("u1");
+      const a = await create(client);
+      expect(a.dataVisibility).toBe("own");
+      expect(json(await call(client, "get_artefact", { id: a.id })).dataVisibility).toBe("own");
+      const listed = json(await call(client, "list_artefacts", {}));
+      expect(listed.artefacts[0].dataVisibility).toBe("own");
+    });
+
+    it("lets the owner flip it", async () => {
+      const client = await clientFor("u1");
+      const a = await create(client);
+      const r = json(
+        await call(client, "set_data_visibility", { id: a.id, dataVisibility: "shared" }),
+      );
+      expect(r.dataVisibility).toBe("shared");
+      expect(json(await call(client, "get_artefact", { id: a.id })).dataVisibility).toBe(
+        "shared",
+      );
+    });
+
+    it("is not found for another user's, an unknown, an out-of-scope or an archived artefact", async () => {
+      const u1 = await clientFor("u1");
+      const a = await create(u1);
+      await call(u1, "set_visibility", { id: a.id, visibility: "authenticated" });
+      const u2 = await clientFor("u2");
+      const u1Elsewhere = await clientFor("u1", { tenantId: "another-tenant" });
+      for (const [client, id] of [
+        [u2, a.id],
+        [u1, "nope"],
+        [u1Elsewhere, a.id],
+      ] as const) {
+        const r = await call(client, "set_data_visibility", { id, dataVisibility: "shared" });
+        expect(r.isError).toBe(true);
+        expect(r.content[0]!.text).toBe(id);
+      }
+
+      await call(u1, "archive_artefact", { id: a.id });
+      const archived = await call(u1, "set_data_visibility", {
+        id: a.id,
+        dataVisibility: "shared",
+      });
+      expect(archived.isError).toBe(true);
+      expect(archived.content[0]!.text).toBe(a.id);
+      expect((await deps.repo.findById(a.id, SINGLETON_SCOPE))!.dataVisibility).toBe("own");
+    });
   });
 
   it("archive then restore round-trips", async () => {

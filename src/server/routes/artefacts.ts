@@ -4,12 +4,13 @@ import {
   ArtefactNotFound,
   InvariantViolation,
 } from "../../domain/artefact/errors";
-import { VISIBILITIES } from "../../domain/artefact/visibility";
+import { DATA_VISIBILITIES, VISIBILITIES } from "../../domain/artefact/visibility";
 import {
   createArtefactCommand,
   type CreateArtefactDeps,
 } from "../artefacts/create-artefact.command";
 import { setArtefactVisibilityCommand } from "../artefacts/set-visibility.command";
+import { setDataVisibilityCommand } from "../artefacts/set-data-visibility.command";
 import {
   grantAccessCommand,
   revokeAccessCommand,
@@ -49,6 +50,7 @@ import type {
   ArtefactSummary,
   GrantAccessRequest,
   MoveArtefactRequest,
+  SetDataVisibilityRequest,
   SetVisibilityRequest,
 } from "../../shared/contracts";
 import type { Visibility } from "../../domain/artefact/visibility";
@@ -216,6 +218,40 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         { repo: deps.repo },
       );
       return c.json<ArtefactSummary>(toArtefactSummary(updated));
+    } catch (err) {
+      if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
+      if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  // S41 — Owner-set data visibility (AH30). Owner-only, per artefact (settable
+  // while contained). Non-owner or unknown id → 404 (AH8); archived → 400, as
+  // for every other mutation. Returns the updated summary.
+  r.put("/:id/data-visibility", requireAuth, async (c) => {
+    const body = await c.req
+      .json<Partial<SetDataVisibilityRequest>>()
+      .catch(() => ({}) as Partial<SetDataVisibilityRequest>);
+    const dataVisibility = body.dataVisibility;
+    if (!dataVisibility || !DATA_VISIBILITIES.includes(dataVisibility)) {
+      return c.json(
+        { error: "dataVisibility must be one of " + DATA_VISIBILITIES.join(", ") },
+        400,
+      );
+    }
+    try {
+      const updated = await setDataVisibilityCommand(
+        {
+          artefactId: c.req.param("id"),
+          requesterId: ownerId(c),
+          dataVisibility,
+          scope: await deps.resolveScope(c),
+        },
+        { repo: deps.repo },
+      );
+      return c.json<ArtefactSummary>(
+        toArtefactSummary(updated, await effectiveVisOf(updated)),
+      );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
@@ -545,6 +581,7 @@ export function toArtefactSummary(
     publicSlug: a.publicSlug,
     payloadBytes: a.payloadBytes,
     usesStorage: a.usesStorage,
+    dataVisibility: a.dataVisibility,
     thumbnailUrl: thumbnailUrlOf(a),
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),

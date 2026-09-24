@@ -55,6 +55,16 @@ describe("isolated artefact serving (S36)", () => {
     return (await res.json()) as ArtefactSummary;
   }
 
+  // S41 — let viewers load each other's data (new artefacts default to own-only).
+  async function shareData(id: string): Promise<void> {
+    const res = await app.request(`/api/artefacts/${id}/data-visibility`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", cookie: ownerCookie },
+      body: JSON.stringify({ dataVisibility: "shared" }),
+    });
+    expect(res.status).toBe(200);
+  }
+
   async function putData(ref: string, cookie: string, blob: string) {
     const res = await app.request(`/api/artefacts/${ref}/data/me`, {
       method: "PUT",
@@ -169,6 +179,7 @@ describe("isolated artefact serving (S36)", () => {
 
     it("an author token seeds that author's blob, read-only", async () => {
       const a = await makeArtefact("authenticated");
+      await shareData(a.id);
       await putData(a.publicSlug!, ownerCookie, '{"k":"owner-data"}');
       const minted = await mint(a.publicSlug!, otherCookie, ownerId);
       expect(verifyFrameToken(tokenOf(minted.frameUrl), SECRET)).toMatchObject({
@@ -293,6 +304,7 @@ describe("isolated artefact serving (S36)", () => {
 
     it("honours author, reporting that author's seed", async () => {
       const a = await makeArtefact("authenticated");
+      await shareData(a.id);
       const { updatedAt } = await putData(a.publicSlug!, ownerCookie, '{"k":"o"}');
       const minted = await mint(a.publicSlug!, otherCookie, ownerId);
       expect(minted.seedUpdatedAt).toBe(updatedAt);

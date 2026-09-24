@@ -55,6 +55,12 @@ the user** (OAuth), so everything you create is owned by them. Tools:
 - **`set_visibility`** `{ id, visibility }` / **`archive_artefact`** / **`restore_artefact`** —
   manage sharing and lifecycle. An artefact the user has filed in a collection takes its
   visibility from that collection, so `set_visibility` refuses it — say so rather than retrying.
+- **`set_data_visibility`** `{ id, dataVisibility }` — whether viewers can load each other's
+  saved data (`"shared"`) or only their own (`"own"`; the owner always sees everyone's). **New
+  artefacts start `"own"`**, which is what a survey or form wants: respondents never read each
+  other's answers. Switch to `"shared"` only when viewers are meant to see one another's data.
+  It is per artefact, so it works on one in a collection too. `get_artefact` and
+  `list_artefacts` report the current `dataVisibility`.
 - **`get_authoring_guide`** — returns this guide. If you're working through the connector
   without this skill loaded (e.g. in Claude design), call it before writing artefact HTML to
   get the persistence contract, template, and checklist below.

@@ -217,7 +217,7 @@ Stop showing the "Data context" picker (S12 chrome) on artefacts that can't usef
 
 ### S41 — Owner-set data visibility: shared or own-only
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S12, S18, S20, S36
 - **Linear:** ALI-367
 

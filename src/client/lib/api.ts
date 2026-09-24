@@ -18,7 +18,7 @@ import type {
   UserSearchResponse,
 } from "../../shared/contracts";
 import type { ArtefactKind } from "../../domain/artefact/kind";
-import type { Visibility } from "./format";
+import type { DataVisibility, Visibility } from "./format";
 
 /** Thrown by every client call when the BFF responds non-2xx. `status` lets
  *  callers special-case 401 (no session) without string matching. */
@@ -110,6 +110,18 @@ export const api = {
       body: JSON.stringify({ visibility }),
     });
     if (!res.ok) await fail(res);
+  },
+
+  // S41 — whether viewers may load each other's saved data (owner-only).
+  setDataVisibility(
+    id: string,
+    dataVisibility: DataVisibility,
+  ): Promise<ArtefactSummary> {
+    return fetch(`/api/artefacts/${id}/data-visibility`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataVisibility }),
+    }).then(json<ArtefactSummary>);
   },
 
   // S16 — Share with specific people. Search the directory for the add-member

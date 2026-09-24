@@ -1,6 +1,8 @@
 import type { DataEntry } from "../../domain/data/data-entry";
 import type { DataAuthorRef } from "../../domain/data/data-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
+import { canLoadAuthorData } from "../../domain/artefact/access";
+import { ArtefactNotFound } from "../../domain/artefact/errors";
 import {
   resolveViewableArtefact,
   type DataAccessDeps,
@@ -11,7 +13,9 @@ import {
 // author's blob so the host can re-seed the served artefact read-only.
 //
 // Read access follows the Artefact access matrix, not authorship: a viewer who
-// may view the artefact (AD4) may load **any** author's entry. Crucially these
+// may view the artefact (AD4) may load **any** author's entry — narrowed by the
+// owner's data visibility (S41, AD11): under `own` a non-owner loads only their
+// own, and the author list shows only what they may load. Crucially these
 // are NOT auth-gated by the caller's identity — an unauthenticated viewer of a
 // `public` artefact may read others' entries (they simply cannot write, AD5).
 // Missing / archived / not-viewable artefact → not-found, exactly like own-data.
@@ -24,7 +28,9 @@ export async function listDataAuthors(
   deps: DataAccessDeps,
 ): Promise<DataAuthorRef[]> {
   const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope);
-  return deps.dataRepo.listAuthorsByArtefact(artefact.id);
+  const authors = await deps.dataRepo.listAuthorsByArtefact(artefact.id);
+  // AD11 — only the authors this viewer may load; never a refusal of the list.
+  return authors.filter((a) => canLoadAuthorData(artefact, viewerId, a.authorId));
 }
 
 // Load one author's blob for seeding/switching. Returns null when that author
@@ -37,5 +43,9 @@ export async function getAuthorDataEntry(
   deps: DataAccessDeps,
 ): Promise<DataEntry | null> {
   const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope);
+  // AD11 — a refused author is a flat not-found, whether or not they hold an entry.
+  if (!canLoadAuthorData(artefact, viewerId, authorId)) {
+    throw new ArtefactNotFound(ref);
+  }
   return deps.dataRepo.findByArtefactAndAuthor(artefact.id, authorId);
 }

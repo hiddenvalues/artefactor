@@ -46,6 +46,13 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
         body: JSON.stringify({ visibility }),
       })
     ).json()) as ArtefactSummary;
+    // AD4 as written holds under `shared`; new artefacts default to `own` (S41).
+    const opened = await app.request(`/api/artefacts/${created.id}/data-visibility`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", cookie },
+      body: JSON.stringify({ dataVisibility: "shared" }),
+    });
+    expect(opened.status).toBe(200);
     return { id: created.id, slug: shared.publicSlug! };
   }
 

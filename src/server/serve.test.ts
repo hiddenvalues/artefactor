@@ -175,8 +175,14 @@ describe("serve artefact by slug (S6)", () => {
 
   it("seeds another author's data read-only via an author frame token (S12, AD5, S36)", async () => {
     // Authenticated artefact: owner writes data; a different signed-in viewer
-    // loads the owner's context through the switcher.
+    // loads the owner's context through the switcher — under `shared` data
+    // visibility, since new artefacts default to own-only (S41).
     const a = await makeArtefact("authenticated");
+    await app.request(`/api/artefacts/${a.id}/data-visibility`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", cookie: ownerCookie },
+      body: JSON.stringify({ dataVisibility: "shared" }),
+    });
     const ownerId = (
       (await (await app.request("/api/me", { headers: { cookie: ownerCookie } })).json()) as {
         id: string;

@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import {
+  canLoadAuthorData,
   canViewArtefactUnder,
   defaultAccessPolicy,
   type AccessPolicy,
@@ -38,7 +39,8 @@ export const RAW_FRAME_ROUTE = "/api/artefacts/:id/raw/frame";
 //
 // Redeem: verify the signature and `exp`; the token's artefact and route must
 // match the URL; then the route's own access check is re-run for the token's
-// viewer, so a revocation is effective immediately. Any deny is a flat 404
+// viewer, so a revocation is effective immediately — the owner's data visibility
+// included (S41, AD11: a refused `authorId` is denied). Any deny is a flat 404
 // (AH7/AH8). Seed = `authorId ?? viewerId`; writable only in the viewer's own
 // context (AD5).
 export function createFrameRoutes(deps: FrameRoutesDeps) {
@@ -79,7 +81,11 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
         accessPolicy,
         await resolveEffectiveViewable(artefact, deps.collectionRepo),
         claims.viewerId,
-      ))
+      )) ||
+      // AD11 — re-checked at redeem, so a flip to `own` refuses a token minted
+      // for a foreign context before it.
+      (claims.authorId !== null &&
+        !canLoadAuthorData(artefact, claims.viewerId, claims.authorId))
     ) {
       return c.notFound();
     }

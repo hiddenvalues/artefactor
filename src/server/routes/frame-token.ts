@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import {
+  canLoadAuthorData,
   canViewArtefactUnder,
   defaultAccessPolicy,
   type AccessPolicy,
@@ -31,7 +32,9 @@ export interface FrameTokenRoutesDeps {
 // Signed in only. A slug ref is the shared link: gated by the access matrix like
 // `…/data/authors` (effective tier AH20, policy AH18), it mints a `slug` token.
 // An id ref is the owner preview: gated like `/:id/raw` (own, active, in scope),
-// it mints a `raw` token carrying that scope. Any deny is a flat 404 (AH8).
+// it mints a `raw` token carrying that scope. Any deny is a flat 404 (AH8), and
+// so is an `author` the owner's data visibility refuses the viewer (S41, AD11;
+// the id ref is the owner's, who reaches every author).
 // `seedUpdatedAt` is the seeded entry's `updatedAt` — the pin the shell's next
 // save in the viewer's own context is conditioned on (S31).
 export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
@@ -58,6 +61,10 @@ export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
         viewerId,
       );
       if (!viewable) return c.notFound();
+      // AD11 — a foreign author the owner's data visibility refuses is a flat 404.
+      if (authorId !== null && !canLoadAuthorData(bySlug, viewerId, authorId)) {
+        return c.notFound();
+      }
       artefactId = bySlug.id;
       minted = mintFrame(deps.framing, "slug", ref, { artefactId, viewerId, authorId });
     } else {

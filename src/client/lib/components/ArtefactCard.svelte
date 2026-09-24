@@ -8,6 +8,7 @@
     FOLDER_ICON,
     STORAGE_ICON,
     STORAGE_LABEL,
+    type DataVisibility,
     type Visibility,
   } from "../format";
   import { overlay } from "../ui.svelte";
@@ -24,6 +25,8 @@
     onArchive: () => void;
     onVisibility: (v: Visibility) => void;
     onManage: () => void;
+    // S41 — whether viewers may load each other's saved data.
+    onDataVisibility?: (v: DataVisibility) => void;
     // S25/S27 — collections + bookmarks.
     collectionName?: string | null;
     onOpenCollection?: () => void;
@@ -42,6 +45,7 @@
     onArchive,
     onVisibility,
     onManage,
+    onDataVisibility,
     collectionName = null,
     onOpenCollection,
     bookmarked = false,
@@ -121,6 +125,9 @@
       {inherited}
       inheritedFrom={collectionName ?? ""}
       {onOpenCollection}
+      usesStorage={a.usesStorage}
+      dataVisibility={a.dataVisibility}
+      onChooseData={onDataVisibility}
     />
 
     <!-- footer meta -->

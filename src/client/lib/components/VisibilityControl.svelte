@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { VIS, VIS_ORDER, type Visibility } from "../format";
+  import {
+    DATA_VIS,
+    DATA_VIS_ORDER,
+    VIS,
+    VIS_ORDER,
+    type DataVisibility,
+    type Visibility,
+  } from "../format";
   import { overlay } from "../ui.svelte";
   import Icon from "./Icon.svelte";
 
@@ -19,6 +26,12 @@
     // S25 — an explanatory line atop the tier menu (the collection header uses
     // it to say everything inside inherits the choice).
     note?: string;
+    // S41 (AH30) — the "Saved data" section: whether viewers may load each
+    // other's saved data. Shown only for an artefact that persists data, and
+    // also while access is inherited, since the setting is per artefact.
+    usesStorage?: boolean;
+    dataVisibility?: DataVisibility;
+    onChooseData?: (v: DataVisibility) => void;
   }
   let {
     id,
@@ -30,7 +43,19 @@
     inheritedFrom = "",
     onOpenCollection,
     note = "",
+    usesStorage = false,
+    dataVisibility,
+    onChooseData,
   }: Props = $props();
+
+  const showSavedData = $derived(
+    usesStorage && dataVisibility !== undefined && !!onChooseData,
+  );
+
+  function chooseData(v: DataVisibility) {
+    overlay.close();
+    if (v !== dataVisibility) onChooseData?.(v);
+  }
 
   const key = $derived(`vis:${id}`);
   const open = $derived(overlay.isOpen(key));
@@ -62,6 +87,38 @@
     if (v !== visibility) onChoose(v);
   }
 </script>
+
+{#snippet savedData()}
+  <div style="margin-top:5px;padding-top:5px;border-top:1px solid var(--border);">
+    <div style="padding:5px 9px 3px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted-fg);">
+      Saved data
+    </div>
+    {#each DATA_VIS_ORDER as v (v)}
+      {@const dm = DATA_VIS[v]}
+      {@const active = dataVisibility === v}
+      <button
+        onclick={() => chooseData(v)}
+        style="width:100%;display:flex;align-items:flex-start;gap:9px;padding:7px 9px;border:none;background:{active
+          ? 'var(--accent-soft)'
+          : 'none'};color:var(--fg);border-radius:8px;cursor:pointer;text-align:left;font-family:inherit;"
+      >
+        <span style="flex:1;min-width:0;">
+          <span style="display:block;font-size:12.5px;font-weight:500;">{dm.label}</span>
+          <span style="display:block;font-size:11px;color:var(--muted-fg);">{dm.desc}</span>
+        </span>
+        {#if active}
+          <Icon
+            paths={["M20 6L9 17l-5-5"]}
+            size={14}
+            width={2.4}
+            color="var(--primary)"
+            style="flex-shrink:0;margin-top:2px;"
+          />
+        {/if}
+      </button>
+    {/each}
+  </div>
+{/snippet}
 
 <div
   style={variant === "block"
@@ -116,6 +173,9 @@
           </button>
         {/if}
       </div>
+      {#if showSavedData}
+        {@render savedData()}
+      {/if}
     </div>
   {:else if open}
     <div style={menuStyle}>
@@ -149,6 +209,9 @@
           {/if}
         </button>
       {/each}
+      {#if showSavedData}
+        {@render savedData()}
+      {/if}
     </div>
   {/if}
   </div>

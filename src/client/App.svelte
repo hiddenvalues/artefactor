@@ -17,6 +17,9 @@
     ARCHIVE_ICON,
     BOOKMARK_ICON,
     FOLDER_ICON,
+    DATA_VIS,
+    STORAGE_ICON,
+    type DataVisibility,
     type Visibility,
   } from "$lib/format";
   import { api, ApiError, shareUrl, ownOpenUrl } from "$lib/api";
@@ -556,6 +559,20 @@
     }
   }
 
+  // S41 — whether viewers may load each other's saved data (AH30).
+  async function changeDataVisibility(a: ArtefactSummary, v: DataVisibility) {
+    try {
+      await api.setDataVisibility(a.id, v);
+      await loadOwned();
+      toast.show(`Saved data: ${DATA_VIS[v].label}`, [...STORAGE_ICON]);
+    } catch (e) {
+      toast.show(
+        e instanceof ApiError ? e.message : "Could not update saved-data visibility",
+        TOAST_ICONS.alert,
+      );
+    }
+  }
+
   // Closing the panel reloads so any access-driven `updatedAt` reorder shows.
   function closeManaging() {
     managing = null;
@@ -933,6 +950,7 @@
       onEdit: () => openEdit(a),
       onArchive: () => archiveItem(a),
       onVisibility: (v: Visibility) => changeVisibility(a, v),
+      onDataVisibility: (v: DataVisibility) => changeDataVisibility(a, v),
       onManage: () => (managing = { kind: "artefact", id: a.id, title: a.title }),
       collectionName: a.collectionId ? collectionNameOf(a.collectionId) : null,
       onOpenCollection: a.collectionId

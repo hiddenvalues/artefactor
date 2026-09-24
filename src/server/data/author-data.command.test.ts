@@ -21,7 +21,8 @@ describe("author-data commands — host data-context switcher (S12)", () => {
   let dataRepo: InMemoryDataRepository;
   let deps: DataAccessDeps & { newId: () => string };
 
-  // Seed an artefact owned by OWNER, shared at `tier` so it carries a slug.
+  // Seed an artefact owned by OWNER, shared at `tier` so it carries a slug. Its
+  // data visibility is `shared` (AD4 as written) unless `over` says otherwise.
   async function seed(
     tier: "authenticated" | "public" = "public",
     over: Partial<Artefact> = {},
@@ -36,8 +37,9 @@ describe("author-data commands — host data-context switcher (S12)", () => {
       }),
       { tier, newSlug: "slug1" },
     );
-    await artefactRepo.save({ ...a, ...over });
-    return a;
+    const seeded: Artefact = { ...a, dataVisibility: "shared", ...over };
+    await artefactRepo.save(seeded);
+    return seeded;
   }
 
   beforeEach(() => {
@@ -103,6 +105,70 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
     // Owner still reaches it.
     await expect(listDataAuthors("slug1", OWNER, SCOPE, deps)).resolves.toBeDefined();
+  });
+
+  describe("under own-only data visibility (S41, AD11)", () => {
+    const THIRD = "user-3";
+    const NOBODY = "user-4";
+
+    async function seedOwn(tier: "authenticated" | "public" = "authenticated") {
+      await seed(tier, { dataVisibility: "own" });
+      for (const who of [OWNER, OTHER, THIRD]) {
+        await putOwnDataEntry({ ref: "slug1", authorId: who, scope: SCOPE }, `{"who":"${who}"}`, deps);
+      }
+    }
+
+    const ids = (list: { authorId: string }[]) => list.map((a) => a.authorId).sort();
+
+    it("lists only a non-owner's own entry", async () => {
+      await seedOwn();
+      expect(ids(await listDataAuthors("slug1", OTHER, SCOPE, deps))).toEqual([OTHER]);
+    });
+
+    it("lists every author to the owner", async () => {
+      await seedOwn();
+      expect(ids(await listDataAuthors("slug1", OWNER, SCOPE, deps))).toEqual(
+        [OWNER, OTHER, THIRD].sort(),
+      );
+    });
+
+    it("lists nothing to a viewer without an entry", async () => {
+      await seedOwn();
+      expect(await listDataAuthors("slug1", NOBODY, SCOPE, deps)).toEqual([]);
+    });
+
+    it("refuses a non-owner another author's entry as not found", async () => {
+      await seedOwn();
+      await expect(
+        getAuthorDataEntry("slug1", OTHER, THIRD, SCOPE, deps),
+      ).rejects.toBeInstanceOf(ArtefactNotFound);
+      // The refusal never depends on whether that author holds an entry.
+      await expect(
+        getAuthorDataEntry("slug1", OTHER, NOBODY, SCOPE, deps),
+      ).rejects.toBeInstanceOf(ArtefactNotFound);
+    });
+
+    it("still loads a non-owner's own entry", async () => {
+      await seedOwn();
+      expect((await getAuthorDataEntry("slug1", OTHER, OTHER, SCOPE, deps))?.blob).toBe(
+        `{"who":"${OTHER}"}`,
+      );
+    });
+
+    it("lets the owner load any author's entry", async () => {
+      await seedOwn();
+      expect((await getAuthorDataEntry("slug1", OWNER, THIRD, SCOPE, deps))?.blob).toBe(
+        `{"who":"${THIRD}"}`,
+      );
+    });
+
+    it("gives the anonymous nothing on a public artefact", async () => {
+      await seedOwn("public");
+      expect(await listDataAuthors("slug1", null, SCOPE, deps)).toEqual([]);
+      await expect(
+        getAuthorDataEntry("slug1", null, THIRD, SCOPE, deps),
+      ).rejects.toBeInstanceOf(ArtefactNotFound);
+    });
   });
 
   it("is not-found for an archived artefact (AD6)", async () => {
