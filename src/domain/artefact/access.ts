@@ -95,3 +95,21 @@ export async function canViewArtefactUnder(
   }
   return verdict;
 }
+
+// S41 (AD11) — whose saved data a viewer may load, evaluated only AFTER the
+// matrix above admits the viewer, so it only ever narrows AD4. The viewer's own
+// entry and the owner's reach are the same under both settings; under `own` a
+// non-owner (or the anonymous, who have no entry of their own) may load no other
+// author's. The single predicate behind all four enforcement points: the author
+// list, the author read, the frame-token mint and the frame redeem.
+export function canLoadAuthorData(
+  artefact: Pick<Artefact, "ownerId" | "dataVisibility">,
+  viewerId: string | null,
+  authorId: string,
+): boolean {
+  return (
+    (viewerId !== null && authorId === viewerId) ||
+    viewerId === artefact.ownerId ||
+    artefact.dataVisibility === "shared"
+  );
+}

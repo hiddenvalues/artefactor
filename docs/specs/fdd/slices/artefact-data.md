@@ -52,6 +52,8 @@
 - This lives entirely in the host (BFF + chrome); the artefact stays opaque.
   *(Amended by S36: sandboxed, token-seeded, persistence via the shell — the author is named by
   a minted frame token, not `?author=`.)*
+  *(Amended by S41: the owner may narrow this to own-only — then a non-owner lists and loads
+  only their own entry (AD11); the owner still reaches every author.)*
 
 **Implementation notes (from building S12):**
 
@@ -212,3 +214,42 @@ Stop showing the "Data context" picker (S12 chrome) on artefacts that can't usef
   false; with `usesStorage` true but no other author's data, the picker stays hidden; it appears
   once a second author has an entry. Access/serving behaviour is unchanged (AH8/AH16).
 - **Boundary:** **OSS** (benefits self-hosters; pure chrome/UX). No `ee/` involvement.
+
+### S41 — Owner-set data visibility: shared or own-only
+
+- **Status:** in progress
+- **Depends on:** S12, S18, S20, S36
+- **Linear:** ALI-367
+
+Let the owner decide whether viewers may load each other's saved data. Under AD4 anyone who can
+view an artefact can list every author and load any author's blob, so every respondent to a
+survey or form can read every other respondent's answers. (DDD amendments:
+`ddd/artefact-data.md` AD11, `ddd/artefact-hosting.md` AH30.)
+
+- **Domain** — `Artefact` gains `dataVisibility: "shared" | "own"`; `createArtefact` sets
+  `own`. `setDataVisibility(artefact, actorId, value)` is owner-only (a non-owner is refused as
+  not found, AH8/AH9), blocked while archived (AH7), bumps `updatedAt` and is a no-op when
+  unchanged. A pure `canLoadAuthorData(artefact, viewerId, authorId)` beside the access matrix
+  is the single predicate: own author (signed in), the owner, or `shared`. *(AD 11, AH 30)*
+- **Persistence** — `data_visibility text NOT NULL DEFAULT 'shared'` (migration), so existing
+  rows keep today's behaviour; the Drizzle, in-memory and EE Postgres repos map it.
+- **Enforcement (four points, one predicate)** — `…/data/authors` lists only what the viewer may
+  load (under `own`, a non-owner sees only their own entry, so S20's "≥1 other author" rule hides
+  the picker with no shell change); `…/data/:authorId` 404s a refused author; `POST
+  …/frame-token { author }` 404s a refused author; frame redemption re-checks the token's
+  `authorId`, so a flip to `own` takes effect on the next frame load (AD10).
+- **BFF** — `PUT /api/artefacts/:id/data-visibility { dataVisibility }`: owner only (404
+  otherwise, AH8), 400 on a bad value or an archived artefact (the existing archived-mutation
+  status), 200 with the summary. `dataVisibility` rides `ArtefactSummary`.
+- **Client (SPA)** — a "Saved data" section in the visibility popover, only when `usesStorage`:
+  *Shared with viewers* / *Only each viewer's own*. Shown for an inherited (in-collection)
+  artefact too, since the setting is per artefact.
+- **MCP** — `set_data_visibility { id, dataVisibility }` (owner, active, in scope; anything else
+  is not found); `get_artefact` / `list_artefacts` report `dataVisibility`. The authoring guide
+  and the skill say new artefacts default to own-only.
+- **Acceptance:** create → `own`; owner flips it; non-owner / archived refused; the predicate
+  is false only for (`own`, non-owner or anonymous, foreign author); a legacy row reads
+  `shared`; under `own` a non-owner lists only themself and 404s on another author's entry and
+  frame token, while the owner reaches everyone; a foreign-context token minted under `shared`
+  404s once the owner flips to `own`; the viewer's own context is unchanged.
+- **Boundary:** **OSS** core, with the Postgres mirror in `ee/`.

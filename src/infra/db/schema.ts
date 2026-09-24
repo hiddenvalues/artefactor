@@ -237,6 +237,12 @@ export const artefact = sqliteTable(
     // AH26 (S35): the payload_hash the recorded thumbnail was rendered from; NULL
     // until the first render. Written only by the recordThumbnail compare-and-set.
     thumbnailHash: text("thumbnail_hash"),
+    // AH30 (S41): whether a non-owner may load other authors' saved data (AD11).
+    // New artefacts are created `own`; the default keeps pre-S41 rows `shared`,
+    // so no live behaviour changes.
+    dataVisibility: text("data_visibility", { enum: ["shared", "own"] })
+      .notNull()
+      .default("shared"),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
     archivedAt: integer("archived_at", { mode: "timestamp_ms" }),

@@ -43,6 +43,8 @@ blob, mirroring how artefacts already keep one JSON object under one storage key
    - artefact `private` → only the owner (only their own entry exists anyway);
    - artefact `authenticated` → any signed-in user may load **any** author's entry;
    - artefact `public` → anyone (incl. unauthenticated) may load **any** author's entry.
+   **Narrowed by AD11** (S41): under the owner's `own` data visibility a non-owner loads only
+   their own entry.
    Under a **link gate** (`artefact-hosting.md` AH22, S32) non-owner reads *and* writes also
    require a valid pass for the gate's holder; an expired gate denies them as `private` (AH23).
 5. **Write only your own context**: a viewer can write only when the loaded data context is
@@ -292,8 +294,9 @@ only, never the switcher. (This is a host-UI choice, not an access rule: the `�
 `…/:authorId` endpoints stay **not** `requireAuth`-gated, so AD4 — anonymous *may* read a
 `public` artefact's data — still holds at the API; the switcher just isn't surfaced to them.)
 For a signed-in viewer the picker itself still only appears when there's another context to
-switch to (S20). Only the viewer's *own* context is seeded writable; any other author is
-read-only (AD5).
+switch to (S20). The switcher lists only the authors AD11 lets the viewer load: under `own`, a
+non-owner's list holds at most their own entry, so the picker stays hidden for them. Only the
+viewer's *own* context is seeded writable; any other author is read-only (AD5).
 
 ## Decided
 
@@ -315,6 +318,8 @@ read-only (AD5).
   prior read (`DataConflict`). Merge-patch stays dropped; another author's entry is never
   writable.
 - **The owner's agent may read any author's blob, never write it (S40).**
+- **Owners choose whether viewers see each other's data; new artefacts default to own-only
+  (S41).**
 
 ## Amendment (post-v0.2) — payload version pin
 
@@ -427,3 +432,43 @@ A token in a frame URL, and the channel derived from it, are readable by the art
 They grant nothing that artefact didn't already hold: the seeded data of that one context, for five
 minutes, read-only unless it is the viewer's own — and writing its own entry is what the shim does
 anyway.
+
+## Amendment (post-v0.2) — Owner-set data visibility
+
+> **Status:** DDD amendment (FDD slice **S41 — Owner-set data visibility: shared or own-only**;
+> with Artefact Hosting AH30). Narrows AD4 only. AD2, AD3, AD5 and AD8 are unchanged: writes
+> stay own-entry, authenticated and opaque.
+
+**Problem.** Under AD4 anyone who may view an artefact may list every author holding data and
+load any author's blob, including the anonymous on a `public` artefact. For a survey or form,
+every respondent can read every other respondent's answers, and the owner cannot turn it off.
+
+**AD11 — owner-set data visibility narrows AD4.** An artefact's `dataVisibility`
+(`artefact-hosting.md` AH30) is `shared` or `own`:
+
+- Under `shared`, AD4 holds unchanged.
+- Under `own`, a viewer the matrix admits may load **another** author's entry only if they are
+  the artefact's owner.
+- A viewer's own entry, and the owner's reach, are identical under both settings.
+
+One pure predicate decides it, beside the access matrix:
+
+```text
+canLoadAuthorData(artefact, viewerId, authorId) =
+  (viewerId ≠ null ∧ authorId = viewerId) ∨ viewerId = artefact.ownerId ∨ artefact.dataVisibility = shared
+```
+
+`viewerId` is null for the anonymous, whose "own author" never exists. AD11 is evaluated **after**
+the matrix admits the viewer — like the link gate (AH22) — so it only ever narrows AD4 and never
+admits anyone the matrix denies. It is enforced at four points:
+
+1. **`GET …/data/authors`** lists only the authors the predicate admits: under `own`, a non-owner
+   gets their own entry or `[]`. It never refuses the list itself.
+2. **`GET …/data/:authorId`** — a refused author is a 404.
+3. **`POST …/frame-token { author }`** — a refused author is a 404.
+4. **Frame redemption** (AD10) re-runs the predicate on the token's `authorId`: a refusal is a
+   404, so a flip to `own` takes effect on the next frame load, even for a token minted before it.
+
+A refusal is a flat 404 — the body of any other not-found — and it depends only on who is asking
+about whom, never on whether that author holds an entry, so probing author ids reveals nothing
+(AH8's no-leak spirit).

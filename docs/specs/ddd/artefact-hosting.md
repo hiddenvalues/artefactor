@@ -543,3 +543,28 @@ and header), against a canary server holding a `SameSite=Lax` cookie (BetterAuth
 Firefox and WebKit were **not run**: their Playwright builds could not be downloaded in the spike
 environment and Safari's WebDriver was not enabled. Re-run the matrix on them before relying on it
 beyond Chromium.
+
+## Amendment (post-v0.2) — owner-set data visibility
+
+> **Status:** DDD amendment (FDD slice **S41 — Owner-set data visibility: shared or own-only**;
+> with Artefact Data AD11). Adds an owner-set field that decides *whose data* a viewer sees —
+> never *who may view*.
+
+**Field.** `Artefact` gains:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `dataVisibility` | `shared` \| `own` | Whether a viewer may load other authors' saved data (AD11). `own` on create; `shared` for rows that predate the field. |
+
+**AH30 — `dataVisibility` is an owner-set field of `Artefact`.**
+
+- Only the owner changes it (AH9); a non-owner is refused as not found (AH8). It cannot change
+  while the artefact is archived (AH7). A change bumps `updatedAt`; setting the current value is
+  a no-op.
+- It is **per artefact** and never inherited from a collection: AH20's effective access governs
+  *who may view*, while AD11 governs *whose data a viewer sees*, and that stays on the artefact
+  itself. It is settable while the artefact is contained.
+- It never gates viewing, serving or the viewer's own reads and writes; it only narrows which
+  **other** authors' entries a non-owner may load (AD11).
+- New artefacts get `own`, so data is private per viewer by default; rows that predate the field
+  migrate to `shared`, so no live behaviour changes.

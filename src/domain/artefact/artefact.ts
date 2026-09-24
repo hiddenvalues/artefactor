@@ -1,6 +1,6 @@
-import { InvariantViolation } from "./errors";
+import { ArtefactNotFound, InvariantViolation } from "./errors";
 import type { ArtefactKind } from "./kind";
-import type { Status, Visibility } from "./visibility";
+import type { DataVisibility, Status, Visibility } from "./visibility";
 import type { StoredPayload } from "./ports";
 
 // Invariant AH2: payload size cap.
@@ -42,6 +42,9 @@ export interface Artefact {
   // serving. Written only by the repository's `recordThumbnail` compare-and-set,
   // never by `save`, so edits leave it untouched and it goes stale instead.
   thumbnailHash: string | null;
+  // S41 (AH30) — whether a non-owner may load other authors' saved data (AD11).
+  // Owner-set, per artefact, never inherited from a collection; gates no viewing.
+  dataVisibility: DataVisibility;
   createdAt: Date;
   updatedAt: Date;
   archivedAt: Date | null;
@@ -96,6 +99,7 @@ export function createArtefact(input: CreateArtefactInput): Artefact {
     payloadHash: input.payload.hash,
     usesStorage: input.usesStorage ?? false,
     thumbnailHash: null, // AH26 — rendered after the create is persisted
+    dataVisibility: "own", // AH30 — saved data private per viewer by default
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
@@ -198,6 +202,23 @@ export function editArtefact(a: Artefact, changes: EditArtefactChanges): Artefac
   }
 
   return next;
+}
+
+// S41 (AH30): the owner chooses whether viewers may load each other's saved data
+// (AD11). Owner-only — a non-owner is refused as not found (AH8/AH9) — and
+// blocked while archived (AH7). Setting the current value is a no-op.
+export function setDataVisibility(
+  a: Artefact,
+  actorId: string,
+  dataVisibility: DataVisibility,
+  options?: { now?: Date },
+): Artefact {
+  if (actorId !== a.ownerId) throw new ArtefactNotFound(a.id); // AH8/AH9
+  if (a.status === "archived") {
+    throw new InvariantViolation("cannot change the data visibility of an archived artefact"); // AH7
+  }
+  if (a.dataVisibility === dataVisibility) return a;
+  return { ...a, dataVisibility, updatedAt: options?.now ?? new Date() };
 }
 
 // S35 (AH26): the thumbnail is stale — missing, or rendered from an earlier

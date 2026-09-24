@@ -1,0 +1,1 @@
+ALTER TABLE `artefact` ADD `data_visibility` text DEFAULT 'shared' NOT NULL;

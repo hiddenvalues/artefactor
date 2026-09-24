@@ -25,7 +25,7 @@ Acceptance criteria are the seed for each slice's unit tests. Invariant numbers 
 | Platform & enabler seams | [platform.md](slices/platform.md) | S0, S22, S23, S24, S39 |
 | Identity & Access | [identity-access.md](slices/identity-access.md) | S1, S8, S9, S38 |
 | Artefact Hosting | [artefact-hosting.md](slices/artefact-hosting.md) | S2, S3, S4, S5, S6, S7, S10, S14, S15, S16, S19b, S32, S33, S35, S36, S37 |
-| Artefact Data | [artefact-data.md](slices/artefact-data.md) | S11, S12, S13, S17, S19a, S20 |
+| Artefact Data | [artefact-data.md](slices/artefact-data.md) | S11, S12, S13, S17, S19a, S20, S41 |
 | Artefact Views | [artefact-views.md](slices/artefact-views.md) | S21 |
 | MCP connector | [mcp-connector.md](slices/mcp-connector.md) | S18, S30, S31, S40 |
 | Artefact Collections | [artefact-collections.md](slices/artefact-collections.md) | S25, S26, S27, S28, S29 |
@@ -36,4 +36,4 @@ Acceptance criteria are the seed for each slice's unit tests. Invariant numbers 
 The highest number ever allocated per id prefix; a sub-lettered id (`S34b`) counts by its number.
 A number is never reused, so a mark may sit above the highest slice but never below it.
 
-- **S:** S40
+- **S:** S41
