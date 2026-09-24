@@ -206,7 +206,7 @@ quarter"), write the whole blob back.
 
 ### S40 — Owner reads every author's saved data over MCP
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S11, S12, S18, S19a, S30
 - **Linear:** ALI-366
 

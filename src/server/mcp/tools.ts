@@ -23,6 +23,12 @@ import {
 } from "../artefacts/lifecycle.command";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
 import { getOwnDataEntry, putOwnDataEntry } from "../data/own-data.command";
+import {
+  getAuthorDataEntry,
+  listDataAuthors,
+} from "../data/author-data.command";
+import type { UserDirectory, UserIdentity } from "../data/user-directory";
+import type { DataAuthorRef } from "../../domain/data/data-repository";
 import { MAX_BLOB_BYTES } from "../../domain/data/data-entry";
 import {
   BlobTooLarge,
@@ -48,6 +54,9 @@ export interface McpToolDeps {
   collectionRepo: CollectionRepository;
   payloadStore: PayloadStore;
   dataRepo: DataRepository;
+  // S40 — names/emails for the author listing and for resolving `author` by
+  // email, as the host switcher's `/data/authors` route does.
+  userDirectory: UserDirectory;
   // S35 — create/update enqueue a thumbnail render through the same commands.
   thumbnails?: ThumbnailQueue;
 }
@@ -118,6 +127,30 @@ function makeSummarize(deps: McpToolDeps) {
   };
 }
 
+// S40 — resolve `get_artefact_data`'s `author` against the authors who hold an
+// entry: an exact id, else a case-insensitive email among those authors only.
+// A registered user without an entry is therefore refused exactly like an
+// unknown value, so the tool is no email-existence probe.
+async function resolveDataAuthor(
+  refs: DataAuthorRef[],
+  author: string,
+  directory: UserDirectory,
+): Promise<{ id: string } & UserIdentity> {
+  const identities = await directory.lookup(refs.map((r) => r.authorId));
+  const wanted = author.toLowerCase();
+  const id =
+    refs.find((r) => r.authorId === author)?.authorId ??
+    refs.find((r) => identities.get(r.authorId)?.email.toLowerCase() === wanted)
+      ?.authorId;
+  if (id === undefined) {
+    throw new ToolInputRejected(
+      `No user with saved data on this artefact matches '${author}'. Call list_artefact_data_authors to see who has data.`,
+    );
+  }
+  const who = identities.get(id);
+  return { id, name: who?.name ?? "", email: who?.email ?? "" };
+}
+
 // Run a tool body, translating known domain errors into `isError` results.
 async function run<T>(body: () => Promise<T>) {
   try {
@@ -142,6 +175,11 @@ export function registerArtefactTools(
   scope: TenantScope,
 ): void {
   const { repo, payloadStore, dataRepo, thumbnails } = deps;
+  const dataDeps = {
+    artefactRepo: repo,
+    collectionRepo: deps.collectionRepo,
+    dataRepo,
+  };
   const summarize = makeSummarize(deps);
 
   // Artefacts accumulate per-user data blobs (what the running artefact reads /
@@ -324,24 +362,50 @@ export function registerArtefactTools(
     {
       title: "Get artefact data snapshot",
       description:
-        "Return YOUR OWN saved data for one of your active artefacts, verbatim, plus the data shape the artefact declares for itself. Read this before an HTML change that alters the shape the artefact reads from localStorage: `schema` is the artefact's own declaration (trust it for orientation, verify it against the HTML before acting — nothing enforces that they agree), `blob` is your own entry (null if you have none), and `dataAuthorCount` says how many users hold data in total. The snapshot is ONE user's blob, not the population: other users' entries may sit on older key versions, be partial, or have been written by HTML two revisions back, so any migration you ship must tolerate shapes you never saw. Compare authoredAgainstVersion with currentPayloadVersion to judge staleness (null = unknown, treat as possibly stale). Refuses a blob too large for a tool result.",
-      inputSchema: { id: z.string().min(1).describe("The artefact id.") },
+        "Return saved data for one of your active artefacts, verbatim, plus the data shape the artefact declares for itself. Without `author` it returns YOUR OWN entry; with `author` (a user id or email from list_artefact_data_authors) it returns that user's entry plus `author: { id, name, email }` — to get everyone's data, call list_artefact_data_authors, then this tool once per author, and aggregate on your side. Another user's entry is READ-ONLY: set_artefact_data only ever writes your own, so never try to \"fix\" someone else's data. Read this before an HTML change that alters the shape the artefact reads from localStorage: `schema` is the artefact's own declaration (trust it for orientation, verify it against the HTML before acting — nothing enforces that they agree), `blob` is the entry (null if there is none), and `dataAuthorCount` says how many users hold data in total. Each read is ONE user's blob, not the population: entries may sit on older key versions, be partial, or have been written by HTML two revisions back, so any migration or aggregate must tolerate shapes you never saw. Compare authoredAgainstVersion with currentPayloadVersion to judge staleness (null = unknown, treat as possibly stale). Refuses a blob too large for a tool result.",
+      inputSchema: {
+        id: z.string().min(1).describe("The artefact id."),
+        author: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Whose entry to read: a user id or email as listed by list_artefact_data_authors. Omit for your own.",
+          ),
+      },
     },
-    async ({ id }) =>
+    async ({ id, author }) =>
       run(async () => {
         const a = await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
-        // The caller's OWN entry only (AD2/AD4), through the same command the
-        // BFF uses — returned verbatim, never summarised (AD8 opacity).
-        const entry = await getOwnDataEntry(
-          { ref: a.id, authorId: userId, scope },
-          { artefactRepo: repo, collectionRepo: deps.collectionRepo, dataRepo },
-        );
+        // Through the same commands the BFF uses — returned verbatim, never
+        // summarised (AD8 opacity). Without `author`, the caller's OWN entry
+        // (AD2); with it (S40), any author's, as the host switcher loads it for
+        // the owner (AD4) — read-only, nothing here writes it (AD5).
+        let named: ({ id: string } & UserIdentity) | undefined;
+        let entry;
+        if (author === undefined) {
+          entry = await getOwnDataEntry(
+            { ref: a.id, authorId: userId, scope },
+            dataDeps,
+          );
+        } else {
+          named = await resolveDataAuthor(
+            await listDataAuthors(a.id, userId, scope, dataDeps),
+            author,
+            deps.userDirectory,
+          );
+          entry = await getAuthorDataEntry(a.id, userId, named.id, scope, dataDeps);
+        }
         const bytes = entry
           ? new TextEncoder().encode(entry.blob).byteLength
           : 0;
         if (bytes > MAX_MCP_BLOB_BYTES) {
+          const whose =
+            named && named.id !== userId
+              ? `This user's (${named.email || named.id}) saved data`
+              : "Your saved data";
           throw new ResultTooLarge(
-            `Your saved data for this artefact is ${bytes} bytes, over the ${MAX_MCP_BLOB_BYTES}-byte limit for a tool result. It is not truncated, because partial JSON cannot be parsed — inspect it from the artefact itself, or download the artefact from the Artefactor web app.`,
+            `${whose} for this artefact is ${bytes} bytes, over the ${MAX_MCP_BLOB_BYTES}-byte limit for a tool result. It is not truncated, because partial JSON cannot be parsed — inspect it from the artefact itself, or download the artefact from the Artefactor web app.`,
           );
         }
         // The declared schema is lifted from the trusted HTML as a string, the
@@ -369,6 +433,48 @@ export function registerArtefactTools(
           // stale; ≠ current ⇒ written against older HTML, migration owed;
           // = current ⇒ matches what is deployed.
           authoredAgainstVersion: entry?.authoredAgainstVersion ?? null,
+          // S40 — only when `author` was named, so the own read keeps its shape.
+          ...(named ? { author: named } : {}),
+        };
+      }),
+  );
+
+  // S40 — who holds saved data on one of the owner's artefacts: identity, the
+  // stored size, freshness and version pin per author — never a blob. The
+  // entries themselves are fetched one at a time with `get_artefact_data`, since
+  // 5 MB blobs × N authors cannot fit one tool result. Owner-scoped like every
+  // tool here, though AD4 would let any viewer read (the S31 follow-up).
+  server.registerTool(
+    "list_artefact_data_authors",
+    {
+      title: "List artefact data authors",
+      description:
+        "List every user who has saved data on one of your active artefacts (including you, if you have), newest first: authorId, name, email, bytes (the stored size), updatedAt and authoredAgainstVersion. No data is returned here — to get everyone's data, call get_artefact_data with `author` set to each authorId, one at a time, and aggregate on your side. Entries may be on older storage-key versions or written by older HTML: compare each authoredAgainstVersion with currentPayloadVersion (null = unknown, possibly stale) and tolerate shapes that differ per author. Names, emails and answers are personal data you are reading on the owner's behalf — report them to the owner, don't republish them into an artefact.",
+      inputSchema: { id: z.string().min(1).describe("The artefact id.") },
+    },
+    async ({ id }) =>
+      run(async () => {
+        const a = await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
+        const refs = await listDataAuthors(a.id, userId, scope, dataDeps);
+        const identities = await deps.userDirectory.lookup(
+          refs.map((r) => r.authorId),
+        );
+        return {
+          id: a.id,
+          currentPayloadVersion: a.payloadHash,
+          authors: [...refs]
+            .sort((x, y) => y.updatedAt.getTime() - x.updatedAt.getTime())
+            .map((r) => {
+              const who = identities.get(r.authorId);
+              return {
+                authorId: r.authorId,
+                name: who?.name ?? "",
+                email: who?.email ?? "",
+                bytes: r.bytes,
+                updatedAt: r.updatedAt.toISOString(),
+                authoredAgainstVersion: r.authoredAgainstVersion,
+              };
+            }),
         };
       }),
   );

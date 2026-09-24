@@ -11,6 +11,7 @@ import { MAX_BLOB_BYTES, upsertDataEntry } from "../../domain/data/data-entry";
 import { renderServedArtefact } from "../runtime/render";
 import { putOwnDataEntry } from "../data/own-data.command";
 import type { PayloadStore, StoredPayload } from "../../domain/artefact/ports";
+import type { UserDirectory, UserIdentity } from "../data/user-directory";
 
 // S18 — the MCP tool surface, exercised through a real in-memory MCP
 // client↔server pair (so the protocol dispatch + zod validation run), against
@@ -35,6 +36,20 @@ class FakePayloadStore implements PayloadStore {
   }
 }
 
+// A fixed directory of display identities; ids missing from it resolve to
+// nothing, as an unknown BetterAuth user does.
+class FakeUserDirectory implements UserDirectory {
+  constructor(readonly users: Record<string, UserIdentity> = {}) {}
+  async lookup(ids: string[]): Promise<Map<string, UserIdentity>> {
+    return new Map(
+      ids.flatMap((id) => (this.users[id] ? [[id, this.users[id]!] as const] : [])),
+    );
+  }
+  async search() {
+    return [];
+  }
+}
+
 interface ToolResult {
   content: { type: string; text: string }[];
   isError?: boolean;
@@ -49,6 +64,12 @@ describe("MCP artefact tools (S18)", () => {
       collectionRepo: new InMemoryCollectionRepository(),
       payloadStore: new FakePayloadStore(),
       dataRepo: new InMemoryDataRepository(),
+      userDirectory: new FakeUserDirectory({
+        u1: { name: "Owner One", email: "owner@example.com" },
+        u2: { name: "Ada Two", email: "Ada@Example.com" },
+        // Registered, but never holds an entry in these tests.
+        u4: { name: "No Data", email: "nodata@example.com" },
+      }),
     };
   });
 
@@ -86,6 +107,7 @@ describe("MCP artefact tools (S18)", () => {
         "get_artefact_data",
         "get_artefact_html",
         "get_authoring_guide",
+        "list_artefact_data_authors",
         "list_artefacts",
         "restore_artefact",
         "set_artefact_data",
@@ -104,6 +126,8 @@ describe("MCP artefact tools (S18)", () => {
     // S31 — the write doctrine is ambient too, not only in the full guide.
     expect(instructions).toMatch(/set_artefact_data/);
     expect(instructions).toMatch(/if_unmodified_since/);
+    // S40 — and so is the owner's read of everyone's data.
+    expect(instructions).toMatch(/list_artefact_data_authors/);
   });
 
   it("get_authoring_guide returns the full skill body", async () => {
@@ -116,6 +140,8 @@ describe("MCP artefact tools (S18)", () => {
     expect(text.startsWith("---")).toBe(false);
     expect(text).toMatch(/# Building and publishing artefacts for Artefactor/);
     expect(text).toMatch(/Persisting data \(localStorage\)/);
+    // S40 — the owner's read of other users' data is part of the manual.
+    expect(text).toMatch(/Reading other users' data \(owner only\)/);
   });
 
   // S36 — the sandboxed frame makes the other browser stores throw, so the
@@ -760,6 +786,197 @@ describe("MCP artefact tools (S18)", () => {
       // revert it.
       const entry = await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1");
       expect(entry!.updatedAt.toISOString()).toBe(written.updatedAt);
+    });
+  });
+
+  // S40 — the owner's connector reads every author's entry, as the host
+  // data-context switcher does (AD4): list who holds data, then fetch one
+  // author's blob verbatim. Read-only (AD2/AD5) and owner-scoped.
+  describe("reading every author's data (S40)", () => {
+    const T1 = new Date("2026-04-01T00:00:00.000Z");
+    const T2 = new Date("2026-04-02T00:00:00.000Z");
+    const T3 = new Date("2026-04-03T00:00:00.000Z");
+    const noMatch = (v: string) =>
+      `No user with saved data on this artefact matches '${v}'. Call list_artefact_data_authors to see who has data.`;
+
+    async function form(client: Client) {
+      return json(
+        await call(client, "create_artefact", { title: "Survey", kind: "form", html: "<i>s</i>" }),
+      );
+    }
+
+    async function seed(
+      artefactId: string,
+      authorId: string,
+      blob: string,
+      now: Date,
+      pin: string | null = null,
+    ) {
+      await deps.dataRepo.save(
+        upsertDataEntry({ id: `d-${authorId}`, artefactId, authorId, blob, authoredAgainstVersion: pin, now }),
+      );
+    }
+
+    const payloadHash = async (id: string) =>
+      (await deps.repo.findById(id, SINGLETON_SCOPE))!.payloadHash;
+
+    it("lists every author with identity, bytes, updatedAt and pin, newest first", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      const hash = await payloadHash(a.id);
+      await seed(a.id, "u1", '{"mine":1}', T2, hash);
+      await seed(a.id, "u2", '{"k":"åäö"}', T3, "older-hash");
+      await seed(a.id, "u3", "{}", T1);
+
+      const r = await call(u1, "list_artefact_data_authors", { id: a.id });
+      expect(r.isError).toBeFalsy();
+      expect(json(r)).toEqual({
+        id: a.id,
+        currentPayloadVersion: hash,
+        authors: [
+          { authorId: "u2", name: "Ada Two", email: "Ada@Example.com", bytes: 14, updatedAt: T3.toISOString(), authoredAgainstVersion: "older-hash" },
+          { authorId: "u1", name: "Owner One", email: "owner@example.com", bytes: 10, updatedAt: T2.toISOString(), authoredAgainstVersion: hash },
+          // Missing from the directory → blank identity, as the host route.
+          { authorId: "u3", name: "", email: "", bytes: 2, updatedAt: T1.toISOString(), authoredAgainstVersion: null },
+        ],
+      });
+    });
+
+    it("lists no authors when nobody has saved data", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      expect(json(await call(u1, "list_artefact_data_authors", { id: a.id })).authors).toEqual([]);
+    });
+
+    it("without author, get_artefact_data returns the caller's own entry with no author field", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      await seed(a.id, "u1", '{"mine":1}', T1);
+      await seed(a.id, "u2", '{"theirs":1}', T2);
+
+      const r = json(await call(u1, "get_artefact_data", { id: a.id }));
+      expect(r.blob).toBe('{"mine":1}');
+      expect(r).not.toHaveProperty("author");
+    });
+
+    it("returns another author's entry verbatim by id, and by email in any case", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      const hash = await payloadHash(a.id);
+      const blob = '{ "answers" : [1, 2],  "note":"åäö" }';
+      await seed(a.id, "u1", '{"mine":1}', T1);
+      await seed(a.id, "u2", blob, T2, "older-hash");
+
+      const byId = await call(u1, "get_artefact_data", { id: a.id, author: "u2" });
+      expect(byId.isError).toBeFalsy();
+      expect(json(byId)).toEqual({
+        id: a.id,
+        blob,
+        bytes: new TextEncoder().encode(blob).byteLength,
+        updatedAt: T2.toISOString(),
+        dataAuthorCount: 2,
+        schema: null,
+        currentPayloadVersion: hash,
+        authoredAgainstVersion: "older-hash",
+        author: { id: "u2", name: "Ada Two", email: "Ada@Example.com" },
+      });
+
+      const byEmail = await call(u1, "get_artefact_data", { id: a.id, author: "aDA@example.COM" });
+      expect(json(byEmail)).toEqual(json(byId));
+    });
+
+    it("naming the caller's own id returns the own entry, plus author", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      await seed(a.id, "u1", '{"mine":1}', T1);
+      await seed(a.id, "u2", '{"theirs":1}', T2);
+
+      const own = json(await call(u1, "get_artefact_data", { id: a.id }));
+      const named = json(await call(u1, "get_artefact_data", { id: a.id, author: "u1" }));
+      expect(named).toEqual({
+        ...own,
+        author: { id: "u1", name: "Owner One", email: "owner@example.com" },
+      });
+    });
+
+    it("refuses an author with no entry the same way, whether or not the user exists", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      await seed(a.id, "u2", '{"theirs":1}', T1);
+
+      // An unknown id, a registered user's email with no entry, and garbage.
+      for (const author of ["u-nobody", "nodata@example.com", "¯\\_(ツ)_/¯"]) {
+        const r = await call(u1, "get_artefact_data", { id: a.id, author });
+        expect(r.isError).toBe(true);
+        expect(r.content[0]!.text).toBe(noMatch(author));
+      }
+    });
+
+    it("refuses another author's over-cap blob, naming its size, without truncating", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      const blob = JSON.stringify({ big: "a".repeat(MAX_MCP_BLOB_BYTES) });
+      await seed(a.id, "u2", blob, T1);
+
+      const r = await call(u1, "get_artefact_data", { id: a.id, author: "u2" });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toContain(String(new TextEncoder().encode(blob).byteLength));
+      expect(r.content[0]!.text).toContain(String(MAX_MCP_BLOB_BYTES));
+      expect(r.content[0]!.text).not.toContain('"big"');
+    });
+
+    it("is owner-scoped: a viewer of a shared artefact, unknown, archived and out-of-scope → not found (AD6, AH7)", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      await call(u1, "set_visibility", { id: a.id, visibility: "authenticated" });
+      await seed(a.id, "u1", '{"mine":1}', T1);
+      const u2 = await clientFor("u2");
+      const u1Elsewhere = await clientFor("u1", { tenantId: "another-tenant" });
+
+      for (const [client, id] of [
+        [u2, a.id],
+        [u1, "nope"],
+        [u1Elsewhere, a.id],
+      ] as const) {
+        for (const [tool, args] of [
+          ["list_artefact_data_authors", { id }],
+          ["get_artefact_data", { id, author: "u1" }],
+        ] as const) {
+          const r = await call(client, tool, args);
+          expect(r.isError).toBe(true);
+          // The same ArtefactNotFound for every case — existence does not leak.
+          expect(r.content[0]!.text).toBe(id);
+        }
+      }
+
+      await call(u1, "archive_artefact", { id: a.id });
+      expect((await call(u1, "list_artefact_data_authors", { id: a.id })).isError).toBe(true);
+      expect((await call(u1, "get_artefact_data", { id: a.id, author: "u1" })).isError).toBe(true);
+    });
+
+    it("reading another author's entry leaves set_artefact_data writing only the caller's own (AD2/AD5)", async () => {
+      const u1 = await clientFor("u1");
+      const a = await form(u1);
+      await seed(a.id, "u2", '{"theirs":1}', T1);
+
+      const theirs = json(await call(u1, "get_artefact_data", { id: a.id, author: "u2" }));
+      await call(u1, "set_artefact_data", { id: a.id, blob: '{"theirs":2}' });
+
+      const stored = await deps.dataRepo.findByArtefactAndAuthor(a.id, "u2");
+      expect(stored?.blob).toBe(theirs.blob);
+      expect(stored?.updatedAt).toEqual(T1);
+      expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"theirs":2}');
+    });
+
+    it("describes another author's entry as read-only and the listing as the way to everyone's data", async () => {
+      const client = await clientFor("u1");
+      const tools = (await client.listTools()).tools;
+      const get = tools.find((t) => t.name === "get_artefact_data")!;
+      const list = tools.find((t) => t.name === "list_artefact_data_authors")!;
+      expect(get.description).toMatch(/read-only/i);
+      expect(get.description).toMatch(/set_artefact_data/);
+      expect(list.description).toMatch(/get_artefact_data/);
+      expect(list.description).toMatch(/authoredAgainstVersion/);
     });
   });
 });

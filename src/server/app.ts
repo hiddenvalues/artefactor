@@ -121,6 +121,7 @@ export function createApp(
         collectionRepo: adapters.collectionRepository,
         payloadStore: adapters.payloadStore,
         dataRepo: adapters.dataRepository,
+        userDirectory: adapters.userDirectory,
         thumbnails,
       },
       auth,

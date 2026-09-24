@@ -36,11 +36,18 @@ the user** (OAuth), so everything you create is owned by them. Tools:
   `dataAuthorCount`. Use it to derive a new artefact from an existing one, or to re-read an
   artefact before updating it when you no longer have the source (`update_artefact` replaces the
   HTML wholesale, so you need the current document to change it safely).
-- **`get_artefact_data`** `{ id }` — **your own** saved data for the artefact, verbatim, plus
-  the shape the artefact **declares** for itself. Read it before any change to the data shape.
-  Returns `blob` (your entry, `null` if you have none), `bytes`, `updatedAt`, `schema` (the
-  declared block below, or `null`), `dataAuthorCount`, and the version pin pair
-  `currentPayloadVersion` / `authoredAgainstVersion`.
+- **`get_artefact_data`** `{ id, author? }` — saved data for the artefact, verbatim, plus the
+  shape the artefact **declares** for itself. Without `author`, **your own** entry; with
+  `author` (a user id or email from `list_artefact_data_authors`), **that user's** entry,
+  read-only — see "Reading other users' data" below. Read it before any change to the data
+  shape. Returns `blob` (the entry, `null` if there is none), `bytes`, `updatedAt`, `schema`
+  (the declared block below, or `null`), `dataAuthorCount`, the version pin pair
+  `currentPayloadVersion` / `authoredAgainstVersion`, and — only when you named one —
+  `author: { id, name, email }`.
+- **`list_artefact_data_authors`** `{ id }` — everyone who has saved data on the artefact
+  (you included), newest first: `authorId`, `name`, `email`, `bytes`, `updatedAt` and
+  `authoredAgainstVersion`, plus the artefact's `currentPayloadVersion`. No data itself — fetch
+  each entry with `get_artefact_data`.
 - **`set_artefact_data`** `{ id, blob, if_unmodified_since? }` — **replace** your own saved data
   for the artefact. **Whole-blob replacement: not a patch, nothing is merged — any key you leave
   out is deleted.** Returns `{ id, bytes, updatedAt }`. See "Editing the user's saved data" below
@@ -53,10 +60,11 @@ the user** (OAuth), so everything you create is owned by them. Tools:
   get the persistence contract, template, and checklist below.
 
 Every tool works on the user's **own** artefacts only — an unknown id and someone else's
-artefact both come back as "not found", and the data tools reach no author's entry but the
-user's. An **archived** artefact is reachable only by `list_artefacts` with
-`include_archived: true` and by `restore_artefact`; every other tool reads it as not found, so
-restore it before updating it or touching its data.
+artefact both come back as "not found", and the data tools write no author's entry but the
+user's (they may *read* every author's entry on the user's own artefacts). An **archived**
+artefact is reachable only by `list_artefacts` with `include_archived: true` and by
+`restore_artefact`; every other tool reads it as not found, so restore it before updating it
+or touching its data.
 
 Both read-back tools **refuse** a result too large for a tool call (roughly 1 MB of HTML,
 256 KB of data) rather than truncating it — truncated HTML can't be edited and truncated JSON
@@ -102,7 +110,8 @@ The per-user data blob is the artefact's own runtime state (what it reads/writes
 migrates it. But **you** can change the user's own blob on their behalf ("add these six rows to
 my tracker", "reset last quarter", "fix the typo in every entry"): read the whole blob, transform
 it yourself, write the whole blob back. Only ever **your own** entry — other users' data is
-never readable or writable through the connector. The blob is a JSON object mapping
+never writable through the connector (you can read it on artefacts you own; see below). The
+blob is a JSON object mapping
 `localStorage` keys to **string** values (e.g. `{"habit-tracker-v2": "{\"habits\":[…]}"}`).
 
 The write is **destructive and irreversible** — there is no versioning and no undo. So:
@@ -137,6 +146,33 @@ The write is **destructive and irreversible** — there is no versioning and no 
 To clear the data, write `{}`. The tool can't write a blob over 5 MB or one that isn't valid
 JSON; both errors say why.
 
+### Reading other users' data (owner only)
+
+On an artefact the user **owns**, you can read what everyone else saved in it — "get me
+everyone's answers to this form", "what did Ada put?" — the same data the owner can already
+switch to in the Artefactor web app:
+
+1. **List, then fetch per author.** `list_artefact_data_authors` says who has data (name,
+   email, size, when, and the version pin). Then call `get_artefact_data` with `author` set to
+   each `authorId` — one call per person; there is no all-in-one read, because every entry can
+   be up to 5 MB. `author` also accepts an email. A name that matches nobody with saved data is
+   refused — whether or not such a user exists — so list first rather than guessing.
+2. **Aggregate on your side.** Each entry comes back verbatim; Artefactor never summarises,
+   merges or validates them. Totals, tables and comparisons are yours to compute.
+3. **Expect different shapes.** Entries may be on older key versions, partial, or written by
+   older HTML — compare each `authoredAgainstVersion` with `currentPayloadVersion` (`null` =
+   unknown) and tolerate what you did not expect, rather than assuming one person's blob is
+   representative.
+4. **Read-only.** Another user's entry is theirs: `set_artefact_data` only ever writes **your
+   own**, so never try to "fix", migrate or clean up someone else's data by writing — a fix
+   belongs in the artefact's HTML (a migration that runs when they next open it).
+5. **It is personal data.** Names, emails and answers are what the owner is reading about
+   other people. Report them to the owner; don't republish them into an artefact (and never
+   into the declared schema's `example`, which ships with the HTML).
+
+Other users' data is **not** reachable on an artefact someone merely shared with the user —
+only on the user's own.
+
 ### Updating an artefact that already has saved data (breaking changes)
 
 `update_artefact` replaces the HTML but **leaves existing data blobs untouched** — the backend
@@ -162,12 +198,14 @@ see the shape actually saved. Then pick one of three, in this order:
 Non-breaking edits (copy, styling, bug fixes, additive fields your code already tolerates) are
 safe to `update_artefact` in place.
 
-**The snapshot is one blob, not the population.** `get_artefact_data` returns the data of the
-user you are acting for; `dataAuthorCount` tells you how many *other* people also hold data,
-and you never see theirs. Their blobs may sit on older key versions, be partial, or have been
-written by HTML two revisions back. So write the migration to tolerate shapes you never saw —
-absent, partial, or of an unknown version — and never assume the one blob you read is
-representative.
+**The snapshot is one blob, not the population.** `get_artefact_data` returns one user's
+data — by default the user you are acting for; `dataAuthorCount` tells you how many people
+hold data in total. On an artefact the user owns, `list_artefact_data_authors` shows who they
+are and each one's version pin, and you can read their blobs one at a time (see "Reading other
+users' data"). Even so, blobs may sit on older key versions, be partial, or have been written
+by HTML two revisions back — and someone may save a new shape tomorrow. So write the migration
+to tolerate shapes you never saw — absent, partial, or of an unknown version — and never
+assume the blobs you read are representative.
 
 **The pin is the per-user staleness signal.** `dataAuthorCount` says *some* users hold data;
 comparing `authoredAgainstVersion` with `currentPayloadVersion` says whether *this* entry

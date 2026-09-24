@@ -87,19 +87,28 @@ artefact itself stays opaque and single-dataset.
 > write the new one), which is the only place such a migration *can* live; publishing a
 > separate **new artefact** keeps the old one intact for existing users.
 
-### Snapshot read (S30)
+### Snapshot read (S30, widened by S40)
 
 An agent on the MCP connector may read a **snapshot** of the data — `get_artefact_data`. This
 adds no authority and no interpretation:
 
-- It returns the **caller's own entry only** (AD2/AD4), the same one `GET …/data/me` returns,
-  and **verbatim** (AD8). There is deliberately **no** server-side summarising and no key/type
-  digest: passing bytes through is transport, but *describing* their structure would be the
-  backend interpreting the blob.
-- It is **one blob, not the population.** `dataAuthorCount` says how many other authors hold
-  data; their entries are never returned, and they may sit on older key versions, be partial,
-  or have been written by HTML two revisions back. Any migration written from a snapshot must
-  therefore tolerate shapes its author never saw.
+- By default it returns the **caller's own entry** (AD2/AD4), the same one `GET …/data/me`
+  returns, and **verbatim** (AD8). There is deliberately **no** server-side summarising and no
+  key/type digest: passing bytes through is transport, but *describing* their structure would
+  be the backend interpreting the blob.
+- **The owner may read any author's entry (S40).** AD4 already lets the owner load any author's
+  entry through the host switcher; the owner's connector gets the same read.
+  `list_artefact_data_authors` lists who holds an entry (identity, stored byte length,
+  `updatedAt`, version pin — never the blob), and `get_artefact_data { author }` returns one
+  author's entry verbatim. The reach is **narrower** than AD4: owner-only, on the owner's
+  active artefacts, like every connector tool. It is **read-only** — no tool writes another
+  author's entry (AD2/AD5). An `author` that names no one with an entry is refused with one
+  message whether or not such a user exists, so the tool is no email-existence probe.
+- **Each read is one blob, not the population.** `dataAuthorCount` says how many authors hold
+  data; each entry may sit on an older key version, be partial, or have been written by HTML
+  two revisions back (compare its `authoredAgainstVersion`, AD9). Any migration or aggregate
+  written from these reads must therefore tolerate shapes its author never saw, and any
+  aggregation happens agent-side, one entry at a time — never on the server (AD8).
 - It refuses an over-cap result rather than truncating (a truncated blob is unparseable JSON,
   which invites acting on a fragment as though it were whole).
 
@@ -305,6 +314,7 @@ read-only (AD5).
   whole-blob upsert as `PUT …/data/me`, transformed agent-side, optionally pinned against a
   prior read (`DataConflict`). Merge-patch stays dropped; another author's entry is never
   writable.
+- **The owner's agent may read any author's blob, never write it (S40).**
 
 ## Amendment (post-v0.2) — payload version pin
 
