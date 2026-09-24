@@ -2,6 +2,7 @@ import { ArtefactNotFound, InvariantViolation } from "./errors";
 import type { ArtefactKind } from "./kind";
 import type { DataVisibility, Status, Visibility } from "./visibility";
 import type { StoredPayload } from "./ports";
+import { NO_LINK_GATE, clearedGate, type LinkGate } from "./link-gate";
 
 // Invariant AH2: payload size cap.
 export const MAX_PAYLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
@@ -45,6 +46,9 @@ export interface Artefact {
   // S41 (AH30) — whether a non-owner may load other authors' saved data (AD11).
   // Owner-set, per artefact, never inherited from a collection; gates no viewing.
   dataVisibility: DataVisibility;
+  // S32a (AH22–AH24, AH31) — the owner-set password and/or expiry on the public
+  // link. Lives only while the tier is `public`: leaving it clears the gate.
+  linkGate: LinkGate;
   createdAt: Date;
   updatedAt: Date;
   archivedAt: Date | null;
@@ -100,6 +104,7 @@ export function createArtefact(input: CreateArtefactInput): Artefact {
     usesStorage: input.usesStorage ?? false,
     thumbnailHash: null, // AH26 — rendered after the create is persisted
     dataVisibility: "own", // AH30 — saved data private per viewer by default
+    linkGate: NO_LINK_GATE, // AH31 — set only once public
     createdAt: now,
     updatedAt: now,
     archivedAt: null,
@@ -134,8 +139,15 @@ export function shareArtefact(a: Artefact, options: ShareOptions): Artefact {
     ...a,
     visibility: options.tier,
     publicSlug,
+    linkGate: leavingPublic(a, options.tier),
     updatedAt: options.now ?? new Date(),
   };
+}
+
+// AH31 — the gate lives only on `public`: any tier change away from it clears
+// the gate and bumps its version (voiding every pass); `public → public` keeps it.
+function leavingPublic(a: Artefact, tier: Visibility): LinkGate {
+  return a.visibility === "public" && tier !== "public" ? clearedGate(a.linkGate) : a.linkGate;
 }
 
 // Unshare (AH5): back to `private`, retaining the slug (the link 404s while
@@ -148,6 +160,7 @@ export function unshareArtefact(a: Artefact, options?: { now?: Date }): Artefact
     ...a,
     visibility: "private",
     publicSlug: a.publicSlug, // retained
+    linkGate: leavingPublic(a, "private"),
     updatedAt: options?.now ?? new Date(),
   };
 }

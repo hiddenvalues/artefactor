@@ -327,54 +327,97 @@ S15 permanent delete must give the policy its chance to purge.
 - **Boundary:** **OSS** (the seam must live where the deletion does). The retaining policy, the
   version store, and rollback are the **EE** *Artefact History* context — see `ee/docs/specs/`.
 
-### S32 — Link controls: password + expiry
+### S32a — Link controls on public artefacts: password + expiry
+
+- **Status:** in progress
+- **Depends on:** S6, S11, S12, S21, S30
+- **Linear:** ALI-371
+
+It depends on every read path it gates: slug serving (S6), the data reads and writes (S11), the
+host shell and frame (S12), the viewer list (S21) and the download (S30), which the thumbnail
+(S35) reuses. (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24, AH31.) An owner-set **link
+gate** on a `public` artefact — the password and expiry every competing host offers — that
+narrows only the public cell's extra audience, without a fifth tier. (Rationale: market analysis
+gap #4.)
+
+- **Domain** — `LinkGate` value object `{ passwordHash, expiresAt, version }` on `Artefact`
+  (`NO_LINK_GATE` at create). Pure `evaluateLinkGate(gate, now, pass) → open | expired |
+  challenge` (expired wins; a pass counts only at the current `version`).
+  `setArtefactLinkGate(a, { requesterId, password?, expiresAt?, now }, hasher)` and
+  `clearArtefactLinkGate(a, { requesterId, now })` enforce AH31: owner-only (else not found),
+  not archived, top-level, tier `public`, password 8–128, `expiresAt` in the future; `null`
+  clears a half; a password set/change/clear bumps `version`, an expiry-only change does not.
+  Hashing goes through a `LinkPasswordHasher` port (`hash`, `verify`). `shareArtefact` /
+  `unshareArtefact` clear the gate and bump `version` when the tier leaves `public`. One
+  `authorizeArtefactRead({ artefact, effective, viewerId, pass, now }, policy) → granted |
+  not-found | sign-in | challenge` = the matrix under the policy **then** the gate, for the gated
+  audience only (AH22). *(AH22, AH23, AH24, AH31)*
+- **Infra** — `ScryptLinkPasswordHasher` (`node:crypto` scrypt, per-hash salt,
+  `timingSafeEqual`). SQLite migration: `link_password_hash` (text null), `link_expires_at`
+  (timestamp null), `link_gate_version` (int not null default 0) on `artefact`; the repository
+  maps them. The hash never leaves the repository layer.
+- **Enforcement** — every read that can admit a non-owner runs `authorizeArtefactRead`, slug and
+  id alias alike: the `/a/:slug` shell, the frame-token mint and the frame redeem (a token carries
+  the gate `version` its pass proved, so an anonymous viewer of a password-gated artefact gets a
+  tokened frame and the token-less frame is refused), `resolveViewableArtefact` (data reads and
+  writes, download, thumbnail), the viewer list, and the bookmark toggle's visibility check.
+  `challenge` → the shell renders an unlock page, the API answers `403 { gate: "password" }`;
+  `expired` → the private outcome.
+- **Passes** — `POST /a/:slug/unlock` (form post) verifies the password (scrypt, constant-time)
+  and sets an httpOnly, `Secure` (production), SameSite=Lax, path `/` cookie named per holder,
+  HMAC-signed with `BETTER_AUTH_SECRET`, carrying `{ holderId, version, exp }`,
+  `exp = min(now + 7 d, expiresAt)`, then redirects to `/a/:slug`. A wrong password renders the
+  unlock page again with an error (401). Rate limit: 10 attempts per holder + client IP (the first
+  `X-Forwarded-For` hop, else the socket address) per 15 min → 429, in an in-process store.
+- **BFF** — `PUT /api/artefacts/:id/visibility` accepts `linkGate?: { password?, expiresAt? }`
+  when `visibility` is `public` (400 otherwise); leaving public clears the gate.
+  `PUT /api/artefacts/:id/link-gate` `{ password?: string | null, expiresAt?: string | null }`
+  (`null` clears that half) and `DELETE /api/artefacts/:id/link-gate` (both). Non-owner → 404;
+  archived / not public / contained / bad password / past expiry → 400. Owner summaries carry
+  `linkGate: { passwordProtected, expiresAt } | null`; non-owner summaries never carry it.
+- **Client** — the visibility control: choosing **Public** reveals a "Link protection" section
+  submitted with the tier change; while public it edits the gate. "Require a password" (or
+  "Change password") pre-fills a generated 16-character password from an unambiguous alphabet
+  (no `0 O 1 l I`, `crypto.getRandomValues`), shown in plain text, editable, with a copy button
+  ("Copied"); once saved it shows "Password set" with Change / Clear. Expiry presets 1 d / 7 d /
+  30 d / custom, or none. Owner cards and rows show lock / clock badges; the owner preview shows a
+  "Link expired" banner. The shell's unlock page is server-rendered: password field, error and
+  rate-limit states.
+- **MCP** — no gate-setting tool. `set_visibility` away from `public` clears the gate (the domain
+  rule) and its description says so and that link protection is set in the Artefactor UI. Owner
+  summaries carry `linkGate` like the BFF.
+- **Acceptance:** `evaluateLinkGate` truth table (no gate, future expiry, past expiry even with a
+  pass, password without pass, current and stale pass); a gate on a non-public, archived or
+  contained artefact, by a non-owner, with a 7-char password or a past expiry is rejected, and no
+  gate change moves the tier; `public → authenticated` clears the gate and bumps `version`,
+  `public → public` keeps it, `private → public` with a gate sets both at once; the owner is never
+  challenged or expired; in OSS a signed-in non-owner opens a gated or expired public artefact
+  normally, while under a policy refusing the `authenticated` tier that user is challenged (404
+  once expired); anonymous on a password-gated slug gets the unlock page, a wrong password 401 +
+  page, a right one a pass cookie that opens shell, frame token and data reads — and not another
+  gated artefact; the id alias is gated identically (`403 { gate: "password" }`); changing or
+  clearing the password voids a pass, changing only the expiry does not; past `expiresAt`
+  anonymous → sign-in redirect and outsider → 404 with tier, `sharedWith` and slug unchanged, and
+  extending the expiry restores the same URL; a pass never outlives `expiresAt`; the 11th unlock
+  attempt within 15 min → 429; download, `…/viewers` and thumbnail honour the gate; no response
+  carries `passwordHash` and only owner summaries carry `linkGate`; the password generator and
+  copy button behave as above; migrated rows get null / null / 0 and behave as before.
+- **Out of scope:** collection roots (S32b), gates on other tiers, gating the audience the
+  `authenticated` tier admits, per-recipient passwords, view-count limits, password recovery, MCP
+  tools to set a gate (a password typed into an agent transcript is the wrong habit), a
+  regenerate button, a shared (multi-instance) rate-limit store.
+- **Boundary:** **OSS** (the EE Postgres repository mirrors the columns).
+
+### S32b — Link controls on public collections: password + expiry
 
 - **Status:** specced
-- **Depends on:** S6, S11, S12, S21, S25, S30
-- **Linear:** ALI-299
+- **Depends on:** S25, S32a
+- **Linear:** ALI-372
 
-It depends on every non-owner read path it gates (S6, S11, S12, S21, S30) and on S25, because a
-root's gate governs its contained artefacts. (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24.)
-An owner-set **link gate** that narrows access after the matrix grants it — the password and
-expiry every competing host offers, without a fifth tier. (Rationale: market analysis gap #4.)
-
-- **Domain** — `LinkGate` value object `{ passwordHash, expiresAt, version }` on `Artefact` and
-  `Collection` (roots only). Pure `evaluateLinkGate(gate, now, pass) → open | expired |
-  challenge`; pure `effectiveLinkGate(artefact, root)` (the root's gate when contained, AH20).
-  `setLinkGate` / `clearLinkGate` on both aggregates: owner-only (AH9), not archived (AH7),
-  top-level or root only, password ≥ 8, `expiresAt` in the future; a password change bumps
-  `version`. *(AH22, AH23)*
-- **Access composition** — one `authorizeArtefactRead(artefact, viewer, pass, now)` =
-  effective matrix (AH20/AH18) **then**, for non-owners only, the effective gate. Every non-owner
-  read uses it, **whichever ref form** is used: `/a/:slug` shell + `/frame`, `…/data/*` reads and
-  writes, `…/download`, `…/viewers`, and (S34) threads. `expired` maps to the private outcome
-  (sign-in redirect / 404); `challenge` renders the unlock page (shell) or `403 {gate:
-  "password"}` (API). The id alias must not bypass the gate. *(AH22–AH24)*
-- **Passes** — `POST /a/:slug/unlock` verifies the password (scrypt, constant-time) and sets an
-  httpOnly, SameSite=Lax, HMAC-signed (`BETTER_AUTH_SECRET`) cookie scoped to the gate holder id,
-  carrying `version`, TTL `min(7 d, expiresAt)`. Stale `version` → void. Rate limit: 10 attempts
-  per holder + client IP per 15 min.
-- **Persistence** — migration adds `link_password_hash`, `link_expires_at`,
-  `link_gate_version` (default 0) to `artefact` and `collection`. The hash is never mapped into
-  any summary or MCP result.
-- **BFF** — `PUT|DELETE /api/artefacts/:id/link-gate`, `PUT|DELETE /api/collections/:id/link-gate`
-  (owner). Summaries expose `linkGate: { passwordProtected, expiresAt }` to the owner only.
-- **Client** — `ManageAccessModal` gains a "Link protection" section (password set/change/clear,
-  expiry picker with presets 1 d / 7 d / 30 d / custom); contained artefacts show it as
-  "Inherited from `<root>`". Owner cards show lock / clock badges. An unlock page in the shell for
-  challenged viewers; an "expired" owner banner in the preview.
-- **Acceptance:** owner is never challenged or expired; a non-owner on a password-gated `public`
-  link is challenged, a wrong password is rejected, a right one opens shell + frame + data reads
-  for that holder only; the same artefact via its **id alias** is gated identically; changing the
-  password voids an existing pass; past `expiresAt` a signed-in non-owner gets 404 and an
-  anonymous one the sign-in redirect, with tier, `sharedWith` and slug unchanged, and extending
-  the expiry restores the same URL; a `selected` artefact's non-member is denied by the matrix
-  **before** any challenge (AH24 — no leak); a contained artefact follows its root's gate and its
-  own is dormant; setting a past expiry, a short password, or a gate while archived is rejected;
-  unlock is rate-limited; `download` and `…/viewers` honour the gate.
-- **Out of scope:** per-recipient passwords, view-count limits, MCP tools to set a gate (a
-  password typed into an agent transcript is the wrong habit).
-- **Boundary:** **OSS**.
+The S32a gate on a **public collection root**, which its contained artefacts follow exactly as
+they follow the root's `(visibility, sharedWith)` (AH20/CL4); an expired root hides its tree from
+the gated audience. (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24, AH31.) To be refined in
+ALI-372.
 
 ### S33 — Share-invitation seam
 
@@ -417,14 +460,14 @@ invitation is an ordinary AH14 grant.
 
 - **Status:** done
 - **Depends on:** S2, S3, S10, S14, S15, S30
-- **Optional:** S32
+- **Optional:** S32a
 - **Linear:** ALI-271
 
 A WebP preview on every dashboard, collection and "Shared with you" card, rendered server-side
 from the stored payload alone, so an artefact published through the MCP connector (which has no
 browser) gets one too. It builds on create (S2) and edit (S3), which enqueue renders, on the
 lists whose cards show it (S10, S14), on permanent delete (S15), which removes the files, and on
-the S30 download resolver, which the thumbnail read reuses. S32 is optional: the link gate is
+the S30 download resolver, which the thumbnail read reuses. S32a is optional: the link gate is
 inherited through that resolver when it lands. (DDD amendment: `ddd/artefact-hosting.md`
 AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
 
@@ -522,7 +565,7 @@ AH25–AH27, with the AH11 and AH22 amendments and the AH17 note.)
 
 - **Status:** done
 - **Depends on:** S6, S12, S13, S31
-- **Optional:** S32
+- **Optional:** S32a
 - **Linear:** ALI-321
 
 A served artefact stops running with the viewer's session. The frame becomes a sandboxed,
@@ -530,7 +573,7 @@ opaque-origin iframe authenticated by a short-lived frame token instead of cooki
 `localStorage` shim hands its writes to the host shell, the API refuses cross-origin
 cookie-authenticated state changes, and a deployment may serve frames from a separate content
 domain. It builds on slug serving (S6), the host shell and its data-context switcher (S12), the
-runtime shim (S13) and its pinned write discipline (S31). S32 is optional: when it lands, its link
+runtime shim (S13) and its pinned write discipline (S31). S32a is optional: when it lands, its link
 gate applies at frame-token redeem (AH22 already names "the host shell and frame"). (DDD
 amendments: `ddd/artefact-hosting.md` AH28, `ddd/artefact-data.md` AD10,
 `ddd/identity-access.md` IA6.)

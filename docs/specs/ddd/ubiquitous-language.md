@@ -22,8 +22,8 @@ Shared vocabulary for Artefactor. Use these terms exactly — in code, specs, te
 | **Ingestion** | How an artefact enters the system: **manual upload** (authenticated UI) or **API push** (programmatic, API-key authenticated). Both enforce identical invariants. |
 | **Shared with you** | The view where a signed-in user lists artefacts shared to them by **others** (`authenticated` or `public`), grouped/filterable by **kind**. Distinct from **Your artefacts** (the owner's own list). |
 | **Your artefacts** | The signed-in owner's view of the artefacts **they own** (manage, share, archive). Distinct from **Shared with you** (others' artefacts). |
-| **Link gate** | An owner-set password and/or expiry on a shared artefact (or collection root) that narrows access after the access matrix grants it. Never widens access; the owner is never gated (S32). |
-| **Pass** | A signed, short-lived cookie proving a viewer supplied a link gate's password; voided when the password changes. |
+| **Link gate** | An owner-set password and/or expiry on a public artefact or collection root that narrows the public audience after the access matrix grants it: only a viewer admitted solely by the `public` tier is gated. Never widens access; the owner is never gated (S32a, S32b). |
+| **Pass** | A signed, short-lived cookie proving a viewer supplied a link gate's password; voided when the password changes or is cleared, or the tier leaves `public`. |
 | **Share invitation** | A pending grant of `selected` access to an email that has no Account yet; it joins the access list when that Account is created. Distinct from an **org invitation** (membership). Provided by a superset through the S33 seam; OSS advertises no invitations. |
 | **Thread** | A comment discussion attached to one artefact, shown in the host chrome; `open` or `resolved` (S34). |
 | **Comment** | One plain-text message in a thread, by a signed-in viewer or — marked "via Claude" — through the MCP connector. |

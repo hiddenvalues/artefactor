@@ -45,8 +45,9 @@ blob, mirroring how artefacts already keep one JSON object under one storage key
    - artefact `public` → anyone (incl. unauthenticated) may load **any** author's entry.
    **Narrowed by AD11** (S41): under the owner's `own` data visibility a non-owner loads only
    their own entry.
-   Under a **link gate** (`artefact-hosting.md` AH22, S32) non-owner reads *and* writes also
-   require a valid pass for the gate's holder; an expired gate denies them as `private` (AH23).
+   Under a **link gate** on a `public` artefact (`artefact-hosting.md` AH22, S32a) the reads
+   *and* writes of the gated audience — a viewer admitted only by the public cell — also require
+   a valid pass for the gate's holder; an expired gate denies them as `private` (AH23).
 5. **Write only your own context**: a viewer can write only when the loaded data context is
    their **own** entry. Loading another author's entry is **read-only** — the served artefact
    is in read-only mode and write attempts are rejected.

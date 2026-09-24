@@ -338,55 +338,65 @@ cap from plan entitlements (10 MB default, 100 MB with *Large Artefacts*).
 ≤ cap) holds; only the *cap value* is supplied by the policy. The OSS policy returns the constant
 100 MB, so OSS is byte-identical.
 
-## Amendment (post-v0.2) — link gate: password + expiry
+## Amendment (post-v0.2) — link gate on public artefacts: password + expiry
 
-> **Status:** DDD amendment (FDD slice **S32**). Adds an owner-set **link gate** that narrows
-> access *after* the access matrix grants it. Never widens access.
+> **Status:** DDD amendment (FDD slices **S32a — Link controls on public artefacts: password +
+> expiry** and **S32b — Link controls on public collections: password + expiry**). Adds an
+> owner-set **link gate** that narrows the `public` tier's extra audience *after* the access
+> matrix grants it. Never widens access and never changes the tier.
 
-**Problem.** Once shared, an artefact is reachable for as long as its tier grants it, by anyone
-the tier admits. Owners need the two controls every competing host offers: a **password** on
-the link and an **expiry** after which the link stops working — without inventing a fifth tier.
+**Problem.** A `public` artefact is reachable by anyone with its slug (or id alias) for as long as
+it stays public. Owners need the two controls every competing host offers on a public link: a
+**password** and an **expiry** after which the link stops working — without inventing a fifth
+tier, and without gating the teammates the `authenticated` tier already admits.
 
-**Value object.** `Artefact` (and `Collection`, consulted on roots only — CL4) gains:
+**Value object.** `Artefact` gains a `linkGate` (and, with S32b, a collection root):
 
 | Field | Type | Notes |
 | ------- | ------ | ------- |
-| `linkGate.passwordHash` | string \| null | scrypt hash of the owner-set password; never returned by any read. `null` = no password. |
-| `linkGate.expiresAt` | timestamp \| null | After this instant non-owners are denied. `null` = never expires. |
-| `linkGate.version` | integer | Bumped whenever the password is set, changed or cleared. Invalidates every outstanding pass. |
+| `linkGate.passwordHash` | string \| null | scrypt hash of the owner-set password; never leaves the repository layer into any summary, BFF or MCP result. `null` = no password. |
+| `linkGate.expiresAt` | timestamp \| null | After this instant the gated audience is denied. `null` = never expires. |
+| `linkGate.version` | integer | `0` at create. Bumped whenever the password is set, changed or cleared, and whenever the tier leaves `public`. Invalidates every outstanding pass. |
 
-A pure `evaluateLinkGate(gate, now, pass)` returns `open` | `expired` | `challenge`.
+A pure `evaluateLinkGate(gate, now, pass)` returns `open` | `expired` | `challenge`: `expired`
+once `now ≥ expiresAt` (even with a valid pass), else `challenge` when a password is set and the
+pass is absent or carries another `version`, else `open`.
 
-**AH22 — the gate narrows, after the matrix, for non-owners only.** The gate is consulted only
-when the access matrix (AH8, under the effective access of AH20 and the `AccessPolicy` of AH18)
-has already **granted** view to a **non-owner**. The owner is never gated. It applies to
-**every** non-owner read of the artefact regardless of how it is addressed (slug or id alias):
-the host shell and frame, the data reads (AD4) and writes, the HTML download (S30), the viewer
-list (VT4), comment threads (`artefact-feedback.md`), and the thumbnail (S35). A gate on an
-artefact whose effective access comes from a collection is **dormant** — the **tree root's**
-gate applies instead, exactly as the root's `(visibility, sharedWith)` does (AH20/CL4).
+**AH22 — the gate narrows the public cell's extra audience only.** It is consulted only after
+the matrix (AH8, on the effective tier of AH20, under the `AccessPolicy` of AH18) has granted
+view, only when the **effective tier is `public`**, and only for a viewer admitted **solely** by
+the public cell: not the owner, and not a signed-in viewer the `authenticated` tier would admit
+under the `AccessPolicy`. In OSS that is exactly the anonymous visitor; in a multi-tenant
+superset also a signed-in user of another organization. It applies to every such read whichever
+ref form is used (slug or id alias): the host shell and its frame (a frame token is minted only
+after the gate, and its redeem re-runs the gate), the data reads (AD4) and writes, the HTML
+download (S30), the viewer list (VT4) and the thumbnail (S35). A contained artefact's own gate is
+dormant, like its own tier (AH20).
 
-**AH23 — expiry is evaluated at read time and never mutates state.** An expired gate makes the
-artefact behave **exactly as `private`** for non-owners (unauthenticated → sign-in redirect,
-signed-in → 404; archived and unknown slugs are indistinguishable). Nothing is unshared: the
-tier, `sharedWith` and the slug (AH5) are retained, so clearing or extending `expiresAt`
-restores access at the **same URL**. A newly set `expiresAt` must lie in the future. An expired
-root hides its whole tree from non-owners (it drops out of "Shared with you").
+**AH23 — expiry is read-time and never mutates.** Past `expiresAt` the gated audience sees the
+artefact **exactly as `private`** (unauthenticated → sign-in redirect, signed-in → 404;
+indistinguishable from an unknown or archived slug). Nothing is unshared: the tier, `sharedWith`
+and the slug (AH5) are retained, so extending or clearing `expiresAt` restores access at the
+**same URL**. A newly set `expiresAt` lies in the future.
 
-**AH24 — AH8 holds under the gate.** Because the gate is evaluated only after a grant (AH22),
-the password challenge is shown only to a viewer the matrix already admits — for an
-unauthenticated visitor that means only a `public` artefact. No probe the matrix denies can
-distinguish a gated artefact from a missing one.
+**AH24 — AH8 holds under the gate.** Because the gate is evaluated only after a grant (AH22), a
+password challenge is shown only to a viewer the matrix already admits — for an unauthenticated
+visitor that means only a `public` artefact. No probe the matrix denies can tell a gated artefact
+from a missing one.
 
-**Passes.** A correct password yields a **pass**: an HMAC-signed, httpOnly cookie scoped to the
-gate's holder (the artefact, or the collection root) carrying `linkGate.version`, valid for at
-most 7 days and never beyond `expiresAt`. A pass with a stale `version` is void — changing or
-clearing the password revokes every link already sent. Unlock attempts are rate-limited per
-holder and client.
+**AH31 — the gate lives only on `public`.** A gate can be set only while the artefact's own tier
+is `public` — atomically with the change to `public`, or later while public. Any change of the
+tier **away** from `public` clears it and bumps `version`; `public → public` is a no-op that keeps
+it. Only the owner sets or clears it (AH9; a non-owner is refused as not found, AH8), never while
+archived (AH7), and only on a top-level artefact (a contained artefact's own tier and gate are
+dormant, AH20). A password is 8–128 characters. Changing only the expiry leaves `version` as it
+is. Setting or clearing a gate never changes the tier.
 
-**Authority & guards.** Only the owner sets or clears a gate (AH9); not while archived (AH7);
-only on a top-level artefact or a collection root (a contained artefact's gate is dormant and
-cannot be edited, like its tier). Password length ≥ 8. Setting a gate does not change the tier.
+**Passes.** A correct password yields a **pass**: an HMAC-signed (`BETTER_AUTH_SECRET`),
+httpOnly, SameSite=Lax cookie named for the gate's holder, carrying `{ holderId, version, exp }`
+with `exp = min(now + 7 days, expiresAt)`. A pass with a stale `version` is void — changing or
+clearing the password revokes every link already unlocked; changing only the expiry does not.
+Unlock attempts are rate-limited per holder and client.
 
 ## Amendment (post-v0.2) — Artefact thumbnails
 
@@ -476,9 +486,9 @@ that no signature matches, while legitimate artefacts do exactly what a scanner 
 **AH11 amendment.** Permanent delete — of the artefact, or of it through a collection's CL8
 cascade — also removes the artefact's thumbnail files.
 
-**AH22 amendment.** The link gate's list of non-owner reads gains **the thumbnail (S35)**. No
+**AH22 amendment.** The link gate's list of gated reads gains **the thumbnail (S35)**. No
 S35 code is needed for it: the thumbnail route reuses the download's resolver, so the gate is
-inherited when S32 lands, and a card whose image fails to load falls back to the placeholder.
+inherited with S32a, and a card whose image fails to load falls back to the placeholder.
 
 **AH17 note.** The render sweep that finds artefacts needing a thumbnail is a **system** read:
 tenant-agnostic, internal, never exposed through any API, and returning only what the renderer

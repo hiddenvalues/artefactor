@@ -5,9 +5,10 @@
 ### S34 — Comments + agent feedback loop (MCP)
 
 - **Status:** specced
-- **Depends on:** S12, S18, S21, S25, S32
+- **Depends on:** S12, S18, S21, S25, S32b
 
-The S32 edge is for its composed read authorization (gate composition). (New DDD bounded context:
+The S32b edge is for its composed read authorization (gate composition, including a collection
+root's gate). (New DDD bounded context:
 `ddd/artefact-feedback.md`, FB1–FB7; amends
 `ddd/artefact-hosting.md` AH11.) Threaded comments in the host chrome, read and answered by the
 owner's agent through the connector. (Market analysis gap #3 — the most differentiating slice.)
@@ -17,7 +18,7 @@ owner's agent through the connector. (Market analysis gap #3 — the most differ
   enforcing FB4 authority. `CommentBody` value object (FB, ≤ 10 000 chars). `anchor` field
   present and forced `null` (FB7). `ThreadRepository` port (`save`, `findById`,
   `listByArtefact(status)`, `countOpenByArtefacts`, `deleteByArtefact`).
-- **Commands** — every command resolves the artefact by ref under `authorizeArtefactRead` (S32)
+- **Commands** — every command resolves the artefact by ref under `authorizeArtefactRead` (S32a)
   for FB3, and checks `archived` for FB5. Permanent delete (S15) and the CL8 cascade call
   `deleteByArtefact` (FB6).
 - **Persistence** — `comment_thread` (`id`, `artefact_id` FK cascade, `tenant_id`, `anchor`

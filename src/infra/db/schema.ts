@@ -243,6 +243,12 @@ export const artefact = sqliteTable(
     dataVisibility: text("data_visibility", { enum: ["shared", "own"] })
       .notNull()
       .default("shared"),
+    // AH31 (S32a): the link gate on a public artefact — scrypt hash of the
+    // owner-set password (never mapped into any summary), the expiry, and the
+    // version every pass carries. NULL / NULL / 0 = no gate, as for legacy rows.
+    linkPasswordHash: text("link_password_hash"),
+    linkExpiresAt: integer("link_expires_at", { mode: "timestamp_ms" }),
+    linkGateVersion: integer("link_gate_version").notNull().default(0),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
     archivedAt: integer("archived_at", { mode: "timestamp_ms" }),

@@ -24,7 +24,7 @@ export interface ThumbnailRoutesDeps {
 // only** (AH27): an anonymous caller gets 401 whatever the ref, which says nothing
 // about any artefact (AH8). Past that, resolution and the access matrix are the
 // download's own (`resolveViewableArtefact`), so the effective tier (AH20), the
-// `AccessPolicy` cell (AH18) and — once it lands — the S32 link gate are inherited.
+// `AccessPolicy` cell (AH18) and the S32a link gate (AH22) are inherited.
 // Unknown, not viewable, archived and not-yet-rendered are one flat 404.
 //
 // The `?v=<hash>` the summary appends only busts the cache; the recorded
