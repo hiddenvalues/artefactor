@@ -416,4 +416,19 @@ describe("a signed-in outsider the policy refuses the authenticated tier (AH18/A
     expect(await (await get(cloudApp, `/a/${a.publicSlug}`, owner)).text()).toContain("<iframe");
     expect((await get(cloudApp, `/api/artefacts/${a.publicSlug}/thumbnail`, owner)).status).toBe(404);
   });
+
+  it("a thumbnail read through a pass is never cached; the owner's still is", async () => {
+    const a = await makePublic({ password: PASSWORD });
+    const { artefactRepository: repo, thumbnailStore } = await import("./adapters");
+    const stored = (await repo.findById(a.id, { tenantId: "default" }))!;
+    await thumbnailStore.put(a.id, stored.payloadHash, new Uint8Array([82, 73, 70, 70]));
+    expect(await repo.recordThumbnail(a.id, stored.payloadHash)).toBe(true);
+
+    const pass = await passFor(cloudApp, a.publicSlug!);
+    const gated = await get(cloudApp, `/api/artefacts/${a.publicSlug}/thumbnail`, `${cloudOutsider}; ${pass}`);
+    expect(gated.status).toBe(200);
+    expect(gated.headers.get("cache-control")).toBe("private, no-store");
+    const own = await get(cloudApp, `/api/artefacts/${a.id}/thumbnail`, owner);
+    expect(own.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+  });
 });

@@ -12,6 +12,7 @@
   import LinkProtection from "./LinkProtection.svelte";
   import type { LinkGateSummary, SetLinkGateRequest } from "../../../shared/contracts";
   import {
+    expiryTimerDelay,
     gateChange,
     isExpired,
     linkGateOnPublish,
@@ -74,7 +75,22 @@
   });
   const gateOffered = $derived(!!linkProtection && !inherited);
   const gate = $derived(linkProtection?.current ?? null);
-  const gateExpired = $derived(isExpired(gate, new Date()));
+  // Re-evaluated at the expiry instant, so an open menu's summary flips on time.
+  let now = $state(new Date());
+  // Refreshed whenever the gate changes, then re-armed until the expiry passes.
+  $effect(() => {
+    const g = gate;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      const at = new Date();
+      now = at;
+      const delay = expiryTimerDelay(g, at);
+      if (delay !== null) t = setTimeout(tick, delay);
+    };
+    tick();
+    return () => clearTimeout(t);
+  });
+  const gateExpired = $derived(isExpired(gate, now));
 
   function submitGate(form: LinkProtectionForm) {
     const now = new Date();

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { LinkGateSummary } from "../../../shared/contracts";
-  import { isExpired } from "../link-protection";
+  import { expiryTimerDelay, isExpired } from "../link-protection";
   import Icon from "./Icon.svelte";
 
   // S32a — the owner's lock / clock badges for a protected public link. A card
@@ -14,7 +14,22 @@
   const LOCK = ["M5 11h14v10H5z", "M8 11V7a4 4 0 0 1 8 0v4"];
   const CLOCK = ["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z", "M12 6v6l4 2"];
 
-  const expired = $derived(isExpired(gate, new Date()));
+  // Re-evaluated at the expiry instant, so a mounted badge flips on time.
+  let now = $state(new Date());
+  // Refreshed whenever the gate changes, then re-armed until the expiry passes.
+  $effect(() => {
+    const g = gate;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      const at = new Date();
+      now = at;
+      const delay = expiryTimerDelay(g, at);
+      if (delay !== null) t = setTimeout(tick, delay);
+    };
+    tick();
+    return () => clearTimeout(t);
+  });
+  const expired = $derived(isExpired(gate, now));
   const clockLabel = $derived(
     gate?.expiresAt
       ? expired
@@ -30,12 +45,13 @@
 </script>
 
 {#if gate?.passwordProtected}
-  <span title="Password protected" aria-label="Password protected" style="{style}color:var(--muted-fg);">
+  <span role="img" title="Password protected" aria-label="Password protected" style="{style}color:var(--muted-fg);">
     <Icon paths={LOCK} size={variant === "chip" ? 13 : 12} width={1.8} />
   </span>
 {/if}
 {#if gate?.expiresAt}
   <span
+    role="img"
     title={clockLabel}
     aria-label={clockLabel}
     style="{style}color:{expired ? 'var(--destructive)' : 'var(--muted-fg)'};"

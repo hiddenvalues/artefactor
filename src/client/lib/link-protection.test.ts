@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   UNAMBIGUOUS_ALPHABET,
   copyText,
+  expiryTimerDelay,
   emptyForm,
   enablePassword,
   expiryFor,
@@ -87,6 +88,23 @@ describe("what the form submits (S32a)", () => {
     expect(
       gateChange({ ...emptyForm(), requirePassword: true, password: "new-password", keepExpiry: true }, current, NOW),
     ).toEqual({ password: "new-password" });
+  });
+});
+
+describe("expiryTimerDelay (S32a)", () => {
+  it("is the time left until the expiry, for a gate that will still expire", () => {
+    expect(expiryTimerDelay({ passwordProtected: false, expiresAt: new Date(NOW.getTime() + 5000).toISOString() }, NOW)).toBe(5000);
+  });
+
+  it("is null with no expiry, or once it has passed", () => {
+    expect(expiryTimerDelay(null, NOW)).toBeNull();
+    expect(expiryTimerDelay({ passwordProtected: true, expiresAt: null }, NOW)).toBeNull();
+    expect(expiryTimerDelay({ passwordProtected: false, expiresAt: NOW.toISOString() }, NOW)).toBeNull();
+  });
+
+  it("is capped to what a browser timer can hold", () => {
+    const far = new Date(NOW.getTime() + 60 * DAY).toISOString();
+    expect(expiryTimerDelay({ passwordProtected: false, expiresAt: far }, NOW)).toBe(2 ** 31 - 1);
   });
 });
 

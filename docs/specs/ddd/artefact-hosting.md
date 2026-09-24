@@ -488,7 +488,9 @@ cascade — also removes the artefact's thumbnail files.
 
 **AH22 amendment.** The link gate's list of gated reads gains **the thumbnail (S35)**. No
 S35 code is needed for it: the thumbnail route reuses the download's resolver, so the gate is
-inherited with S32a, and a card whose image fails to load falls back to the placeholder.
+inherited with S32a, and a card whose image fails to load falls back to the placeholder. A
+thumbnail a non-owner reads of a gated artefact is served `no-store`, so a browser never keeps
+showing it after the pass expires or is voided.
 
 **AH17 note.** The render sweep that finds artefacts needing a thumbnail is a **system** read:
 tenant-agnostic, internal, never exposed through any API, and returning only what the renderer

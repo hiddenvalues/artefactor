@@ -35,10 +35,11 @@ export function createThumbnailRoutes(deps: ThumbnailRoutesDeps) {
 
   r.get("/:ref/thumbnail", requireAuth, async (c) => {
     try {
+      const viewerId = c.get("user")!.id;
       const artefact = await resolveViewableArtefact(
         deps,
         c.req.param("ref"),
-        c.get("user")!.id,
+        viewerId,
         await deps.resolveScope(c),
         linkPassesOf(c),
       );
@@ -51,7 +52,13 @@ export function createThumbnailRoutes(deps: ThumbnailRoutesDeps) {
         status: 200,
         headers: {
           "Content-Type": "image/webp",
-          "Cache-Control": "private, max-age=31536000, immutable",
+          // S32a — a non-owner's read of a link-gated artefact may depend on a
+          // pass that later expires or is voided, so the browser must ask again.
+          "Cache-Control":
+            viewerId !== artefact.ownerId &&
+            (artefact.linkGate.passwordHash !== null || artefact.linkGate.expiresAt !== null)
+              ? "private, no-store"
+              : "private, max-age=31536000, immutable",
           "X-Content-Type-Options": "nosniff",
           "Content-Length": String(image.byteLength),
         },

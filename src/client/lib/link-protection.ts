@@ -140,6 +140,15 @@ export function isExpired(gate: LinkGateSummary | null | undefined, now: Date): 
   return !!gate?.expiresAt && Date.parse(gate.expiresAt) <= now.getTime();
 }
 
+// How long until the gate expires, for a timer that re-renders the expiry
+// indicators at that instant (time is not reactive state). null = nothing to
+// wait for; capped to the largest delay `setTimeout` holds (it then re-arms).
+export function expiryTimerDelay(gate: LinkGateSummary | null | undefined, now: Date): number | null {
+  if (!gate?.expiresAt) return null;
+  const ms = Date.parse(gate.expiresAt) - now.getTime();
+  return ms > 0 ? Math.min(ms, 2 ** 31 - 1) : null;
+}
+
 // The copy button: writes exactly `text`, reports the label to flash.
 export async function copyText(
   clipboard: Pick<Clipboard, "writeText"> | undefined,

@@ -27,6 +27,26 @@ describe("UnlockRateLimiter (S32a)", () => {
   });
 });
 
+describe("UnlockRateLimiter bounds (S32a)", () => {
+  it("never holds more than its key cap, evicting the oldest keys", () => {
+    const limiter = new UnlockRateLimiter({ maxKeys: 3 });
+    for (const ip of ["a", "b", "c", "d", "e"]) limiter.attempt("h", ip, 1);
+    expect(limiter.size).toBe(3);
+    // The newest keys keep their counts; the evicted ones start over.
+    for (let i = 0; i < 9; i++) limiter.attempt("h", "e", 2);
+    expect(limiter.attempt("h", "e", 3)).toBe(false);
+    expect(limiter.attempt("h", "a", 3)).toBe(true);
+  });
+
+  it("drops keys whose window has passed", () => {
+    const limiter = new UnlockRateLimiter({ maxKeys: 2 });
+    limiter.attempt("h", "a", 0);
+    limiter.attempt("h", "b", UNLOCK_WINDOW_MS + 1);
+    limiter.attempt("h", "c", UNLOCK_WINDOW_MS + 2);
+    expect(limiter.size).toBe(2);
+  });
+});
+
 describe("clientIp (S32a)", () => {
   it("takes the first X-Forwarded-For hop", () => {
     expect(clientIp("203.0.113.9, 10.0.0.1", "10.0.0.2")).toBe("203.0.113.9");
