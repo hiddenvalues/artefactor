@@ -134,6 +134,8 @@ describe("owner-set data visibility (S41)", () => {
         400,
       );
       expect((await setDataVisibility(id, owner, {})).status).toBe(400);
+      expect((await setDataVisibility(id, owner, null)).status).toBe(400);
+      expect((await setDataVisibility(id, owner, "own")).status).toBe(400);
     });
 
     it("is 404 for a non-owner (AH8/AH9)", async () => {

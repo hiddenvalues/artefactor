@@ -229,10 +229,12 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   // while contained). Non-owner or unknown id → 404 (AH8); archived → 400, as
   // for every other mutation. Returns the updated summary.
   r.put("/:id/data-visibility", requireAuth, async (c) => {
-    const body = await c.req
-      .json<Partial<SetDataVisibilityRequest>>()
-      .catch(() => ({}) as Partial<SetDataVisibilityRequest>);
-    const dataVisibility = body.dataVisibility;
+    // A JSON `null` or scalar body parses fine, so check it is an object first.
+    const body: unknown = await c.req.json().catch(() => null);
+    const dataVisibility =
+      typeof body === "object" && body !== null
+        ? (body as Partial<SetDataVisibilityRequest>).dataVisibility
+        : undefined;
     if (!dataVisibility || !DATA_VISIBILITIES.includes(dataVisibility)) {
       return c.json(
         { error: "dataVisibility must be one of " + DATA_VISIBILITIES.join(", ") },
