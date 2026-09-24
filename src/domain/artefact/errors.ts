@@ -16,3 +16,12 @@ export class ThumbnailRendererUnavailable extends Error {
     this.name = "ThumbnailRendererUnavailable";
   }
 }
+
+// S32a (AH22/AH24) — the matrix admits the viewer, but the artefact's link gate
+// asks them for its password first. Raised only after a grant, so it never
+// reveals anything a denied probe could not already see.
+export class LinkGateChallenge extends DomainError {
+  constructor(ref: string) {
+    super(`${ref}: this link is password protected — open it in a browser to unlock it`);
+  }
+}

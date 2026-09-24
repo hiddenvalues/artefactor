@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import { ArtefactNotFound, LinkGateChallenge } from "../../domain/artefact/errors";
+import { linkGateChallenged, linkPassesOf } from "../link-gate/passes";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import {
@@ -74,6 +75,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
         c.get("user")?.id ?? null,
         await deps.resolveScope(c),
         commandDeps,
+        linkPassesOf(c),
       );
       const identities = await deps.userDirectory.lookup(
         refs.map((a) => a.authorId),
@@ -91,6 +93,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
       });
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;
     }
   });
@@ -99,7 +102,12 @@ export function createDataRoutes(deps: DataRoutesDeps) {
   r.get("/me", requireAuth, async (c) => {
     try {
       const entry = await getOwnDataEntry(
-        { ref: refOf(c), authorId: ownerId(c), scope: await deps.resolveScope(c) },
+        {
+          ref: refOf(c),
+          authorId: ownerId(c),
+          scope: await deps.resolveScope(c),
+          passes: linkPassesOf(c),
+        },
         commandDeps,
       );
       return c.json<DataEntryResponse>({
@@ -108,6 +116,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
       });
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;
     }
   });
@@ -126,7 +135,12 @@ export function createDataRoutes(deps: DataRoutesDeps) {
     }
     try {
       const entry = await putOwnDataEntry(
-        { ref: refOf(c), authorId: ownerId(c), scope: await deps.resolveScope(c) },
+        {
+          ref: refOf(c),
+          authorId: ownerId(c),
+          scope: await deps.resolveScope(c),
+          passes: linkPassesOf(c),
+        },
         blob,
         commandDeps,
         { ifUnmodifiedSince: precondition },
@@ -137,6 +151,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
       });
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       if (err instanceof InvalidBlob) return c.json({ error: err.message }, 400);
       if (err instanceof BlobTooLarge) return c.json({ error: err.message }, 413);
       if (err instanceof DataConflict) return c.json({ error: err.message }, 412);
@@ -148,12 +163,18 @@ export function createDataRoutes(deps: DataRoutesDeps) {
   r.delete("/me", requireAuth, async (c) => {
     try {
       await deleteOwnDataEntry(
-        { ref: refOf(c), authorId: ownerId(c), scope: await deps.resolveScope(c) },
+        {
+          ref: refOf(c),
+          authorId: ownerId(c),
+          scope: await deps.resolveScope(c),
+          passes: linkPassesOf(c),
+        },
         commandDeps,
       );
       return c.body(null, 204);
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;
     }
   });
@@ -169,6 +190,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
         c.req.param("authorId")!,
         await deps.resolveScope(c),
         commandDeps,
+        linkPassesOf(c),
       );
       return c.json<DataEntryResponse>({
         blob: entry?.blob ?? null,
@@ -176,6 +198,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
       });
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;
     }
   });

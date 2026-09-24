@@ -329,7 +329,7 @@ S15 permanent delete must give the policy its chance to purge.
 
 ### S32a — Link controls on public artefacts: password + expiry
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S6, S11, S12, S21, S30
 - **Linear:** ALI-371
 

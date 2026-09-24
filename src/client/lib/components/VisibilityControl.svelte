@@ -9,6 +9,14 @@
   } from "../format";
   import { overlay } from "../ui.svelte";
   import Icon from "./Icon.svelte";
+  import LinkProtection from "./LinkProtection.svelte";
+  import type { LinkGateSummary, SetLinkGateRequest } from "../../../shared/contracts";
+  import {
+    gateChange,
+    isExpired,
+    linkGateOnPublish,
+    type LinkProtectionForm,
+  } from "../link-protection";
 
   interface Props {
     id: string;
@@ -32,6 +40,15 @@
     usesStorage?: boolean;
     dataVisibility?: DataVisibility;
     onChooseData?: (v: DataVisibility) => void;
+    // S32a (AH31) — link protection on a public artefact. When given, choosing
+    // Public first reveals the "Link protection" section (submitted with the
+    // tier change), and while public the section edits the gate. Never while
+    // inherited: a contained artefact's own tier and gate are dormant.
+    linkProtection?: {
+      current: LinkGateSummary | null;
+      onPublish: (gate: { password?: string; expiresAt?: string } | undefined) => void;
+      onSave: (change: SetLinkGateRequest) => void;
+    };
   }
   let {
     id,
@@ -46,7 +63,39 @@
     usesStorage = false,
     dataVisibility,
     onChooseData,
+    linkProtection,
   }: Props = $props();
+
+  // S32a — "publish": Public was chosen and waits for its link protection;
+  // "edit": editing the gate of a public artefact. Reset whenever the menu closes.
+  let gateMode = $state<"publish" | "edit" | null>(null);
+  $effect(() => {
+    if (!open) gateMode = null;
+  });
+  const gateOffered = $derived(!!linkProtection && !inherited);
+  const gate = $derived(linkProtection?.current ?? null);
+  const gateExpired = $derived(isExpired(gate, new Date()));
+
+  function submitGate(form: LinkProtectionForm) {
+    const now = new Date();
+    overlay.close();
+    if (gateMode === "publish") linkProtection?.onPublish(linkGateOnPublish(form, now));
+    else linkProtection?.onSave(gateChange(form, gate, now));
+  }
+
+  function gateSummary(g: LinkGateSummary | null): string {
+    if (!g) return "Anyone with the link can open it";
+    const parts: string[] = [];
+    if (g.passwordProtected) parts.push("Password");
+    if (g.expiresAt) {
+      parts.push(
+        gateExpired
+          ? "Link expired"
+          : `Expires ${new Date(g.expiresAt).toLocaleDateString(undefined, { dateStyle: "medium" })}`,
+      );
+    }
+    return parts.join(" · ");
+  }
 
   const showSavedData = $derived(
     usesStorage && dataVisibility !== undefined && !!onChooseData,
@@ -83,6 +132,11 @@
   ];
 
   function choose(v: Visibility) {
+    // S32a — Public reveals the link protection first, submitted with the tier.
+    if (v === "public" && v !== visibility && gateOffered) {
+      gateMode = "publish";
+      return;
+    }
     overlay.close();
     if (v !== visibility) onChoose(v);
   }
@@ -177,6 +231,16 @@
         {@render savedData()}
       {/if}
     </div>
+  {:else if open && gateMode !== null}
+    <div style={menuStyle}>
+      <LinkProtection
+        mode={gateMode}
+        current={gate}
+        submitLabel={gateMode === "publish" ? "Make public" : "Save"}
+        onSubmit={submitGate}
+        onCancel={() => (gateMode = null)}
+      />
+    </div>
   {:else if open}
     <div style={menuStyle}>
       {#if note}
@@ -209,6 +273,27 @@
           {/if}
         </button>
       {/each}
+      {#if gateOffered && visibility === "public"}
+        <div style="margin-top:5px;padding-top:5px;border-top:1px solid var(--border);">
+          <button
+            onclick={() => (gateMode = "edit")}
+            style="width:100%;display:flex;align-items:center;gap:9px;padding:7px 9px;border:none;background:none;color:var(--fg);border-radius:8px;cursor:pointer;text-align:left;font-family:inherit;"
+          >
+            <Icon paths={["M5 11h14v10H5z", "M8 11V7a4 4 0 0 1 8 0v4"]} size={15} style="flex-shrink:0;" />
+            <span style="flex:1;min-width:0;">
+              <span style="display:block;font-size:12.5px;font-weight:500;">Link protection</span>
+              <span
+                style="display:block;font-size:11px;color:{gateExpired
+                  ? 'var(--destructive)'
+                  : 'var(--muted-fg)'};"
+              >
+                {gateSummary(gate)}
+              </span>
+            </span>
+            <Icon paths={["M9 18l6-6-6-6"]} size={13} style="color:var(--muted-fg);flex-shrink:0;" />
+          </button>
+        </div>
+      {/if}
       {#if showSavedData}
         {@render savedData()}
       {/if}

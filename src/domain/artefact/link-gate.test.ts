@@ -13,6 +13,7 @@ import {
   authorizeArtefactRead,
   clearArtefactLinkGate,
   evaluateLinkGate,
+  isLinkExpired,
   setArtefactLinkGate,
   type LinkGate,
   type LinkPasswordHasher,
@@ -94,6 +95,17 @@ describe("evaluateLinkGate (AH22/AH23)", () => {
     expect(
       evaluateLinkGate(gate({ passwordHash: "x", version: 2 }), NOW, { version: 1 }),
     ).toBe("challenge");
+  });
+});
+
+describe("isLinkExpired (AH23)", () => {
+  it("is true only for a top-level public artefact past its expiry", () => {
+    const expired = gate({ expiresAt: PAST });
+    expect(isLinkExpired(publicArtefact({ linkGate: expired }), NOW)).toBe(true);
+    expect(isLinkExpired(publicArtefact({ linkGate: gate({ expiresAt: FUTURE }) }), NOW)).toBe(false);
+    expect(isLinkExpired(publicArtefact(), NOW)).toBe(false);
+    expect(isLinkExpired(publicArtefact({ linkGate: expired, collectionId: "c1" }), NOW)).toBe(false);
+    expect(isLinkExpired(artefact({ visibility: "authenticated", linkGate: expired }), NOW)).toBe(false);
   });
 });
 

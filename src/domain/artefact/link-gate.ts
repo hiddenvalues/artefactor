@@ -138,6 +138,19 @@ export function clearedGate(gate: LinkGate): LinkGate {
   return { passwordHash: null, expiresAt: null, version: gate.version + 1 };
 }
 
+// AH23 — a public top-level artefact whose own link has expired: what the
+// owner's preview warns about (the owner themself is never gated).
+export function isLinkExpired(
+  a: Pick<Artefact, "visibility" | "collectionId" | "linkGate">,
+  now: Date,
+): boolean {
+  return (
+    a.visibility === "public" &&
+    a.collectionId === null &&
+    evaluateLinkGate(a.linkGate, now, null) === "expired"
+  );
+}
+
 export type ArtefactReadVerdict = "granted" | "not-found" | "sign-in" | "challenge";
 
 export interface ArtefactReadInput {

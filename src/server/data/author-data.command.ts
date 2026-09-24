@@ -7,6 +7,7 @@ import {
   resolveViewableArtefact,
   type DataAccessDeps,
 } from "./own-data.command";
+import type { PassLookup } from "../link-gate/passes";
 
 // Application commands for S12 — the host data-context switcher. They power the
 // cross-author *read* path: list which authors hold an entry, and load one
@@ -26,8 +27,9 @@ export async function listDataAuthors(
   viewerId: string | null,
   scope: TenantScope,
   deps: DataAccessDeps,
+  passes?: PassLookup,
 ): Promise<DataAuthorRef[]> {
-  const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope);
+  const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope, passes);
   const authors = await deps.dataRepo.listAuthorsByArtefact(artefact.id);
   // AD11 — only the authors this viewer may load; never a refusal of the list.
   return authors.filter((a) => canLoadAuthorData(artefact, viewerId, a.authorId));
@@ -41,8 +43,9 @@ export async function getAuthorDataEntry(
   authorId: string,
   scope: TenantScope,
   deps: DataAccessDeps,
+  passes?: PassLookup,
 ): Promise<DataEntry | null> {
-  const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope);
+  const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope, passes);
   // AD11 — a refused author is a flat not-found, whether or not they hold an entry.
   if (!canLoadAuthorData(artefact, viewerId, authorId)) {
     throw new ArtefactNotFound(ref);

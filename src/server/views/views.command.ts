@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
-import {
-  canViewArtefactUnder,
-  defaultAccessPolicy,
-  type AccessPolicy,
-} from "../../domain/artefact/access";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import type { AccessPolicy } from "../../domain/artefact/access";
+import { ArtefactNotFound, LinkGateChallenge } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
-import { resolveEffectiveViewable } from "../collections/effective";
+import { authorizeRead } from "../link-gate/authorize";
+import type { PassLookup } from "../link-gate/passes";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import { recordView } from "../../domain/views/view-entry";
 import type {
@@ -68,22 +65,17 @@ async function resolveViewableArtefact(
   ref: string,
   viewerId: string | null,
   scope: TenantScope,
+  passes?: PassLookup,
 ) {
   // Slug = global capability (AH6); id fallback is tenant-scoped (S22/T2).
   const artefact =
     (await deps.artefactRepo.findBySlug(ref)) ??
     (await deps.artefactRepo.findById(ref, scope));
-  if (
-    !artefact ||
-    // The matrix decides on the effective tier (AH20/CL5).
-    !(await canViewArtefactUnder(
-      deps.accessPolicy ?? defaultAccessPolicy,
-      await resolveEffectiveViewable(artefact, deps.collectionRepo),
-      viewerId,
-    ))
-  ) {
-    throw new ArtefactNotFound(ref);
-  }
+  if (!artefact) throw new ArtefactNotFound(ref);
+  // The matrix on the effective tier (AH20/CL5), then the link gate (S32a).
+  const verdict = await authorizeRead(deps, artefact, viewerId, { passes });
+  if (verdict === "challenge") throw new LinkGateChallenge(ref);
+  if (verdict !== "granted") throw new ArtefactNotFound(ref);
   return artefact;
 }
 
@@ -95,8 +87,9 @@ export async function listArtefactViewers(
   viewerId: string,
   scope: TenantScope,
   deps: ListViewersDeps,
+  passes?: PassLookup,
 ): Promise<ViewerRef[]> {
-  const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope);
+  const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope, passes);
   const viewers = await deps.viewRepo.listViewersByArtefact(artefact.id);
   return viewers.filter((v) => v.viewerId !== viewerId);
 }

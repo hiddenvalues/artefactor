@@ -1,7 +1,6 @@
 import { Hono, type Context } from "hono";
 import {
   canLoadAuthorData,
-  canViewArtefactUnder,
   defaultAccessPolicy,
   type AccessPolicy,
 } from "../../domain/artefact/access";
@@ -11,7 +10,7 @@ import type { PayloadStore } from "../../domain/artefact/ports";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { DataRepository } from "../../domain/data/data-repository";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
-import { resolveEffectiveViewable } from "../collections/effective";
+import { authorizeRead } from "../link-gate/authorize";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
 import { frameChannel, verifyFrameToken, type FrameTokenClaims } from "../runtime/frame-token";
 import { frameTargetOrigin, type Framing } from "../runtime/framing";
@@ -40,8 +39,9 @@ export const RAW_FRAME_ROUTE = "/api/artefacts/:id/raw/frame";
 // Redeem: verify the signature and `exp`; the token's artefact and route must
 // match the URL; then the route's own access check is re-run for the token's
 // viewer, so a revocation is effective immediately — the owner's data visibility
-// included (S41, AD11: a refused `authorId` is denied). Any deny is a flat 404
-// (AH7/AH8). Seed = `authorId ?? viewerId`; writable only in the viewer's own
+// included (S41, AD11: a refused `authorId` is denied), and the link gate (S32a,
+// AH22) with the version the token's pass proved: a token-less frame never
+// passes a password gate. Any deny is a flat 404 (AH7/AH8). Seed = `authorId ?? viewerId`; writable only in the viewer's own
 // context (AD5).
 export function createFrameRoutes(deps: FrameRoutesDeps) {
   const app = new Hono();
@@ -55,7 +55,7 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
   app.get(SLUG_FRAME_ROUTE, async (c) => {
     const artefact = await deps.repo.findBySlug(c.req.param("slug"));
     const token = c.req.query("t");
-    let claims: Pick<FrameTokenClaims, "viewerId" | "authorId"> = {
+    let claims: Pick<FrameTokenClaims, "viewerId" | "authorId" | "gate"> = {
       viewerId: null,
       authorId: null,
     };
@@ -77,11 +77,11 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
     }
     if (
       !artefact ||
-      !(await canViewArtefactUnder(
-        accessPolicy,
-        await resolveEffectiveViewable(artefact, deps.collectionRepo),
-        claims.viewerId,
-      )) ||
+      (await authorizeRead({ ...deps, accessPolicy }, artefact, claims.viewerId, {
+        passes: (holderId) =>
+          claims.gate !== undefined && holderId === artefact.id ? { version: claims.gate } : null,
+        now: new Date(deps.framing.now()),
+      })) !== "granted" ||
       // AD11 — re-checked at redeem, so a flip to `own` refuses a token minted
       // for a foreign context before it.
       (claims.authorId !== null &&

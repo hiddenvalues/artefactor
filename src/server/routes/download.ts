@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import { ArtefactNotFound, LinkGateChallenge } from "../../domain/artefact/errors";
+import { linkGateChallenged, linkPassesOf } from "../link-gate/passes";
 import type { PayloadStore } from "../../domain/artefact/ports";
 import type { AccessPolicy } from "../../domain/artefact/access";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
@@ -46,6 +47,7 @@ export function createDownloadRoutes(deps: DownloadRoutesDeps) {
         ref,
         c.get("user")?.id ?? null,
         await deps.resolveScope(c),
+        linkPassesOf(c),
       );
       const payload = await deps.payloadStore.get(artefact.payloadRef);
       // Name the file after the title; a title with no letters or digits at all
@@ -71,6 +73,7 @@ export function createDownloadRoutes(deps: DownloadRoutesDeps) {
       });
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;
     }
   });

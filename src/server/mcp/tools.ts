@@ -12,6 +12,7 @@ import type { PayloadStore } from "../../domain/artefact/ports";
 import type { DataRepository } from "../../domain/data/data-repository";
 import {
   ArtefactNotFound,
+  LinkGateChallenge,
   InvariantViolation,
 } from "../../domain/artefact/errors";
 import { createArtefactCommand } from "../artefacts/create-artefact.command";
@@ -113,13 +114,15 @@ function fail(message: string) {
 // is actually reachable by link (a slug exists and the **effective** tier is not
 // private — a contained artefact is served under its collection tree root's
 // access, AH20, and the slug 404s while effectively private).
-function makeSummarize(deps: McpToolDeps) {
+// S32a — `viewerId` is the token's Account: the owner's summaries carry
+// `linkGate` (never the hash), anyone else's never do.
+function makeSummarize(deps: McpToolDeps, viewerId: string) {
   return async function summarize(a: Artefact) {
     const effVis = effectiveVisibility(
       a,
       await loadArtefactRoot(a, deps.collectionRepo),
     );
-    const summary = toArtefactSummary(a, effVis);
+    const summary = toArtefactSummary(a, effVis, viewerId);
     const url =
       a.publicSlug && effVis !== "private"
         ? `${env.BETTER_AUTH_URL}/a/${a.publicSlug}`
@@ -159,6 +162,7 @@ async function run<T>(body: () => Promise<T>) {
   } catch (err) {
     if (
       err instanceof ArtefactNotFound ||
+      err instanceof LinkGateChallenge ||
       err instanceof InvariantViolation ||
       err instanceof ResultTooLarge ||
       err instanceof ToolInputRejected
@@ -181,7 +185,7 @@ export function registerArtefactTools(
     collectionRepo: deps.collectionRepo,
     dataRepo,
   };
-  const summarize = makeSummarize(deps);
+  const summarize = makeSummarize(deps, userId);
 
   // Artefacts accumulate per-user data blobs (what the running artefact reads /
   // writes via localStorage). The backend treats those blobs as opaque, so it
@@ -561,7 +565,7 @@ export function registerArtefactTools(
     {
       title: "Set artefact visibility",
       description:
-        "Share or unshare an artefact. A shareable tier mints (and retains) a slug; private retains the slug but the link 404s.",
+        "Share or unshare an artefact. A shareable tier mints (and retains) a slug; private retains the slug but the link 404s. Changing a public artefact to any other tier clears its link protection (password and expiry). Link protection is set only in the Artefactor web app, never over this connector.",
       inputSchema: {
         id: z.string().min(1),
         visibility: z.enum(VISIBILITIES),

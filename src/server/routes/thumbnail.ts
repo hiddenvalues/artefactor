@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import { ArtefactNotFound, LinkGateChallenge } from "../../domain/artefact/errors";
+import { linkGateChallenged, linkPassesOf } from "../link-gate/passes";
 import type { ThumbnailStore } from "../../domain/artefact/ports";
 import type { AccessPolicy } from "../../domain/artefact/access";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
@@ -39,6 +40,7 @@ export function createThumbnailRoutes(deps: ThumbnailRoutesDeps) {
         c.req.param("ref"),
         c.get("user")!.id,
         await deps.resolveScope(c),
+        linkPassesOf(c),
       );
       if (artefact.thumbnailHash === null) return c.notFound();
       const image = await deps.thumbnailStore.get(artefact.id, artefact.thumbnailHash);
@@ -56,6 +58,7 @@ export function createThumbnailRoutes(deps: ThumbnailRoutesDeps) {
       });
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;
     }
   });

@@ -11,6 +11,9 @@ import {
 } from "../artefacts/create-artefact.command";
 import { setArtefactVisibilityCommand } from "../artefacts/set-visibility.command";
 import { setDataVisibilityCommand } from "../artefacts/set-data-visibility.command";
+import { clearLinkGateCommand, setLinkGateCommand } from "../artefacts/link-gate.command";
+import { isLinkExpired, type LinkPasswordHasher } from "../../domain/artefact/link-gate";
+import { ScryptLinkPasswordHasher } from "../../infra/crypto/link-password-hasher";
 import {
   grantAccessCommand,
   revokeAccessCommand,
@@ -49,6 +52,7 @@ import type {
   ArtefactListResponse,
   ArtefactSummary,
   GrantAccessRequest,
+  LinkGateSummary,
   MoveArtefactRequest,
   SetDataVisibilityRequest,
   SetVisibilityRequest,
@@ -72,12 +76,15 @@ export type ArtefactRoutesDeps = CreateArtefactDeps & {
   thumbnailStore: ThumbnailStore;
   // S36 — mints the owner-preview shell's first frame URL.
   framing: Framing;
+  // S32a — hashes link passwords (default: scrypt).
+  linkPasswordHasher?: LinkPasswordHasher;
 };
 
 // BFF routes for the Artefact Hosting context. S2 adds manual HTML upload;
 // API-push ingestion (S9) reuses the same command behind key auth.
 export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   const r = new Hono<AuthEnv>();
+  const hasher = deps.linkPasswordHasher ?? new ScryptLinkPasswordHasher();
 
   // Resolve one owned artefact's effective tier (AH20) for a summary response.
   const effectiveVisOf = async (a: Artefact): Promise<Visibility> =>
@@ -121,7 +128,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     const effVis = await effectiveVisMap(ownerId(c), scope);
     return c.json<ArtefactListResponse>({
       artefacts: await Promise.all(
-        artefacts.map(async (a) => toArtefactSummary(a, await effVis(a))),
+        artefacts.map(async (a) => toArtefactSummary(a, await effVis(a), ownerId(c))),
       ),
     });
   });
@@ -137,7 +144,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         scope: await deps.resolveScope(c),
       });
       return c.json<ArtefactSummary>(
-        toArtefactSummary(artefact, await effectiveVisOf(artefact)),
+        toArtefactSummary(artefact, await effectiveVisOf(artefact), ownerId(c)),
       );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
@@ -184,6 +191,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           viewerId: ownerId(c),
           ownerId: artefact.ownerId,
           usesStorage: artefact.usesStorage,
+          linkExpired: isLinkExpired(artefact, new Date()),
         }),
       );
     } catch (err) {
@@ -207,6 +215,11 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     if (!visibility || !VISIBILITIES.includes(visibility)) {
       return c.json({ error: "visibility must be one of " + VISIBILITIES.join(", ") }, 400);
     }
+    // S32a (AH31) — optional link protection, set with the change to `public`.
+    const linkGate = body.linkGate === undefined ? undefined : parseLinkGate(body.linkGate, false);
+    if (linkGate === "invalid") {
+      return c.json({ error: "linkGate must be { password?: string, expiresAt?: ISO date }" }, 400);
+    }
     try {
       const updated = await setArtefactVisibilityCommand(
         {
@@ -214,10 +227,56 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           requesterId: ownerId(c),
           visibility,
           scope: await deps.resolveScope(c),
+          linkGate: linkGate as { password?: string; expiresAt?: Date } | undefined,
         },
+        { repo: deps.repo, hasher },
+      );
+      return c.json<ArtefactSummary>(toArtefactSummary(updated, updated.visibility, ownerId(c)));
+    } catch (err) {
+      if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
+      if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  // S32a — Link protection on a public artefact (AH31). Owner-only: a non-owner
+  // or unknown id is a flat 404 (AH8); archived, not public, contained, a bad
+  // password or a past expiry → 400. An omitted half is kept, `null` clears it;
+  // DELETE clears both. Returns the updated owner summary.
+  r.put("/:id/link-gate", requireAuth, async (c) => {
+    const body: unknown = await c.req.json().catch(() => null);
+    const gate = parseLinkGate(body, true);
+    if (gate === "invalid") {
+      return c.json(
+        { error: "body must be { password?: string | null, expiresAt?: ISO date | null }" },
+        400,
+      );
+    }
+    try {
+      const updated = await setLinkGateCommand(
+        {
+          artefactId: c.req.param("id"),
+          requesterId: ownerId(c),
+          scope: await deps.resolveScope(c),
+          ...gate,
+        },
+        { repo: deps.repo, hasher },
+      );
+      return c.json<ArtefactSummary>(toArtefactSummary(updated, updated.visibility, ownerId(c)));
+    } catch (err) {
+      if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
+      if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  r.delete("/:id/link-gate", requireAuth, async (c) => {
+    try {
+      const updated = await clearLinkGateCommand(
+        { artefactId: c.req.param("id"), requesterId: ownerId(c), scope: await deps.resolveScope(c) },
         { repo: deps.repo },
       );
-      return c.json<ArtefactSummary>(toArtefactSummary(updated));
+      return c.json<ArtefactSummary>(toArtefactSummary(updated, updated.visibility, ownerId(c)));
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
@@ -252,7 +311,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         { repo: deps.repo },
       );
       return c.json<ArtefactSummary>(
-        toArtefactSummary(updated, await effectiveVisOf(updated)),
+        toArtefactSummary(updated, await effectiveVisOf(updated), ownerId(c)),
       );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
@@ -364,7 +423,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     try {
       const updated = await editArtefactCommand(input, deps);
       return c.json<ArtefactSummary>(
-        toArtefactSummary(updated, await effectiveVisOf(updated)),
+        toArtefactSummary(updated, await effectiveVisOf(updated), ownerId(c)),
       );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
@@ -385,7 +444,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         { repo: deps.repo },
       );
       return c.json<ArtefactSummary>(
-        toArtefactSummary(updated, await effectiveVisOf(updated)),
+        toArtefactSummary(updated, await effectiveVisOf(updated), ownerId(c)),
       );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
@@ -406,7 +465,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         { repo: deps.repo },
       );
       return c.json<ArtefactSummary>(
-        toArtefactSummary(updated, await effectiveVisOf(updated)),
+        toArtefactSummary(updated, await effectiveVisOf(updated), ownerId(c)),
       );
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
@@ -463,7 +522,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         { artefactRepo: deps.repo, collectionRepo: deps.collectionRepo },
       );
       return c.json<ArtefactSummary>(
-        toArtefactSummary(moved, await effectiveVisOf(moved)),
+        toArtefactSummary(moved, await effectiveVisOf(moved), ownerId(c)),
       );
     } catch (err) {
       if (err instanceof ArtefactNotFound || err instanceof CollectionNotFound)
@@ -545,7 +604,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         { ownerId: ownerId(c), title, kind, payload, tenantId: scope.tenantId },
         deps,
       );
-      return c.json<ArtefactSummary>(toArtefactSummary(artefact), 201);
+      return c.json<ArtefactSummary>(toArtefactSummary(artefact, artefact.visibility, ownerId(c)), 201);
     } catch (err) {
       if (err instanceof InvariantViolation) {
         return c.json({ error: err.message }, 400);
@@ -567,11 +626,47 @@ function thumbnailUrlOf(a: Artefact): string | null {
 // `effectiveVisibility` (AH20) defaults to the artefact's own tier — correct
 // for every top-level artefact; callers pass the resolved tier for contained
 // ones (the create path is always top-level, AH1).
+// S32a (AH31) — the body of a gate change. `nullable` allows `null` (clear) on
+// the link-gate route; the visibility route only sets. "invalid" on any other
+// shape, a non-string password, or an unparseable expiry.
+function parseLinkGate(
+  body: unknown,
+  nullable: boolean,
+): { password?: string | null; expiresAt?: Date | null } | "invalid" {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return "invalid";
+  const { password, expiresAt } = body as Record<string, unknown>;
+  const out: { password?: string | null; expiresAt?: Date | null } = {};
+  if (password !== undefined) {
+    if (password === null && nullable) out.password = null;
+    else if (typeof password === "string") out.password = password;
+    else return "invalid";
+  }
+  if (expiresAt !== undefined) {
+    if (expiresAt === null && nullable) out.expiresAt = null;
+    else if (typeof expiresAt === "string" && !Number.isNaN(Date.parse(expiresAt))) {
+      out.expiresAt = new Date(expiresAt);
+    } else return "invalid";
+  }
+  return out;
+}
+
+// S32a — the owner's view of the gate: whether a password is set (never the
+// hash) and the expiry; null when there is no gate.
+function linkGateSummary(a: Artefact): LinkGateSummary | null {
+  const { passwordHash, expiresAt } = a.linkGate;
+  if (passwordHash === null && expiresAt === null) return null;
+  return { passwordProtected: passwordHash !== null, expiresAt: expiresAt?.toISOString() ?? null };
+}
+
+// `viewerId` is who the summary is for: `linkGate` rides only on the owner's own
+// summaries (S32a), never on a summary another user sees.
 export function toArtefactSummary(
   a: Artefact,
   effectiveVis: Visibility = a.visibility,
+  viewerId: string | null = null,
 ): ArtefactSummary {
   return {
+    ...(viewerId === a.ownerId ? { linkGate: linkGateSummary(a) } : {}),
     id: a.id,
     ownerId: a.ownerId,
     title: a.title,

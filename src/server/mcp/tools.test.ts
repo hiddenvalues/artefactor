@@ -196,6 +196,58 @@ describe("MCP artefact tools (S18)", () => {
     });
   });
 
+  describe("link protection (S32a)", () => {
+    const EXPIRES = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    async function gatedPublic(client: Client) {
+      const { id } = json(
+        await call(client, "create_artefact", { title: "G", kind: "prototype", html: "<h1>g</h1>", visibility: "public" }),
+      );
+      const stored = (await deps.repo.findById(id, SINGLETON_SCOPE))!;
+      await deps.repo.save({
+        ...stored,
+        linkGate: { passwordHash: "scrypt$salt$key", expiresAt: EXPIRES, version: 3 },
+      });
+      return id as string;
+    }
+
+    it("the owner's summaries carry linkGate, never the hash", async () => {
+      const u1 = await clientFor("u1");
+      const id = await gatedPublic(u1);
+      for (const r of [await call(u1, "get_artefact", { id }), await call(u1, "list_artefacts", {})]) {
+        expect(r.content[0]!.text).not.toMatch(/passwordHash|scrypt/);
+      }
+      expect(json(await call(u1, "get_artefact", { id })).linkGate).toEqual({
+        passwordProtected: true,
+        expiresAt: EXPIRES.toISOString(),
+      });
+    });
+
+    it("set_visibility away from public clears the gate, and says so", async () => {
+      const u1 = await clientFor("u1");
+      const id = await gatedPublic(u1);
+      const r = json(await call(u1, "set_visibility", { id, visibility: "authenticated" }));
+      expect(r.linkGate).toBeNull();
+      expect((await deps.repo.findById(id, SINGLETON_SCOPE))!.linkGate).toEqual({
+        passwordHash: null,
+        expiresAt: null,
+        version: 4,
+      });
+      const tools = (await u1.listTools()).tools;
+      const desc = tools.find((t) => t.name === "set_visibility")!.description!;
+      expect(desc).toMatch(/link protection/i);
+      expect(desc).toMatch(/Artefactor (web )?(app|UI)/);
+    });
+
+    it("offers no tool that sets a password or an expiry", async () => {
+      const u1 = await clientFor("u1");
+      const tools = (await u1.listTools()).tools;
+      for (const t of tools) {
+        expect(Object.keys((t.inputSchema as { properties?: object }).properties ?? {})).not.toContain("password");
+      }
+    });
+  });
+
   it("create_artefact creates a private artefact owned by the caller", async () => {
     const client = await clientFor("u1");
     const r = json(

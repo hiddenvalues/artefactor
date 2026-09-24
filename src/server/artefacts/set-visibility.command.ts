@@ -8,6 +8,10 @@ import {
   InvariantViolation,
 } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import {
+  setArtefactLinkGate,
+  type LinkPasswordHasher,
+} from "../../domain/artefact/link-gate";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { Visibility } from "../../domain/artefact/visibility";
 import { mintUniqueSlug } from "./slug";
@@ -22,6 +26,9 @@ export interface SetArtefactVisibilityInput {
   requesterId: string; // the authenticated user making the request
   visibility: Visibility;
   scope: TenantScope; // the caller's tenant scope (S22/AH17)
+  // S32a (AH31) — link protection set atomically with the change to `public`;
+  // refused with any other tier. Leaving `public` clears the gate (domain rule).
+  linkGate?: { password?: string; expiresAt?: Date };
 }
 
 export interface SetArtefactVisibilityDeps {
@@ -30,6 +37,8 @@ export interface SetArtefactVisibilityDeps {
   now?: () => Date;
   // Max attempts to mint a non-colliding slug before giving up.
   maxSlugAttempts?: number;
+  // S32a — hashes a link password given with the change to `public`.
+  hasher?: LinkPasswordHasher;
 }
 
 export async function setArtefactVisibilityCommand(
@@ -50,6 +59,10 @@ export async function setArtefactVisibilityCommand(
     );
   }
 
+  if (input.linkGate !== undefined && input.visibility !== "public") {
+    throw new InvariantViolation("link protection can only be set on a public artefact"); // AH31
+  }
+
   const now = (deps.now ?? (() => new Date()))();
   let updated: Artefact;
 
@@ -62,6 +75,15 @@ export async function setArtefactVisibilityCommand(
       ? undefined
       : await mintUniqueSlug(deps);
     updated = shareArtefact(existing, { tier: input.visibility, newSlug, now });
+    if (input.linkGate !== undefined) {
+      if (!deps.hasher) throw new Error("a link password hasher is required to set a gate");
+      // Validated before anything is saved, so a bad gate shares nothing.
+      updated = await setArtefactLinkGate(
+        updated,
+        { requesterId: input.requesterId, ...input.linkGate, now },
+        deps.hasher,
+      );
+    }
   }
 
   await deps.repo.save(updated);

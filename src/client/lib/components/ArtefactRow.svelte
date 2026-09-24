@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ArtefactSummary } from "../../../shared/contracts";
+  import type { ArtefactSummary, SetLinkGateRequest } from "../../../shared/contracts";
   import {
     kindMeta,
     fmtBytes,
@@ -16,6 +16,7 @@
   import Icon from "./Icon.svelte";
   import MoreMenu from "./MoreMenu.svelte";
   import VisibilityControl from "./VisibilityControl.svelte";
+  import LinkGateBadges from "./LinkGateBadges.svelte";
 
   interface Props {
     a: ArtefactSummary;
@@ -23,7 +24,9 @@
     onCopy: () => void;
     onEdit: () => void;
     onArchive: () => void;
-    onVisibility: (v: Visibility) => void;
+    onVisibility: (v: Visibility, linkGate?: { password?: string; expiresAt?: string }) => void;
+    // S32a — change the link protection of this (public) artefact.
+    onLinkGate?: (change: SetLinkGateRequest) => void;
     onManage: () => void;
     // S41 — whether viewers may load each other's saved data.
     onDataVisibility?: (v: DataVisibility) => void;
@@ -42,6 +45,7 @@
     onEdit,
     onArchive,
     onVisibility,
+    onLinkGate,
     onManage,
     onDataVisibility,
     collectionName = null,
@@ -111,6 +115,7 @@
           <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">in {collectionName}</span>
         </button>
       {/if}
+      <LinkGateBadges gate={a.linkGate} variant="inline" />
       {#if a.usesStorage}
         <span title={STORAGE_LABEL} aria-label={STORAGE_LABEL} style="display:inline-flex;align-items:center;color:var(--muted-fg);">
           <Icon paths={STORAGE_ICON} size={12} width={1.8} />
@@ -150,6 +155,13 @@
     usesStorage={a.usesStorage}
     dataVisibility={a.dataVisibility}
     onChooseData={onDataVisibility}
+    linkProtection={onLinkGate
+      ? {
+          current: a.linkGate ?? null,
+          onPublish: (gate) => onVisibility("public", gate),
+          onSave: onLinkGate,
+        }
+      : undefined}
   />
   <MoreMenu
     id={a.id}

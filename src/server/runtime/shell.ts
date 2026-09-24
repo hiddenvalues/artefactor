@@ -61,6 +61,9 @@ export interface HostShellContext {
   // false the data-context picker is omitted entirely (and its authors fetch
   // skipped) — there is no data to switch between.
   usesStorage: boolean;
+  // S32a (AH23) — the owner is previewing a public artefact whose link has
+  // expired: a banner says visitors can no longer open it. Owner-only.
+  linkExpired?: boolean;
 }
 
 // S36 — what the shell's frame controller needs.
@@ -273,6 +276,12 @@ export function renderHostShell(ctx: HostShellContext): string {
   </div>`
     : "";
 
+  const linkExpiredBanner = ctx.linkExpired
+    ? `<div class="ae-conflict ae-expired" role="status">
+    <span><strong>Link expired.</strong> Visitors can no longer open this public link. Extend or clear the expiry under Link protection in Artefactor.</span>
+  </div>`
+    : "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -346,6 +355,7 @@ export function renderHostShell(ctx: HostShellContext): string {
     </div>
     ${hostTools}
   </div>
+  ${linkExpiredBanner}
   ${conflictBanner}
   <iframe class="ae-frame" id="ae-frame" title="Artefact" sandbox="${FRAME_SANDBOX_FLAGS}" allow="${FRAME_ALLOW}"></iframe>
 <script>

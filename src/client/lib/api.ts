@@ -10,6 +10,8 @@ import type {
   EditCollectionRequest,
   MeResponse,
   PublicConfigResponse,
+  SetLinkGateRequest,
+  SetVisibilityRequest,
   SharedArtefactSummary,
   SharedCollectionSummary,
   SharedCollectionsResponse,
@@ -103,13 +105,34 @@ export const api = {
     );
   },
 
-  async setVisibility(id: string, visibility: Visibility): Promise<void> {
+  async setVisibility(
+    id: string,
+    visibility: Visibility,
+    // S32a — link protection set with the change to public.
+    linkGate?: SetVisibilityRequest["linkGate"],
+  ): Promise<void> {
     const res = await fetch(`/api/artefacts/${id}/visibility`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ visibility }),
+      body: JSON.stringify(linkGate ? { visibility, linkGate } : { visibility }),
     });
     if (!res.ok) await fail(res);
+  },
+
+  // S32a — change (or, with an empty change, keep) a public artefact's link
+  // protection; `clearLinkGate` removes both halves.
+  setLinkGate(id: string, change: SetLinkGateRequest): Promise<ArtefactSummary> {
+    return fetch(`/api/artefacts/${id}/link-gate`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change),
+    }).then(json<ArtefactSummary>);
+  },
+
+  clearLinkGate(id: string): Promise<ArtefactSummary> {
+    return fetch(`/api/artefacts/${id}/link-gate`, { method: "DELETE" }).then(
+      json<ArtefactSummary>,
+    );
   },
 
   // S41 — whether viewers may load each other's saved data (owner-only).

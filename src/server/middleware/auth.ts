@@ -1,5 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import { auth } from "../auth";
+import type { PassLookup } from "../link-gate/passes";
 
 // S24 (auth seam) — the BetterAuth instance type. The composition injects the
 // instance (OSS default = the SQLite-backed `auth` singleton; a superset passes a
@@ -26,6 +27,8 @@ export type AuthEnv = {
   Variables: {
     user: AuthUser | null;
     session: AuthSession | null;
+    // S32a — the request's verified link passes, by holder (`attachLinkPasses`).
+    linkPasses?: PassLookup;
   };
 };
 

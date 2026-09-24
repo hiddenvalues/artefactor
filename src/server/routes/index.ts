@@ -29,6 +29,7 @@ import { createViewRoutes } from "./views";
 import { createFrameTokenRoutes } from "./frame-token";
 import { framingFromEnv, type Framing } from "../runtime/framing";
 import { createUserRoutes } from "./users";
+import { createAttachLinkPasses } from "../link-gate/passes";
 import type {
   MeResponse,
   PublicConfigResponse,
@@ -82,6 +83,8 @@ export function createApiRoutes(
 
   // Every other BFF request gets its BetterAuth session resolved up front.
   api.use("*", createAttachSession(auth));
+  // S32a — the link passes the request carries, for the gated reads (AH22).
+  api.use("*", createAttachLinkPasses({ secret: framing.secret, now: framing.now }));
 
   api.get("/ping", (c) => c.json({ pong: true }));
 

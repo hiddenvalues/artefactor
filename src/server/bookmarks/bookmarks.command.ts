@@ -10,6 +10,7 @@ import type { BookmarkRepository } from "../../domain/bookmark/bookmark-reposito
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import { resolveEffectiveViewable } from "../collections/effective";
 import { canViewCollection } from "../../domain/collection/collection-access";
+import { authorizeRead } from "../link-gate/authorize";
 
 // Application commands for S27 — Bookmarks (BM1–BM4). Per-user pins with set
 // semantics covering **anything the user can view** (BM2): adding is gated on
@@ -39,13 +40,9 @@ async function assertViewableArtefact(
   deps: BookmarkDeps,
 ): Promise<void> {
   const artefact = await deps.artefactRepo.findById(artefactId, scope);
-  if (
-    !artefact ||
-    !canViewArtefact(
-      await resolveEffectiveViewable(artefact, deps.collectionRepo),
-      userId,
-    )
-  ) {
+  // The one read authorization (S32a): the matrix, then the link gate. A gated
+  // or expired artefact is as unbookmarkable as a missing one (BM2, AH8).
+  if (!artefact || (await authorizeRead(deps, artefact, userId)) !== "granted") {
     throw new ArtefactNotFound(artefactId); // BM2 + no-leak (AH8)
   }
 }

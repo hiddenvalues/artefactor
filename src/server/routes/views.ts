@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import { ArtefactNotFound, LinkGateChallenge } from "../../domain/artefact/errors";
+import { linkGateChallenged, linkPassesOf } from "../link-gate/passes";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
@@ -52,6 +53,7 @@ export function createViewRoutes(deps: ViewRoutesDeps) {
           viewRepo: deps.viewRepo,
           accessPolicy: deps.accessPolicy,
         },
+        linkPassesOf(c),
       );
       const identities = await deps.userDirectory.lookup(
         refs.map((v) => v.viewerId),
@@ -69,6 +71,7 @@ export function createViewRoutes(deps: ViewRoutesDeps) {
       });
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.notFound();
+      if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;
     }
   });

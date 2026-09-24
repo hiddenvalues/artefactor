@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
-import {
-  canViewArtefactUnder,
-  defaultAccessPolicy,
-  type AccessPolicy,
-} from "../../domain/artefact/access";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import type { AccessPolicy } from "../../domain/artefact/access";
+import { ArtefactNotFound, LinkGateChallenge } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
-import { resolveEffectiveViewable } from "../collections/effective";
+import { authorizeRead } from "../link-gate/authorize";
+import type { PassLookup } from "../link-gate/passes";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import {
   upsertDataEntry,
@@ -47,32 +44,27 @@ export interface OwnDataDeps extends DataAccessDeps {
 }
 
 // Resolve the artefact a data request targets — by slug, falling back to id —
-// then apply the access matrix against the viewer. Missing / archived /
-// not-viewable all → not-found. (Slugs are base64url tokens and ids are uuids,
-// so the slug→id fallback cannot mis-resolve across the two.)
+// then authorize the read (S32a, AH22–AH24): the access matrix on the effective
+// tier, then the link gate against the request's passes. Missing / archived /
+// not-viewable / expired all → not-found; a gate asking for its password →
+// `LinkGateChallenge`, on the slug and the id alias alike. (Slugs are base64url
+// tokens and ids are uuids, so the slug→id fallback cannot mis-resolve.)
 export async function resolveViewableArtefact(
   deps: ArtefactResolveDeps,
   ref: string,
   viewerId: string | null,
   scope: TenantScope,
+  passes?: PassLookup,
 ) {
   // The slug form is a global capability (AH6); the id fallback is tenant-scoped
   // (S22/T2), so an out-of-scope artefact can't be reached by guessing its id.
   const artefact =
     (await deps.artefactRepo.findBySlug(ref)) ??
     (await deps.artefactRepo.findById(ref, scope));
-  if (
-    !artefact ||
-    !(await canViewArtefactUnder(
-      deps.accessPolicy ?? defaultAccessPolicy,
-      // The matrix decides on the effective tier — a contained artefact is
-      // governed by its collection tree root (AH20/CL5).
-      await resolveEffectiveViewable(artefact, deps.collectionRepo),
-      viewerId,
-    ))
-  ) {
-    throw new ArtefactNotFound(ref);
-  }
+  if (!artefact) throw new ArtefactNotFound(ref);
+  const verdict = await authorizeRead(deps, artefact, viewerId, { passes });
+  if (verdict === "challenge") throw new LinkGateChallenge(ref);
+  if (verdict !== "granted") throw new ArtefactNotFound(ref);
   return artefact;
 }
 
@@ -80,6 +72,7 @@ export interface OwnDataRef {
   ref: string; // artefact slug or id
   authorId: string; // the authenticated caller
   scope: TenantScope; // the caller's tenant scope (S22/AH17)
+  passes?: PassLookup; // S32a — the request's link passes (none over MCP)
 }
 
 // GET own entry — returns the caller's entry, or null if they have none yet.
@@ -92,6 +85,7 @@ export async function getOwnDataEntry(
     ref.ref,
     ref.authorId,
     ref.scope,
+    ref.passes,
   );
   return deps.dataRepo.findByArtefactAndAuthor(artefact.id, ref.authorId);
 }
@@ -117,6 +111,7 @@ export async function putOwnDataEntry(
     ref.ref,
     ref.authorId,
     ref.scope,
+    ref.passes,
   );
   const existing = await deps.dataRepo.findByArtefactAndAuthor(
     artefact.id,
@@ -157,6 +152,7 @@ export async function deleteOwnDataEntry(
     ref.ref,
     ref.authorId,
     ref.scope,
+    ref.passes,
   );
   await deps.dataRepo.deleteByArtefactAndAuthor(artefact.id, ref.authorId);
 }

@@ -61,8 +61,19 @@ export interface ArtefactSummary {
   // the artefact is active and a render is recorded (the previous one stays until
   // the next lands); otherwise null and the card shows the kind placeholder.
   thumbnailUrl: string | null;
+  // S32a (AH31) — the link protection on a public artefact, for its owner only:
+  // present (null = none) on the owner's own summaries, absent on everyone
+  // else's. The password itself is never returned, only whether one is set.
+  linkGate?: LinkGateSummary | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// S32a — what the owner sees of a link gate.
+export interface LinkGateSummary {
+  passwordProtected: boolean;
+  // ISO timestamp; null = never expires.
+  expiresAt: string | null;
 }
 
 // S10 — "Your artefacts". The owner's own artefacts (archived hidden by default),
@@ -90,6 +101,21 @@ export interface SharedListResponse {
 // on the access list managed via the S16 endpoints below.
 export interface SetVisibilityRequest {
   visibility: ArtefactSummary["visibility"];
+  // S32a (AH31) — link protection set atomically with the change to `public`;
+  // refused (400) with any other tier. Leaving `public` clears it.
+  linkGate?: { password?: string; expiresAt?: string };
+}
+
+// S32a — `PUT /api/artefacts/:id/link-gate`. An omitted half is kept; `null`
+// clears it. A password is 8–128 characters; `expiresAt` (ISO) in the future.
+export interface SetLinkGateRequest {
+  password?: string | null;
+  expiresAt?: string | null;
+}
+
+// S32a (AH22) — a read the link gate stops until the viewer unlocks it (403).
+export interface LinkGateChallengeResponse {
+  gate: "password";
 }
 
 // S41 — Owner-set data visibility. `own` narrows each non-owner viewer to their

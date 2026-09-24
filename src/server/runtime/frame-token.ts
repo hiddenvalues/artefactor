@@ -16,14 +16,19 @@ export interface FrameTokenClaims {
   // Which frame route the token opens: `slug` (`/a/:slug/frame`) or `raw`
   // (the owner preview, `/api/artefacts/:id/raw/frame`).
   route: "slug" | "raw";
-  // The signed-in viewer the shell was rendered for; null never gets minted
-  // today (anonymous viewers load a token-less frame) but is representable.
+  // The signed-in viewer the shell was rendered for; null for an anonymous
+  // viewer who unlocked a password-gated link (S32a) — every other anonymous
+  // viewer loads a token-less frame.
   viewerId: string | null;
   // Another author whose data is seeded read-only; null = the viewer's own.
   authorId: string | null;
   // A `raw` token's tenant scope — the owner-preview read is tenant-scoped, and
   // the frame has no session to resolve the scope from.
   tenantId?: string;
+  // S32a (AH22) — the link-gate version the viewer's pass proved when the token
+  // was minted. The redeem re-runs the gate with it, so a password change voids
+  // the frame too. Absent = no pass.
+  gate?: number;
   // Expiry, epoch milliseconds.
   exp: number;
 }
@@ -103,6 +108,7 @@ function parseClaims(payload: string): FrameTokenClaims | null {
     !nullableString(c.viewerId) ||
     !nullableString(c.authorId) ||
     (c.tenantId !== undefined && typeof c.tenantId !== "string") ||
+    (c.gate !== undefined && typeof c.gate !== "number") ||
     typeof c.exp !== "number"
   ) {
     return null;

@@ -3,6 +3,7 @@
   import type {
     ArtefactSummary,
     CollectionSummary,
+    SetLinkGateRequest,
     SharedArtefactSummary,
     SharedCollectionSummary,
   } from "../shared/contracts";
@@ -544,9 +545,13 @@
       toast.show(`Link copied · ${url.replace(/^https?:\/\//, "")}`, TOAST_ICONS.check);
     }
   }
-  async function changeVisibility(a: ArtefactSummary, v: Visibility) {
+  async function changeVisibility(
+    a: ArtefactSummary,
+    v: Visibility,
+    linkGate?: { password?: string; expiresAt?: string },
+  ) {
     try {
-      await api.setVisibility(a.id, v);
+      await api.setVisibility(a.id, v, linkGate);
       await Promise.all([loadOwned(), loadShared()]);
       toast.show(`Visibility set to ${VIS[v].label}`, VIS[v].icon);
       // Switching to "Specific people" jumps straight into the member picker.
@@ -554,6 +559,26 @@
     } catch (e) {
       toast.show(
         e instanceof ApiError ? e.message : "Could not update visibility",
+        TOAST_ICONS.alert,
+      );
+    }
+  }
+
+  // S32a — change the link protection of a public artefact (AH31). Clearing
+  // both halves is a DELETE; anything else a PUT of just what changed.
+  async function changeLinkGate(a: ArtefactSummary, change: SetLinkGateRequest) {
+    const clearsAll =
+      (change.password === null || (change.password === undefined && !a.linkGate?.passwordProtected)) &&
+      (change.expiresAt === null || (change.expiresAt === undefined && !a.linkGate?.expiresAt));
+    try {
+      if (clearsAll) await api.clearLinkGate(a.id);
+      else if (Object.keys(change).length) await api.setLinkGate(a.id, change);
+      else return;
+      await loadOwned();
+      toast.show(clearsAll ? "Link protection removed" : "Link protection saved", TOAST_ICONS.check);
+    } catch (e) {
+      toast.show(
+        e instanceof ApiError ? e.message : "Could not update link protection",
         TOAST_ICONS.alert,
       );
     }
@@ -949,7 +974,9 @@
       onCopy: () => copyLink(a),
       onEdit: () => openEdit(a),
       onArchive: () => archiveItem(a),
-      onVisibility: (v: Visibility) => changeVisibility(a, v),
+      onVisibility: (v: Visibility, linkGate?: { password?: string; expiresAt?: string }) =>
+        changeVisibility(a, v, linkGate),
+      onLinkGate: (change: SetLinkGateRequest) => changeLinkGate(a, change),
       onDataVisibility: (v: DataVisibility) => changeDataVisibility(a, v),
       onManage: () => (managing = { kind: "artefact", id: a.id, title: a.title }),
       collectionName: a.collectionId ? collectionNameOf(a.collectionId) : null,

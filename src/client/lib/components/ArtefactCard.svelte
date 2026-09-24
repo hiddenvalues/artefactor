@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ArtefactSummary } from "../../../shared/contracts";
+  import type { ArtefactSummary, SetLinkGateRequest } from "../../../shared/contracts";
   import {
     fmtBytes,
     relativeTime,
@@ -16,6 +16,7 @@
   import CardThumbnail from "./CardThumbnail.svelte";
   import MoreMenu from "./MoreMenu.svelte";
   import VisibilityControl from "./VisibilityControl.svelte";
+  import LinkGateBadges from "./LinkGateBadges.svelte";
 
   interface Props {
     a: ArtefactSummary;
@@ -23,7 +24,9 @@
     onCopy: () => void;
     onEdit: () => void;
     onArchive: () => void;
-    onVisibility: (v: Visibility) => void;
+    onVisibility: (v: Visibility, linkGate?: { password?: string; expiresAt?: string }) => void;
+    // S32a — change the link protection of this (public) artefact.
+    onLinkGate?: (change: SetLinkGateRequest) => void;
     onManage: () => void;
     // S41 — whether viewers may load each other's saved data.
     onDataVisibility?: (v: DataVisibility) => void;
@@ -44,6 +47,7 @@
     onEdit,
     onArchive,
     onVisibility,
+    onLinkGate,
     onManage,
     onDataVisibility,
     collectionName = null,
@@ -79,6 +83,7 @@
           </svg>
         </span>
       {/if}
+      <LinkGateBadges gate={a.linkGate} variant="chip" />
       {#if a.usesStorage}
         <span
           title={STORAGE_LABEL}
@@ -128,6 +133,13 @@
       usesStorage={a.usesStorage}
       dataVisibility={a.dataVisibility}
       onChooseData={onDataVisibility}
+      linkProtection={onLinkGate
+        ? {
+            current: a.linkGate ?? null,
+            onPublish: (gate) => onVisibility("public", gate),
+            onSave: onLinkGate,
+          }
+        : undefined}
     />
 
     <!-- footer meta -->

@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import {
   canLoadAuthorData,
-  canViewArtefactUnder,
   defaultAccessPolicy,
   type AccessPolicy,
 } from "../../domain/artefact/access";
@@ -9,7 +8,8 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { DataRepository } from "../../domain/data/data-repository";
-import { resolveEffectiveViewable } from "../collections/effective";
+import { authorizeRead } from "../link-gate/authorize";
+import { linkGateChallenged, linkPassesOf } from "../link-gate/passes";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
 import { mintFrame, type Framing, type MintedFrame } from "../runtime/framing";
 import { ownerId, requireAuth, type AuthEnv } from "../middleware/auth";
@@ -34,7 +34,9 @@ export interface FrameTokenRoutesDeps {
 // An id ref is the owner preview: gated like `/:id/raw` (own, active, in scope),
 // it mints a `raw` token carrying that scope. Any deny is a flat 404 (AH8), and
 // so is an `author` the owner's data visibility refuses the viewer (S41, AD11;
-// the id ref is the owner's, who reaches every author).
+// the id ref is the owner's, who reaches every author). A slug ref also passes
+// the link gate (S32a, AH22): without a pass → `403 { gate: "password" }`; the
+// token carries the version the pass proved, so the redeem can re-check it.
 // `seedUpdatedAt` is the seeded entry's `updatedAt` — the pin the shell's next
 // save in the viewer's own context is conditioned on (S31).
 export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
@@ -55,18 +57,25 @@ export function createFrameTokenRoutes(deps: FrameTokenRoutesDeps) {
     let minted: MintedFrame;
     let artefactId: string;
     if (bySlug) {
-      const viewable = await canViewArtefactUnder(
-        accessPolicy,
-        await resolveEffectiveViewable(bySlug, deps.collectionRepo),
-        viewerId,
-      );
-      if (!viewable) return c.notFound();
+      const passes = linkPassesOf(c);
+      const verdict = await authorizeRead({ ...deps, accessPolicy }, bySlug, viewerId, {
+        passes,
+        now: new Date(deps.framing.now()),
+      });
+      if (verdict === "challenge") return linkGateChallenged(c);
+      if (verdict !== "granted") return c.notFound();
       // AD11 — a foreign author the owner's data visibility refuses is a flat 404.
       if (authorId !== null && !canLoadAuthorData(bySlug, viewerId, authorId)) {
         return c.notFound();
       }
       artefactId = bySlug.id;
-      minted = mintFrame(deps.framing, "slug", ref, { artefactId, viewerId, authorId });
+      const gate = passes(artefactId)?.version;
+      minted = mintFrame(deps.framing, "slug", ref, {
+        artefactId,
+        viewerId,
+        authorId,
+        ...(gate !== undefined ? { gate } : {}),
+      });
     } else {
       const scope = await deps.resolveScope(c);
       try {

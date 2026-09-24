@@ -55,6 +55,8 @@ the user** (OAuth), so everything you create is owned by them. Tools:
 - **`set_visibility`** `{ id, visibility }` / **`archive_artefact`** / **`restore_artefact`** —
   manage sharing and lifecycle. An artefact the user has filed in a collection takes its
   visibility from that collection, so `set_visibility` refuses it — say so rather than retrying.
+  Moving a `public` artefact to any other tier clears its link protection (password and expiry);
+  passwords and expiry are set only in the Artefactor web app, never over the connector.
 - **`set_data_visibility`** `{ id, dataVisibility }` — whether viewers can load each other's
   saved data (`"shared"`) or only their own (`"own"`; the owner always sees everyone's). **New
   artefacts start `"own"`**, which is what a survey or form wants: respondents never read each
