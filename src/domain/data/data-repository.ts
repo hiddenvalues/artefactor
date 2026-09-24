@@ -1,11 +1,17 @@
 import type { DataEntry } from "./data-entry";
 
 // A projection of which authors hold an entry for an artefact, powering the S12
-// host data-context switcher (`…/data/authors`). The blob itself is not loaded —
-// only identity + freshness (AD §"BFF endpoints").
+// host data-context switcher (`…/data/authors`) and the S40 connector listing.
+// The blob itself is not loaded — only identity + freshness (AD §"BFF
+// endpoints"), plus its stored size and version pin (S40).
 export interface DataAuthorRef {
   authorId: string;
   updatedAt: Date;
+  // S40 — UTF-8 byte length of the stored blob, computed by the store without
+  // loading it. Transport metadata (like `payloadBytes`), not an interpretation.
+  bytes: number;
+  // S19a (AD9) — the payload hash at the entry's last write, as stored.
+  authoredAgainstVersion: string | null;
 }
 
 // Port: persistence for the DataEntry aggregate. The Drizzle adapter (infra/db)

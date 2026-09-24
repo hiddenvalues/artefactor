@@ -92,6 +92,8 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
     const ownerRow = list.authors.find((a) => a.authorId === ownerId)!;
     expect(ownerRow.email).toBe("authors-owner@example.com");
     expect(ownerRow.name).toBe("authors-owner@example.com");
+    // S40 widened the port's author refs; this response keeps its shape.
+    expect(Object.keys(ownerRow).sort()).toEqual(["authorId", "email", "name", "updatedAt"]);
     expect(typeof ownerRow.updatedAt).toBe("string");
 
     // A different signed-in viewer loads the owner's blob (read seed for S12).

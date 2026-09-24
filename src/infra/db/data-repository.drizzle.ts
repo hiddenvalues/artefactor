@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { db as Db } from "./client";
 import { dataEntry } from "./schema";
 import type { DataEntry } from "../../domain/data/data-entry";
@@ -67,11 +67,19 @@ export class DrizzleDataRepository implements DataRepository {
   }
 
   async listAuthorsByArtefact(artefactId: string): Promise<DataAuthorRef[]> {
-    const rows = await this.db
-      .select({ authorId: dataEntry.authorId, updatedAt: dataEntry.updatedAt })
+    // S40 — `bytes` is measured in SQL so listing never loads a blob.
+    // `octet_length` counts the text's UTF-8 bytes (not characters, as `length`
+    // does) and exists in both SQLite (3.43+) and Postgres, so the EE mirror
+    // runs the same expression.
+    return this.db
+      .select({
+        authorId: dataEntry.authorId,
+        updatedAt: dataEntry.updatedAt,
+        bytes: sql<number>`octet_length(${dataEntry.blob})`,
+        authoredAgainstVersion: dataEntry.authoredAgainstVersion,
+      })
       .from(dataEntry)
       .where(eq(dataEntry.artefactId, artefactId));
-    return rows.map((r) => ({ authorId: r.authorId, updatedAt: r.updatedAt }));
   }
 }
 

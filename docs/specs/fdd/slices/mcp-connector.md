@@ -198,7 +198,56 @@ quarter"), write the whole blob back.
 - **Open question, decided: owner-scoped v1.** `putOwnDataEntry` already permits writing your
   own blob on any viewable artefact, but a write reaching further than the owner-scoped read
   would break read-modify-write exactly where the reach was wanted. Widening read + write
-  together (addressed by slug or id) is one deliberate follow-up.
+  together (addressed by slug or id) to non-owners is one deliberate follow-up. The owner's own
+  read of **other** authors' entries is S40 — read-only, so it leaves this write unchanged.
 - **Out of scope:** a delete tool (write `{}`); merge-patch (S17 stays dropped); writing another
   author's blob (a domain no, not a follow-up); any GUI equivalent.
 - **Boundary:** **OSS**. No schema change.
+
+### S40 — Owner reads every author's saved data over MCP
+
+- **Status:** in progress
+- **Depends on:** S11, S12, S18, S19a, S30
+- **Linear:** ALI-366
+
+(AD2/AD4/AD5/AD6/AD8/AD9; AH7.) The host data-context switcher (S12) loads any author's entry
+for the owner, but the connector returned only the caller's own, so an agent could not answer
+"get me everyone's answers" about a form its user owns. This exposes the same AD4 read to the
+owner's connector — no new authority, and narrower than AD4 (owner-only). See "Snapshot read
+(S30, widened by S40)" in `ddd/artefact-data.md`.
+
+- **Port** — `DataAuthorRef` gains `bytes` (UTF-8 byte length of the stored blob) and
+  `authoredAgainstVersion`. `listAuthorsByArtefact` computes `bytes` in SQL with
+  `octet_length(blob)` — the same expression in SQLite (3.43+) and Postgres, which keeps the EE
+  mirror in parity — so listing never loads a blob. Every
+  adapter implements it: Drizzle, the in-memory double, the EE Postgres mirror.
+  `GET …/data/authors` keeps its response shape (it maps fields explicitly).
+- **MCP** — `list_artefact_data_authors { id }` →
+  `{ id, currentPayloadVersion, authors: [{ authorId, name, email, bytes, updatedAt,
+  authoredAgainstVersion }] }`, newest first, names/emails via `UserDirectory` (unknown user →
+  `""`, as the host route). `McpToolDeps` gains `userDirectory`.
+  `get_artefact_data { id, author? }`: absent → exactly the S30 result; present → resolved
+  against the artefact's author list by exact id, else case-insensitive email, and returned
+  verbatim with the S30 fields plus `author: { id, name, email }`. No match → one error text
+  for an unknown id, a registered user without an entry and garbage alike (no email-existence
+  probe), pointing at `list_artefact_data_authors`. Same `MAX_MCP_BLOB_BYTES` refusal. Both
+  owner-scoped via `loadOwnActiveArtefact`. Another author's entry is **read-only**:
+  `set_artefact_data` is unchanged.
+- **Doctrine** — `skills/artefactor/SKILL.md` + `PERSISTENCE_CONTRACT_SUMMARY`: "Reading other
+  users' data (owner only)" — list, then fetch per author; verbatim and read-only; aggregate
+  agent-side; shapes vary per author (check the pin); names, emails and answers are personal
+  data the owner is reading, not something to republish into an artefact.
+- **Acceptance:** `listAuthorsByArtefact` reports UTF-8 `bytes` (10, 300, `"åäö"` → 6) and each
+  entry's pin, on the in-memory double, Drizzle and the EE Postgres mirror; `/data/authors`
+  unchanged; the listing returns every author newest first with identity (`""` when unknown),
+  `[]` when none, and `currentPayloadVersion` = `payloadHash`; `author` by id, by email in
+  another case, and by the caller's own id each return that entry; an unknown id, a
+  registered user without an entry and garbage give the same error; another author's over-cap
+  blob → error naming its size; non-owner (even with view access) / unknown / archived /
+  out-of-scope → not found for both tools; after reading another's entry, `set_artefact_data`
+  still writes only the caller's own.
+- **Out of scope:** reads by non-owners who can view the artefact (the S31 follow-up); an
+  all-authors-in-one-call tool (5 MB × N does not fit a result); writing or repairing another
+  author's entry (a domain no); server-side aggregation (AD8); host switcher / `/data/authors`
+  changes.
+- **Boundary:** **OSS**, with the EE Postgres mirror in `ee/`. No schema change.
