@@ -24,6 +24,10 @@ services:
   app:
     image: ghcr.io/hiddenvalues/artefactor:latest
     restart: always
+    # Put a reverse proxy (TLS) in front and let only it reach this port — e.g.
+    # "127.0.0.1:3000:3000" with the proxy on the host. The app keys the
+    # link-password rate limit (S32a) on the last X-Forwarded-For hop, which the
+    # proxy appends; a client reaching 3000 directly can forge that header.
     ports:
       - "3000:3000"
     environment:

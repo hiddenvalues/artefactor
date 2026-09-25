@@ -130,6 +130,10 @@ How much work this is depends on the **fork's visibility**:
      derived from it** — left at the default `80`, the BFF obediently binds `:80` and the
      health check on 3000 gets `Connection refused`. The giveaway in the deploy log is the
      startup line `Artefactor listening on http://localhost:80`.
+   - **Port mappings:** leave empty. A mapping publishes `3000` on the server itself, past the
+     proxy — and the app trusts the proxy's `X-Forwarded-For` hop to tell clients apart for the
+     link-password rate limit (S32a), so a client that reaches `3000` directly can send its own
+     header and get a fresh set of attempts per guess. Only the proxy may reach the app.
    - **Health check:** enable; path `/health`, port `3000`, expect `200`. (Unauthenticated by
      design — returns `{"status":"ok","uptime":…,"build":"<sha>"}`.) Coolify runs this probe
      **inside the container** with `curl`; the runtime image (Debian `bookworm-slim`, which
