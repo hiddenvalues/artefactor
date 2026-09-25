@@ -14,7 +14,7 @@
 // and only in the viewer's own context, and writes it under the S31 discipline
 // (see `shellFrameJs`).
 //
-// The shell is server-rendered (not the Svelte SPA) because `/a/:slug` is the
+// The shell is server-rendered (not the React SPA) because `/a/:slug` is the
 // shareable link and also serves unauthenticated/public viewers, who never load
 // the SPA. The picker is populated client-side from `…/data/authors`, which is
 // itself access-matrix gated (AD4).

@@ -1,4 +1,4 @@
-// Contracts shared between the Hono BFF and the Svelte client.
+// Contracts shared between the Hono BFF and the React client.
 // Slice BFF request/response shapes live here as they are introduced (S1+).
 
 import type { ArtefactKind } from "../domain/artefact/kind";

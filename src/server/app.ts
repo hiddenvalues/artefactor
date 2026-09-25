@@ -134,7 +134,7 @@ export function createApp(
     ),
   );
 
-  // Serve the built Svelte client. Static assets first...
+  // Serve the built React client. Static assets first...
   app.use("/*", serveStatic({ root: env.CLIENT_DIR }));
   // ...then SPA fallback to index.html for any unmatched (non-API) route.
   app.get("*", serveStatic({ path: "index.html", root: env.CLIENT_DIR }));

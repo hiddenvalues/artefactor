@@ -1,84 +1,73 @@
-import type { ArtefactSummary } from "../../shared/contracts";
 import {
-  KIND_PRESENTATION,
-  KIND_ORDER,
-  kindPresentation,
-  type KindPresentation,
-} from "../../shared/kind-presentation";
+  AppWindow,
+  ClipboardList,
+  File,
+  FileCode,
+  Globe,
+  Lock,
+  Presentation,
+  UserPlus,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
+import type { ArtefactSummary } from "../../shared/contracts";
+import type { ArtefactKind } from "../../domain/artefact/kind";
+import { KIND_PRESENTATION, KIND_ORDER } from "../../shared/kind-presentation";
 
 export type Visibility = ArtefactSummary["visibility"];
 
-// Per-kind presentation metadata lives in `shared/` so the server-rendered host
-// shell reuses the same icon/title/type. Re-exported here under the names the
-// client components already use.
-export type KindMeta = KindPresentation;
-export const KINDS = KIND_PRESENTATION;
-export { KIND_ORDER };
-export const kindMeta = kindPresentation;
+// Per-kind presentation. The label comes from `shared/` (the server-rendered
+// host shell shows the same one); the colour and tint are the `--kind-*` tokens
+// in app.css, and the glyph is lucide's.
+export interface KindMeta {
+  label: string;
+  color: string;
+  tint: string;
+  icon: LucideIcon;
+}
 
-// Indicator for an artefact that persists data (AH16 `usesStorage`). A small
-// database glyph, shown in the dashboard/gallery card (upper-right) and row
-// (after the kind label). Drawn as `<path>`s for Icon.svelte (24×24 box).
-export const STORAGE_ICON: readonly string[] = [
-  "M3 5a9 3 0 1 0 18 0a9 3 0 1 0-18 0", // top ellipse
-  "M3 5V19a9 3 0 0 0 18 0V5", // sides + bottom
-  "M3 12a9 3 0 0 0 18 0", // middle band
-];
+const KIND_ICONS: Record<ArtefactKind, LucideIcon> = {
+  prototype: AppWindow,
+  "slide-deck": Presentation,
+  form: ClipboardList,
+  "interactive-doc": FileCode,
+  other: File,
+};
+
+export { KIND_ORDER };
+
+export function kindMeta(kind: string): KindMeta {
+  const k = (kind in KIND_PRESENTATION ? kind : "other") as ArtefactKind;
+  return {
+    label: KIND_PRESENTATION[k].label,
+    color: `var(--kind-${k})`,
+    tint: `var(--kind-${k}-tint)`,
+    icon: KIND_ICONS[k],
+  };
+}
+
+export const KINDS: Record<ArtefactKind, KindMeta> = Object.fromEntries(
+  KIND_ORDER.map((k) => [k, kindMeta(k)]),
+) as Record<ArtefactKind, KindMeta>;
+
+// Shown for an artefact that persists data (AH16 `usesStorage`).
 export const STORAGE_LABEL = "Saves data";
 
 /** Per-visibility presentation metadata. */
 export interface VisMeta {
   label: string;
   desc: string;
-  icon: string[];
+  icon: LucideIcon;
 }
 
 export const VIS: Record<Visibility, VisMeta> = {
-  private: {
-    label: "Private",
-    desc: "Only you",
-    icon: [
-      "M5 11a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z",
-      "M8 9V6a4 4 0 0 1 8 0v3",
-    ],
-  },
-  selected: {
-    label: "Specific people",
-    desc: "Only people you choose",
-    icon: [
-      "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2",
-      "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
-      "M19 8v6",
-      "M22 11h-6",
-    ],
-  },
-  authenticated: {
-    label: "Members",
-    desc: "Any signed-in user",
-    icon: [
-      "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2",
-      "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
-      "M22 21v-2a4 4 0 0 0-3-3.87",
-      "M16 3.13a4 4 0 0 1 0 7.75",
-    ],
-  },
-  public: {
-    label: "Public",
-    desc: "Anyone with the link",
-    icon: [
-      "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z",
-      "M2 12h20",
-      "M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20",
-    ],
-  },
+  private: { label: "Private", desc: "Only you", icon: Lock },
+  selected: { label: "Specific people", desc: "Only people you choose", icon: UserPlus },
+  authenticated: { label: "Members", desc: "Any signed-in user", icon: Users },
+  public: { label: "Public", desc: "Anyone with the link", icon: Globe },
 };
 
-export const VIS_ORDER: Visibility[] = [
-  "private",
-  "selected",
-  "authenticated",
-  "public",
-];
+export const VIS_ORDER: Visibility[] = ["private", "selected", "authenticated", "public"];
 
 // S41 (AH30) — whose saved data a viewer may load. Offered in the visibility
 // popover's "Saved data" section, only for artefacts that persist data.
@@ -91,41 +80,19 @@ export const DATA_VIS: Record<DataVisibility, { label: string; desc: string }> =
 
 export const DATA_VIS_ORDER: DataVisibility[] = ["own", "shared"];
 
-// S25 — Collections. Folder + bookmark glyphs and a stable per-collection tint
-// (derived from the id — no stored color; the design prototype seeded colors,
-// the real app hashes so a collection keeps its hue for life).
-export const FOLDER_ICON = [
-  "M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9L9.2 3.9A2 2 0 0 0 7.5 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z",
-];
-export const BOOKMARK_ICON = ["M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"];
-// Sidebar "Home" row + the picker's "Top level" option.
-export const HOME_ICON = ["M3 10.5 12 3l9 7.5", "M5 9.5V21h14V9.5"];
-// S30 — "Download HTML" (tray with a down arrow).
-export const DOWNLOAD_ICON = [
-  "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4",
-  "M7 10l5 5 5-5",
-  "M12 15V3",
-];
-// The archive box (menu items + the sidebar Archive entry). TOAST_ICONS.archive
-// is the 2-path toast variant of the same glyph.
-export const ARCHIVE_ICON = [
-  "M2 4h20",
-  "M4 9v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9",
-  "M10 13h4",
-];
-
-const COLLECTION_HUES = ["#2563eb", "#7c3aed", "#0f766e", "#d97706", "#db2777", "#16a34a"];
+// S25 — a stable per-collection hue, hashed from the id (no stored colour), so
+// a collection keeps its hue for life. The six hues are the `--collection-*`
+// tokens in app.css.
+export const COLLECTION_HUE_COUNT = 6;
 export function collectionColor(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return COLLECTION_HUES[h % COLLECTION_HUES.length] ?? "#0f766e";
+  return `var(--collection-${(h % COLLECTION_HUE_COUNT) + 1})`;
 }
 
 /** "254 KB" / "1.2 MB" — matches the design's fmtBytes. */
 export function fmtBytes(b: number): string {
-  return b >= 1048576
-    ? (b / 1048576).toFixed(1) + " MB"
-    : Math.round(b / 1024) + " KB";
+  return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
 }
 
 /** Initials from a display name ("Maya Chen" -> "MC"). */
@@ -139,8 +106,7 @@ export function initials(name: string): string {
     .toUpperCase();
 }
 
-/** Relative-time label from an ISO-8601 timestamp ("2 days ago"). The design
- *  used pre-baked strings; the real API gives us `updatedAt`/`createdAt`. */
+/** Relative-time label from an ISO-8601 timestamp ("2 days ago"). */
 export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return "";
@@ -158,4 +124,9 @@ export function relativeTime(iso: string): string {
   if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
   const years = Math.round(days / 365);
   return `${years} year${years === 1 ? "" : "s"} ago`;
+}
+
+/** Plural helper: "1 artefact" / "3 artefacts". */
+export function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }

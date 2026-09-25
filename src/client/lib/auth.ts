@@ -1,4 +1,4 @@
-import { createAuthClient } from "better-auth/svelte";
+import { createAuthClient } from "better-auth/react";
 
 // Client for the BetterAuth handler mounted by the BFF at /api/auth. The base
 // URL defaults to the current origin; in dev, Vite proxies /api to the Hono

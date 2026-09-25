@@ -1,10 +1,10 @@
 import { defineConfig } from "vite";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
+import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
 
 export default defineConfig({
-  plugins: [svelte(), tailwindcss()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       $lib: fileURLToPath(new URL("./src/client/lib", import.meta.url)),

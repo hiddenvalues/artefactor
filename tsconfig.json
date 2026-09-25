@@ -16,9 +16,10 @@
     "moduleDetection": "force",
     "noEmit": true,
     "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
     "paths": {
       "$lib/*": ["./src/client/lib/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.svelte", "src/**/*.d.ts", "*.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.d.ts", "*.config.ts"]
 }

@@ -1,8 +1,9 @@
 // Per-kind presentation metadata (label, accent colour, tint, icon paths),
-// ported from the Artefactor.dc.html design source. Shared between the Svelte
-// SPA (artefact list/cards) and the server-rendered host shell (`/a/:slug`),
-// so the served-artefact chrome shows the *same* icon/title/type as the list
-// view. Pure data — no framework imports.
+// ported from the Artefactor.dc.html design source. The server-rendered host
+// shell (`/a/:slug`) draws its chrome from all of it; the React SPA takes the
+// labels, and its kind colours are the `--kind-*` tokens in
+// src/client/app.css, kept equal to these by src/client/lib/tokens.test.ts.
+// Pure data — no framework imports.
 
 import type { ArtefactKind } from "../domain/artefact/kind";
 

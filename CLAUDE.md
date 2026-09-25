@@ -17,14 +17,16 @@ read that spec before changing anything in the area. The first three bullets des
 shape rather than a bounded context, so no spec governs them.
 
 - **Monolith**: one Hono process (`src/server`) serves the BFF API (`/api`, `/health`), the
-  artefact serving routes (`/a/*`), the MCP server (`/mcp`) and the built Svelte SPA
+  artefact serving routes (`/a/*`), the MCP server (`/mcp`) and the built React SPA
   (`dist/client`, with SPA fallback). Entry `src/server/index.ts`.
 - **Pure domain layer** (`src/domain`) — aggregates + invariants, **no framework imports**;
   defines repository/store **ports**. The primary TDD surface (tested against in-memory repos).
   Adapters live in `src/infra` (Drizzle in `db/`, filesystem payloads in `storage/`); the server
   is the composition root wiring routes → domain → adapters.
-- **Client** (`src/client`) is a Vite + Svelte 5 SPA — the human-facing app, not a stub; shared
-  BFF contracts in `src/shared`.
+- **Client** (`src/client`) is a Vite + React SPA on stock shadcn/ui — the human-facing app, not
+  a stub; shared BFF contracts in `src/shared`. Colours live in one tokens file
+  (`src/client/app.css`); `pnpm lint` bans inline styles and raw colours elsewhere.
+  → [`fdd/slices/platform.md`](docs/specs/fdd/slices/platform.md)
 - **Composition + enabler seams.** `createApp` takes the persistence adapter set
   (`src/server/adapters.ts` is the OSS default: SQLite + filesystem), the BetterAuth instance, a
   `TenantScopeResolver` and an `AccessPolicy` as injected dependencies — **enabler seams**: each
@@ -191,8 +193,8 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
 
 - **Backend:** [Hono](https://hono.dev/) acting as a **Backend-for-Frontend (BFF)** — the
   backend tailors APIs to the frontend's needs rather than exposing a generic API.
-- **Frontend:** [Svelte](https://svelte.dev/).
-- **Design system:** [shadcn-svelte](https://www.shadcn-svelte.com/) components with
+- **Frontend:** [React](https://react.dev/).
+- **Design system:** [shadcn/ui](https://ui.shadcn.com/) components with
   [Tailwind CSS](https://tailwindcss.com/) for styling.
 - **Persistence:** [Drizzle ORM](https://orm.drizzle.team/) over **SQLite**.
 - **Deployment:** single **monolith** in a **Docker** container, deployed to a
@@ -200,8 +202,8 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
 
 ## Architecture intent
 
-- One deployable monolith: Hono serves both the BFF endpoints and the Svelte frontend.
-- The BFF layer is the only thing the Svelte frontend talks to; it shapes responses for
+- One deployable monolith: Hono serves both the BFF endpoints and the React SPA.
+- The BFF layer is the only thing the React SPA talks to; it shapes responses for
   the UI and keeps domain logic server-side.
 - Domain logic (aggregates, invariants) lives behind the BFF, not in the frontend.
 - Drizzle/SQLite is the persistence boundary for the domain; keep schema changes tied to
@@ -231,7 +233,8 @@ pnpm build                     # build:client (Vite → dist/client) + build:ser
 pnpm start                     # run the built server: node dist/server/index.js
 pnpm test                      # Vitest (domain unit tests)
 pnpm test <file> -t "name"     # run a single test by name
-pnpm check                     # svelte-check + tsc --noEmit (server) — type safety
+pnpm check                     # tsc --noEmit (client, then server) — type safety
+pnpm lint                      # ESLint over src/client: no inline styles, no raw colours (S43); CI gate
 pnpm db:generate               # drizzle-kit: generate a migration from src/infra/db/schema.ts
 pnpm db:migrate                # apply migrations (tsx src/infra/db/migrate.ts)
 pnpm db:studio                 # drizzle studio

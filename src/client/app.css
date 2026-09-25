@@ -1,121 +1,135 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* ------------------------------------------------------------------ *
- * Artefactor design tokens (imported from the claude.ai/design source
- * Artefactor.dc.html). The product UI is built directly against these
- * CSS variables with inline styles for pixel fidelity with the design;
- * Tailwind remains available for incidental layout.
+ * The one tokens file (S43). shadcn/ui's stock CSS variables (neutral
+ * base, default radius), plus the app-specific tokens that carry
+ * meaning: the artefact-kind colours and tints, and the collection hues.
+ * No other client file may hold a raw colour literal — `pnpm lint`
+ * enforces it; components reach these through Tailwind classes or
+ * `var(--…)`.
  * ------------------------------------------------------------------ */
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
 :root {
-  --bg: #ffffff;
-  --fg: #09090b;
-  --card: #ffffff;
-  --muted: #f4f4f5;
-  --muted-fg: #71717a;
-  --subtle: #fafafa;
-  --border: #e9e9ec;
-  --border-strong: #d4d4d8;
-  --primary: #0f766e;
-  --primary-fg: #ffffff;
-  --accent-soft: rgba(15, 118, 110, 0.1);
-  --destructive: #dc2626;
-  --destructive-soft: rgba(220, 38, 38, 0.09);
-  --shadow: 0 1px 2px rgba(16, 17, 18, 0.05);
-  --shadow-md: 0 6px 20px rgba(16, 17, 18, 0.1);
-  --shadow-lg: 0 16px 50px rgba(16, 17, 18, 0.18);
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Artefact kinds — mirrors src/shared/kind-presentation.ts, which the
+   * server-rendered host shell reads (a test keeps the two in step). */
+  --kind-prototype: #2563eb;
+  --kind-prototype-tint: rgba(37, 99, 235, 0.12);
+  --kind-slide-deck: #d97706;
+  --kind-slide-deck-tint: rgba(217, 119, 6, 0.13);
+  --kind-form: #16a34a;
+  --kind-form-tint: rgba(22, 163, 74, 0.12);
+  --kind-interactive-doc: #7c3aed;
+  --kind-interactive-doc-tint: rgba(124, 58, 237, 0.13);
+  --kind-other: #64748b;
+  --kind-other-tint: rgba(100, 116, 139, 0.12);
+
+  /* Collection hues — a collection keeps the one its id hashes to for life. */
+  --collection-1: #2563eb;
+  --collection-2: #7c3aed;
+  --collection-3: #0f766e;
+  --collection-4: #d97706;
+  --collection-5: #db2777;
+  --collection-6: #16a34a;
 }
 
-* {
-  box-sizing: border-box;
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: "Geist", -apple-system, system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased;
-}
-
-::selection {
-  background: var(--accent-soft);
-}
-
-input::placeholder {
-  color: var(--muted-fg);
-}
-
-/* Grid artefact/gallery cards — subtle tactile "pop" on hover. The base
- * appearance lives here (not inline) so the :hover box-shadow/border actually
- * override it. Only the grid cards use this; list-view rows are left untouched.
- * The hovered card is raised (z-index) so its larger drop shadow renders above
- * its neighbours rather than underneath them. */
-.af-card-grid {
-  position: relative;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  box-shadow: var(--shadow);
-  transition:
-    transform 0.15s ease-out,
-    box-shadow 0.15s ease-out,
-    border-color 0.15s ease-out;
-}
-.af-card-grid:hover {
-  transform: translateY(-6px) scale(1.015);
-  box-shadow: 0 18px 38px -12px rgba(16, 17, 18, 0.32);
-  border-color: color-mix(in srgb, var(--primary) 40%, transparent);
-  z-index: 20;
-}
-@media (prefers-reduced-motion: reduce) {
-  .af-card-grid {
-    transition: box-shadow 0.15s ease-out, border-color 0.15s ease-out;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-  .af-card-grid:hover {
-    transform: none;
-  }
-}
-
-@keyframes af-pop {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes af-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes af-toast {
-  from {
-    opacity: 0;
-    transform: translate(-50%, 12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%);
-  }
-}
-@keyframes af-menu {
-  from {
-    opacity: 0;
-    transform: translateY(-4px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: none;
+  body {
+    @apply bg-background text-foreground antialiased;
   }
 }

@@ -1,4 +1,4 @@
-import { mkdtempSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -185,7 +185,15 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
       n > 0 && !["Your artefacts", "Shared with you"].includes((await page.locator("main h1").first().innerText()).trim()),
     );
     // A collection page's header carries its own ⋯ ahead of the cards'.
-    await page.locator("main [title='More']").nth(index + (onCollectionPage ? 1 : 0)).click();
+    await openMenu(page, page.locator("main [title='More']").nth(index + (onCollectionPage ? 1 : 0)));
+  }
+
+  // Opens a menu once the last one has fully gone: a closing menu stays mounted
+  // for its exit animation, and a press that lands then reads as a click
+  // outside it — one no person is quick enough to make.
+  async function openMenu(page: Page, trigger: Locator): Promise<void> {
+    await page.locator("[role='menu']").first().waitFor({ state: "detached" });
+    await trigger.click();
   }
 
   async function openSidebar(page: Page): Promise<Locator> {
@@ -383,7 +391,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     await visible(control(page.locator("main"), "Collections"));
     await visible(page.locator("main [aria-label='Open Filed away']"));
 
-    await page.locator("main [title='More']").first().click();
+    await openMenu(page, page.locator("main [title='More']").first());
     await control(page, "New sub-collection").click();
     await page.getByLabel("Name").fill("Interviews");
     await control(page, "Create collection").click();
@@ -394,7 +402,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     await aside.locator("[aria-label='Expand']").click();
     await visible(child);
 
-    await page.locator("main [title='More']").first().click();
+    await openMenu(page, page.locator("main [title='More']").first());
     await control(page, "Archive collection").click();
     await visible(page.getByRole("heading", { name: "Your artefacts" }));
     await gone(control(aside, /Research/));
@@ -471,14 +479,14 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     await eventually(async () => expect(await shownTitles(page)).toEqual(["Alpha form"]));
     await control(main, /^\s*All types/).click();
 
-    await control(main, "All access").click();
+    await openMenu(page, control(main, "All access"));
     await control(page, /^\s*Members\s*\d/).click();
     await eventually(async () => expect(await shownTitles(page)).toEqual(["Beta deck"]));
     // The filter's trigger comes before any card's own tier control.
-    await control(main, "Members").first().click();
+    await openMenu(page, control(main, "Members").first());
     await control(page, /^\s*All access\s*\d/).click();
 
-    await control(main, "Recently updated").click();
+    await openMenu(page, control(main, "Recently updated"));
     await control(page, "Title A–Z").click();
     await eventually(async () =>
       expect(await shownTitles(page)).toEqual(["Alpha form", "Beta deck", "Delta deck", "Gamma prototype"]),
@@ -486,7 +494,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
 
     await control(main, /^\s*Slide deck\s*\d/).click();
     await eventually(async () => expect(await shownTitles(page)).toEqual(["Beta deck", "Delta deck"]));
-    await control(main, "All access").click();
+    await openMenu(page, control(main, "All access"));
     await control(page, /^\s*Private\s*\d/).click();
     await eventually(async () => expect(await shownTitles(page)).toEqual(["Delta deck"]));
     await main.locator("[title='List']").click();
@@ -504,5 +512,73 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
       ),
     ).toEqual(["dashboard", "list", "slide-deck", "private", "title", "closed"]);
     await page.close();
+  });
+
+  describe("keyboard", () => {
+    it("Esc closes an open menu and an open dialog", async () => {
+      const u = await newUser();
+      await createArtefact(u, "Keyed");
+      const page = await openApp(u);
+
+      await cardMenu(page, "Keyed");
+      await visible(control(page, "Edit"));
+      await page.keyboard.press("Escape");
+      await gone(control(page, "Edit"));
+
+      await control(page, "New artefact").click();
+      await visible(page.getByText("Upload a self-contained HTML deliverable."));
+      await page.keyboard.press("Escape");
+      await gone(page.getByText("Upload a self-contained HTML deliverable."));
+      await page.close();
+    });
+
+    it("Tab reaches every top-bar and card control, each with a visible focus indicator", async () => {
+      const u = await newUser();
+      await createArtefact(u, "Focusable");
+      const page = await openApp(u);
+      await page.locator("body").click({ position: { x: 1, y: 1 } });
+
+      const seen: { name: string; visibleFocus: boolean }[] = [];
+      for (let i = 0; i < 20; i++) {
+        await page.keyboard.press("Tab");
+        seen.push(
+          await page.evaluate(() => {
+            const el = document.activeElement as HTMLElement;
+            if (el === document.body) return { name: "(body)", visibleFocus: true };
+            const s = getComputedStyle(el);
+            const outline = s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0;
+            const ring = s.boxShadow !== "none" && s.boxShadow !== "";
+            return {
+              name:
+                el.getAttribute("aria-label") ||
+                el.getAttribute("title") ||
+                el.getAttribute("placeholder") ||
+                (el.textContent ?? "").trim(),
+              visibleFocus: outline || ring,
+            };
+          }),
+        );
+      }
+      const names = seen.map((s) => s.name);
+      for (const want of ["Toggle sidebar", "Your artefacts", "Shared with you", "New artefact", "Account", "More"])
+        expect(names.some((n) => n.startsWith(want)), `Tab reaches ${want} (saw ${names.join(" | ")})`).toBe(true);
+      expect(names.some((n) => n.startsWith("Search")), "Tab reaches the search box").toBe(true);
+      expect(seen.filter((s) => !s.visibleFocus).map((s) => s.name)).toEqual([]);
+      await page.close();
+    });
+  });
+
+  it("builds a client bundle with no Svelte runtime in it", () => {
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const f of readdirSync(dir)) {
+        const p = join(dir, f);
+        if (statSync(p).isDirectory()) walk(p);
+        else if (/\.(js|html)$/.test(f)) files.push(p);
+      }
+    };
+    walk(CLIENT_DIR);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.filter((f) => /svelte/i.test(readFileSync(f, "utf8")))).toEqual([]);
   });
 });

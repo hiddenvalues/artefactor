@@ -141,7 +141,7 @@ the humlytech → `artefactor.cloud` move.
 
 ### S43 — React client on stock shadcn/ui
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S0
 - **Linear:** ALI-383
 

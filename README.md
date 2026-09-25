@@ -29,15 +29,15 @@ built, in progress or still specced lives in the slice DAG —
   it inherit, with per-user bookmarks and an archive that cascades.
 - **Card thumbnails** — a rendered preview per artefact for the dashboard and gallery, produced
   by an isolated renderer container that runs the uploader's JavaScript far from the app.
-- **Single deployable monolith** — one Hono process serves the API and the Svelte SPA.
+- **Single deployable monolith** — one Hono process serves the API and the React SPA.
 
 ## Tech stack
 
 | Layer | Choice |
 | ------- | -------- |
 | Backend / BFF | [Hono](https://hono.dev/) on Node |
-| Frontend | [Svelte 5](https://svelte.dev/) (Vite SPA) |
-| Design system | [shadcn-svelte](https://www.shadcn-svelte.com/) + [Tailwind CSS v4](https://tailwindcss.com/) |
+| Frontend | [React](https://react.dev/) (Vite SPA) |
+| Design system | [shadcn/ui](https://ui.shadcn.com/) + [Tailwind CSS v4](https://tailwindcss.com/) |
 | ORM / DB | [Drizzle](https://orm.drizzle.team/) over SQLite (`better-sqlite3`) |
 | Auth | [BetterAuth](https://www.better-auth.com/) (Google OAuth in production; email+password in dev/test only) |
 | Deploy | Docker monolith on a [Coolify](https://coolify.io/)-managed VPS |
@@ -71,7 +71,8 @@ Other commands:
 
 ```bash
 pnpm test                     # unit tests (Vitest)
-pnpm check                    # type-check (svelte-check + tsc)
+pnpm check                    # type-check (tsc: client + server)
+pnpm lint                     # client guardrail: no inline styles or raw colours (ESLint)
 pnpm build && pnpm start      # production build, then run the bundled server
 ```
 
@@ -83,7 +84,7 @@ src/
   infra/      adapters: Drizzle/SQLite (db/), filesystem payload store (storage/), rendering (render/)
   server/     Hono BFF — composition root, env, routes, artefact serving, MCP connector
   renderer/   the isolated thumbnail renderer — a separate role from the same image
-  client/     Svelte SPA + Tailwind + shadcn-svelte components
+  client/     React SPA + Tailwind + shadcn/ui components
   shared/     contracts shared between the BFF and the client
 deploy/       Compose example, seccomp profile and egress rules for the two-container deployment
 docs/specs/   DDD + FDD specifications (source of truth)

@@ -1,4 +1,4 @@
-# The quality gate: tests + typecheck (svelte-check + tsc) + markdown lint.
+# The quality gate: tests + typecheck (tsc) + client lint + markdown lint.
 #
 # Runs in two contexts with ONE definition (so they can never drift):
 #   - pull_request: every PR shows the gate before merge
@@ -46,4 +46,5 @@ jobs:
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: pnpm test
       - run: pnpm check
+      - run: pnpm lint
       - run: pnpm lint:md
