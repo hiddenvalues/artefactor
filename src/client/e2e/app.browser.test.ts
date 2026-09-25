@@ -446,6 +446,35 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     await page.close();
   });
 
+  it("lifts a grid card on hover, and leaves list rows still", async () => {
+    const u = await newUser();
+    await createArtefact(u, "Hovered");
+    const page = await openApp(u);
+    const open = page.locator("main [aria-label='Open Hovered']");
+    // The card is the thumbnail button's nearest ancestor with a border radius.
+    // A lift may use `transform` or the individual `translate` / `scale`
+    // properties (Tailwind v4's utilities); "none" means none of them is set.
+    const cardTransform = () =>
+      open.evaluate((el) => {
+        let n: HTMLElement | null = el.parentElement;
+        while (n && getComputedStyle(n).borderTopLeftRadius === "0px") n = n.parentElement;
+        const s = getComputedStyle(n!);
+        const moved = [s.transform, s.translate, s.scale].filter((v) => v && v !== "none");
+        return moved.length ? moved.join(" ") : "none";
+      });
+
+    expect(await cardTransform()).toBe("none");
+    await open.hover();
+    await eventually(async () => expect(await cardTransform()).not.toBe("none"));
+
+    await page.locator("main [title='List']").click();
+    await eventually(async () => expect((await open.boundingBox())!.width).toBeLessThan(80));
+    await open.hover();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await cardTransform()).toBe("none");
+    await page.close();
+  });
+
   it("shows another user's members artefact under “Shared with you”, in grid and list", async () => {
     const author = await newUser("Maya Chen");
     const a = await createArtefact(author, "Team handbook", "interactive-doc");

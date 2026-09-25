@@ -168,6 +168,8 @@ only the look changes.
   `Dialog`, the delete confirmation `AlertDialog`, the toast `Sonner`, the visibility picker
   `Popover`; icons come from `lucide-react`; auth from `better-auth/react`. Persisted UI
   preferences keep their `localStorage` keys (`artefactor:` + view/density/kind/access/sort/sidebar).
+  Grid cards keep the Svelte client's hover lift (rise, scale, deeper shadow; reduced motion keeps
+  only the shadow); list rows stay still.
 - **Guardrail.** `pnpm lint` (ESLint, CI) bans inline `style` props and raw hex/rgb/hsl colour
   literals in `src/client`; a `style` whose keys are all CSS custom properties
   (`style={{ "--hue": … }}`) is the one allowed form.
@@ -175,9 +177,10 @@ only the look changes.
 **Acceptance:** the behaviour suite passes (auth, upload + cap error, edit, visibility + share
 link + copy toast, archive + undo + restore, permanent delete, collections + breadcrumb + tree
 expand/collapse + archive, manage access, bookmarks, "Shared with you" in grid and list, filters
-surviving a reload, keyboard: Esc closes menus and dialogs, Tab reaches controls with a visible
-focus ring); the lint fails on `style={{ color: "#fff" }}` and passes on `style={{ "--hue": x }}`;
-`pnpm build` and `pnpm check` pass and `dist/client` carries no Svelte runtime.
+surviving a reload, grid cards lifting on hover, keyboard: Esc closes menus and dialogs, Tab
+reaches controls with a visible focus ring); the lint fails on `style={{ color: "#fff" }}` and
+passes on `style={{ "--hue": x }}`; `pnpm build` and `pnpm check` pass and `dist/client` carries
+no Svelte runtime.
 
 - **Boundary:** **OSS** (core client). Up-sync is held until the design system stabilizes
   (ALI-382).

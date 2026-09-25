@@ -104,12 +104,18 @@ export function useOwnedItem(p: OwnedItemProps, variant: "block" | "pill") {
 
 export const Dot = () => <span className="opacity-50">·</span>;
 
+// Grid cards (not list rows) lift on hover: a small rise and scale, a deeper
+// shadow and a tinted border, raised above their neighbours so the shadow isn't
+// drawn under them. Reduced motion keeps only the shadow and border change.
+export const cardLift =
+  "relative transition-[transform,box-shadow,border-color] duration-150 ease-out hover:z-20 hover:-translate-y-1.5 hover:scale-[1.015] hover:border-primary/40 hover:shadow-xl motion-reduce:transition-[box-shadow,border-color] motion-reduce:hover:translate-y-0 motion-reduce:hover:scale-100";
+
 // A grid card of an artefact you own.
 export function ArtefactCard(p: OwnedItemProps) {
   const { a } = p;
   const { visibility, menu, collectionChip, shareLink } = useOwnedItem(p, "block");
   return (
-    <Card className="gap-0 overflow-hidden py-0 shadow-xs">
+    <Card className={cn("gap-0 overflow-hidden py-0 shadow-xs", cardLift)}>
       <CardThumbnail
         kind={a.kind}
         title={a.title}

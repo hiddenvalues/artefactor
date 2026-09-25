@@ -6,7 +6,7 @@ import { Card } from "$lib/components/ui/card";
 import { initials, kindMeta, relativeTime, STORAGE_LABEL } from "../format";
 import { kindVars } from "../style";
 import { cn } from "../utils";
-import { chip, Dot } from "./ArtefactCard";
+import { cardLift, chip, Dot } from "./ArtefactCard";
 import { CardThumbnail } from "./CardThumbnail";
 
 /** A card or row of someone else's artefact you can see. */
@@ -58,7 +58,7 @@ function EjectButton({ g, onEject }: { g: SharedArtefactSummary; onEject: () => 
 export function GalleryCard({ g, onOpen, bookmarked = false, onBookmark, onEject }: GalleryItemProps) {
   const owner = ownerOf(g);
   return (
-    <Card className="gap-0 overflow-hidden py-0 shadow-xs">
+    <Card className={cn("gap-0 overflow-hidden py-0 shadow-xs", cardLift)}>
       {/* The bookmark toggle sits over the preview's lower-right, outside the
           open-button so a mis-click never opens the artefact. */}
       <div className="relative">
