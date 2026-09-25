@@ -13,6 +13,7 @@ import {
   verification,
 } from "../infra/db/schema";
 import { authConfig, env } from "./env";
+import { CLIENT_IP_HEADER } from "./client-ip";
 import { isEmailDomainAllowed } from "../domain/identity/email-domain";
 
 // S1 — Identity & Access. BetterAuth owns users, sessions, and credential
@@ -36,6 +37,9 @@ export const auth = betterAuth({
   // The base URL origin is trusted implicitly; add the dev client origin so the
   // Vite SPA on :5273 can drive the auth API during development.
   trustedOrigins: env.AUTH_TRUSTED_ORIGINS,
+  // S42 (IA8) — the client address (rate limiter, stored `session.ipAddress`)
+  // comes only from the header `createApp` sets, never from `X-Forwarded-For`.
+  advanced: { ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] } },
   emailAndPassword: {
     // S38 — deployment configuration; see the module comment.
     enabled: authConfig.emailPasswordEnabled,

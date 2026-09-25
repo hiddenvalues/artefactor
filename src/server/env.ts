@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { contentOriginProblem } from "./runtime/content-origin";
 import { resolveAuthConfig, type AuthConfig } from "../domain/identity/auth-config";
+import { parseTrustedProxies, type TrustedProxies } from "./client-ip";
 
 // An optional string an operator may leave blank: `${VAR:-}` in a compose file
 // hands the process an empty string, which means "not configured", not "a value
@@ -77,6 +78,11 @@ const schema = z.object({
   // (e.g. https://humlycontent.com). That host answers only the frame routes and
   // /health. Unset: frames live on the app host, isolated by the sandbox alone.
   ARTEFACTOR_CONTENT_ORIGIN: z.string().min(1).optional(),
+  // S42 (IA8) — the peers allowed to name the client address in
+  // `X-Forwarded-For`: comma-separated CIDRs or bare addresses. Unset (or
+  // empty): loopback plus the private and link-local ranges, where a same-host
+  // or Docker-network proxy connects from. A set value replaces that default.
+  ARTEFACTOR_TRUSTED_PROXIES: blankAsUnset(z.string().optional()),
   // Google OAuth (BetterAuth social sign-in). Enabled exactly when both are set.
   // In production they are required *unless* AUTH_EMAIL_PASSWORD=true — a
   // production deployment needs at least one sign-in method (S38, IA7).
@@ -152,6 +158,17 @@ const schema = z.object({
       });
     }
   }
+  if (cfg.ARTEFACTOR_TRUSTED_PROXIES !== undefined) {
+    try {
+      parseTrustedProxies(cfg.ARTEFACTOR_TRUSTED_PROXIES);
+    } catch (error) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["ARTEFACTOR_TRUSTED_PROXIES"],
+        message: `ARTEFACTOR_TRUSTED_PROXIES: ${(error as Error).message}`,
+      });
+    }
+  }
   // An empty allowlist would lock everyone out — guard against a misconfigured
   // AUTH_ALLOWED_EMAIL_DOMAINS (e.g. set to "" or only commas).
   if (cfg.AUTH_ALLOWED_EMAIL_DOMAINS.length === 0) {
@@ -188,3 +205,6 @@ export const authConfig: AuthConfig = resolveAuthConfig({
   allowSignup: env.AUTH_ALLOW_SIGNUP,
   googleConfigured: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
 });
+
+// S42 (IA8) — the resolved trusted-proxy set, checked above.
+export const trustedProxies: TrustedProxies = parseTrustedProxies(env.ARTEFACTOR_TRUSTED_PROXIES);

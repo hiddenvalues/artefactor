@@ -367,8 +367,8 @@ gap #4.)
   and sets an httpOnly, `Secure` (production), SameSite=Lax, path `/` cookie named per holder,
   HMAC-signed with `BETTER_AUTH_SECRET`, carrying `{ holderId, version, exp }`,
   `exp = min(now + 7 d, expiresAt)`, then redirects to `/a/:slug`. A wrong password renders the
-  unlock page again with an error (401). Rate limit: 10 attempts per holder + client IP (the last
-  `X-Forwarded-For` hop, the one the proxy appends, else the socket address) per 15 min → 429,
+  unlock page again with an error (401). Rate limit: 10 attempts per holder + client IP (the IA8 client
+  address — S42) per 15 min → 429,
   in an in-process store.
 - **BFF** — `PUT /api/artefacts/:id/visibility` accepts `linkGate?: { password?, expiresAt? }`
   when `visibility` is `public` (400 otherwise); leaving public clears the gate.

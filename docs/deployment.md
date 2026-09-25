@@ -130,10 +130,15 @@ How much work this is depends on the **fork's visibility**:
      derived from it** — left at the default `80`, the BFF obediently binds `:80` and the
      health check on 3000 gets `Connection refused`. The giveaway in the deploy log is the
      startup line `Artefactor listening on http://localhost:80`.
-   - **Port mappings:** leave empty. A mapping publishes `3000` on the server itself, past the
-     proxy — and the app trusts the proxy's `X-Forwarded-For` hop to tell clients apart for the
-     link-password rate limit (S32a), so a client that reaches `3000` directly can send its own
-     header and get a fresh set of attempts per guess. Only the proxy may reach the app.
+   - **Port mappings:** leave empty, and never publish `3000` on a public interface: only the
+     proxy should reach the app. The app takes its client address (the key of the
+     link-password rate limit and of BetterAuth's sign-in limit) from the socket peer, and reads
+     `X-Forwarded-For` only when that peer is a **trusted proxy** (IA8, S42). By default that is
+     loopback plus the private and link-local ranges, which is where Coolify's Traefik connects
+     from over the Docker network, so the default needs no setting, and a client reaching a
+     published `3000` from a public address is keyed on its own address, whatever header it
+     sends. Set `ARTEFACTOR_TRUSTED_PROXIES` (§5) only when the proxy reaches the app from a
+     public or otherwise non-private address, or a CDN sits in front of it.
    - **Health check:** enable; path `/health`, port `3000`, expect `200`. (Unauthenticated by
      design — returns `{"status":"ok","uptime":…,"build":"<sha>"}`.) Coolify runs this probe
      **inside the container** with `curl`; the runtime image (Debian `bookworm-slim`, which
@@ -161,6 +166,7 @@ How much work this is depends on the **fork's visibility**:
    | `AUTH_TRUSTED_ORIGINS` | `https://<domain>` | Optional. The `BETTER_AUTH_URL` origin is trusted implicitly and the SPA is same-origin, so this is usually unnecessary — set it only if a separate origin must call the auth API. |
    | `ARTEFACTOR_RENDERER_URL` | `http://renderer:3001` | Optional, and **only** once the isolated renderer of §9 is running and verified. Unset: no card thumbnails, everything else unchanged. Never point it at a renderer that is not isolated. |
    | `ARTEFACTOR_CONTENT_ORIGIN` | `https://<content-domain>` | Optional, defence in depth. `scheme://host[:port]`, no path: the origin artefact frames are served on, on a **separate registrable domain** from `<domain>`. See §5b. |
+   | `ARTEFACTOR_TRUSTED_PROXIES` | *(unset)* | Optional. Comma-separated CIDRs or addresses of the proxies allowed to name the client in `X-Forwarded-For` (IA8). Unset: loopback plus the private and link-local ranges. A value **replaces** that default, so list every hop to trust (e.g. your proxy's address plus a CDN's ranges); an invalid entry fails the boot. |
 
    Already baked into the image (no need to set): `NODE_ENV=production`, `PORT=3000`,
    `DATABASE_PATH=/data/artefactor.db`, `ARTEFACTOR_PAYLOAD_DIR=/data/payloads`,

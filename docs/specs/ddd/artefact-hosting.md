@@ -396,7 +396,7 @@ is. Setting or clearing a gate never changes the tier.
 httpOnly, SameSite=Lax cookie named for the gate's holder, carrying `{ holderId, version, exp }`
 with `exp = min(now + 7 days, expiresAt)`. A pass with a stale `version` is void — changing or
 clearing the password revokes every link already unlocked; changing only the expiry does not.
-Unlock attempts are rate-limited per holder and client.
+Unlock attempts are rate-limited per holder and client address (IA8).
 
 ## Amendment (post-v0.2) — Artefact thumbnails
 

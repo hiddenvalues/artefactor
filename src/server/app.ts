@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { env } from "./env";
+import { env, trustedProxies } from "./env";
+import { createClientAddress } from "./client-ip";
 import { defaultAdapters, type Adapters } from "./adapters";
 import { auth as defaultAuth } from "./auth";
 import type { AuthInstance } from "./middleware/auth";
@@ -55,6 +56,10 @@ export function createApp(
   const framing = framingFromEnv(env);
 
   app.use("*", logger());
+
+  // S42 (IA8) — resolve the client address once, before every route: the unlock
+  // limit reads it as `clientIp`, BetterAuth from the one header it trusts.
+  app.use("*", createClientAddress(trustedProxies));
 
   // S36 (AH28) — a configured content origin answers only frames and /health;
   // the app host then answers no frame route.

@@ -1,4 +1,4 @@
-// S32a — unlock attempts are limited to 10 per holder + client IP per 15 minutes.
+// S32a — unlock attempts are limited to 10 per holder + client address (IA8, S42) per 15 minutes.
 // An in-process store: the app runs as one container. A multi-instance
 // deployment needs a shared store (out of scope).
 
@@ -50,14 +50,4 @@ export class UnlockRateLimiter {
       this.attempts.delete(key);
     }
   }
-}
-
-// The client behind Coolify's proxy: the **last** `X-Forwarded-For` hop — the
-// address the proxy appends — when present, else the socket address. Earlier
-// hops are whatever the client sent, so keying on them would let a client pick
-// a fresh key per guess.
-export function clientIp(forwardedFor: string | undefined, socketAddress: string | undefined): string {
-  const last = forwardedFor?.split(",").pop()?.trim();
-  if (last) return last;
-  return socketAddress?.trim() || "unknown";
 }

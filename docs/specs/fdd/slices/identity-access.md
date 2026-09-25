@@ -159,3 +159,67 @@ dev/test keep email+password, so existing deployments behave byte-identically.
   exactly as under S1; a production deployment enabling both defaults to closed; dev/test with
   it unset default to open; an explicit value wins over the default in every one of those
   cases.
+
+### S42 — Trusted-proxy client address
+
+- **Status:** done
+- **Depends on:** S1, S32a
+- **Linear:** ALI-380
+
+Resolve the client address once, from the socket peer and only the hops a **trusted proxy**
+appended (IA8), and make both of its consumers — the S32a unlock rate limit and BetterAuth — read
+that one value. Before this slice the unlock limit trusted the last `X-Forwarded-For` hop from any
+peer (forgeable by a client reaching the app port directly), and BetterAuth trusted the *first*
+hop (forgeable by any client, even behind the proxy), letting a client reset BetterAuth's sign-in
+rate limit and choose the `ipAddress` stored on its session.
+
+- **Resolver** — `src/server/client-ip.ts`:
+  - `parseTrustedProxies(value)` takes a comma-separated list of IPv4/IPv6 CIDRs or bare
+    addresses (a bare address is a /32 or /128). Unset or empty gives the default set
+    `127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, fc00::/7,
+    fe80::/10`; a set value **replaces** it. An invalid entry throws, naming the entry.
+  - `resolveClientIp(forwardedFor, socketAddress, trusted)` normalizes IPv4-mapped IPv6
+    (`::ffff:a.b.c.d` → `a.b.c.d`). An untrusted or missing peer yields the socket address (or
+    `"unknown"`) and the header is ignored. A trusted peer walks `X-Forwarded-For` right to left,
+    skipping trusted hops, and yields the first untrusted one; if every hop is trusted, the
+    leftmost. An empty or unparsable hop stops the walk at the last address reached.
+- **Configuration** — `ARTEFACTOR_TRUSTED_PROXIES` in `src/server/env.ts`, optional (empty means
+  unset), parsed at boot through `parseTrustedProxies`: an invalid value fails the boot with the
+  variable's name in the message. Exported resolved as `trustedProxies`.
+- **One request-scoped address** — a root middleware in `createApp`, registered before every
+  route, resolves the address once from `getConnInfo` (guarded: an in-process request has no
+  socket) and `X-Forwarded-For`, **removes any incoming** `X-Artefactor-Client-IP` and sets that
+  header to the resolved address on the request the handlers see, and exposes the same value as
+  the Hono variable `clientIp`. The unlock route reads that variable; S32a's `clientIp` helper is
+  gone.
+- **BetterAuth** — both instances (`src/server/auth.ts`, `ee/server/auth.pg.ts`) set
+  `advanced.ipAddress.ipAddressHeaders` to the one header (`CLIENT_IP_HEADER`, exported from
+  `client-ip.ts`), so its rate limiter and the stored `session.ipAddress` see only the IA8
+  address.
+- **Docs** — `docs/deployment.md` states the rule, the default and when to set the variable (a
+  proxy on a public or otherwise non-private address, or a CDN in front); the compose example's
+  app-port comment points at it.
+- **Acceptance (`parseTrustedProxies`):** unset and `""` give the default set;
+  `"203.0.113.0/24, 2001:db8::1"` contains `203.0.113.7` and `2001:db8::1` but not `10.0.0.1`;
+  `"10.0.0.0/33"` and `"proxy.local"` throw, naming the entry.
+- **Acceptance (`resolveClientIp`, default set):** peer `198.51.100.9` with `X-Forwarded-For:
+  1.2.3.4` → `198.51.100.9`; peer `10.0.1.5` with `203.0.113.9, 198.51.100.4` → `198.51.100.4`;
+  peer `::ffff:10.0.1.5` is trusted as `10.0.1.5`; peer `10.0.1.5` with no header → `10.0.1.5`,
+  and no socket and no header → `"unknown"`; peer `10.0.1.5` with `198.51.100.4, 10.0.2.2` →
+  `198.51.100.4`; with `10.0.2.2, 10.0.3.3` → `10.0.2.2`; with `198.51.100.4, garbage` →
+  `10.0.1.5`.
+- **Acceptance (configuration):** `ARTEFACTOR_TRUSTED_PROXIES=nope` fails env parsing with a
+  message naming the variable.
+- **Acceptance (link gate):** 10 wrong unlocks from one public peer, each with a different forged
+  `X-Forwarded-For`, make the 11th a 429; behind a trusted peer, distinct last hops still get
+  separate budgets.
+- **Acceptance (BetterAuth):** a client-sent `X-Artefactor-Client-IP: 6.6.6.6` from a public peer
+  is ignored — the stored `session.ipAddress` is the peer's; a sign-in behind a trusted peer with
+  `X-Forwarded-For: 6.6.6.6, 198.51.100.4` stores `198.51.100.4`. The EE auth options carry the
+  same `ipAddressHeaders`.
+- **Out of scope:** a shared (multi-instance) rate-limit store; changing either limit's numbers
+  or windows; the RFC 7239 `Forwarded` header, `X-Real-IP` and CDN headers such as
+  `CF-Connecting-IP` (only `X-Forwarded-For` is read); trusting the proxy for `X-Forwarded-Proto`
+  or `X-Forwarded-Host` (nothing reads them); a `none` keyword (set a loopback-only value such as
+  `127.0.0.1/32` instead); rewriting `ipAddress` on existing session rows; Views (S21) and
+  analytics, which read no client address — any future consumer must use the resolver (IA8).

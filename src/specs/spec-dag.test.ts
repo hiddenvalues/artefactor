@@ -28,10 +28,10 @@ describe("pnpm spec:dag", () => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
-  it("on the real core catalog prints `Next free id: S42` and exits 0", () => {
+  it("on the real core catalog prints `Next free id: S43` and exits 0", () => {
     const result = run(join(repoRoot, "docs/specs/fdd/slice-dag.md"), repoRoot);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("Next free id: S42");
+    expect(result.stdout).toContain("Next free id: S43");
     expect(result.stdout).toContain("```mermaid");
     expect(result.exitCode).toBe(0);
   });

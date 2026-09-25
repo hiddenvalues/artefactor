@@ -25,10 +25,11 @@ services:
     image: ghcr.io/hiddenvalues/artefactor:latest
     restart: always
     # Loopback only: put a reverse proxy (TLS) on the host in front of it, and
-    # never publish 3000 on a public interface. The app keys the link-password
-    # rate limit (S32a) on the last X-Forwarded-For hop, which the proxy appends;
-    # a client reaching 3000 directly could forge that header. A proxy running
-    # in Compose instead joins this project's network and needs no port here.
+    # never publish 3000 on a public interface. The app reads X-Forwarded-For
+    # only from a trusted proxy (IA8): by default loopback and private ranges,
+    # which covers a proxy on this host or on this project's network. A proxy
+    # elsewhere needs ARTEFACTOR_TRUSTED_PROXIES (docs/deployment.md §5). A proxy
+    # running in Compose instead joins this project's network and needs no port here.
     ports:
       - "127.0.0.1:3000:3000"
     environment:

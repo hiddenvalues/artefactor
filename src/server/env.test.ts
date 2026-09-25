@@ -121,3 +121,17 @@ describe("env schema — the auth booleans (S38)", () => {
     });
   }
 });
+
+describe("env schema — trusted proxies (S42)", () => {
+  it("accepts unset, empty and a valid list", () => {
+    expect(prod(GOOGLE).success).toBe(true);
+    expect(prod({ ...GOOGLE, ARTEFACTOR_TRUSTED_PROXIES: "" }).success).toBe(true);
+    expect(prod({ ...GOOGLE, ARTEFACTOR_TRUSTED_PROXIES: "203.0.113.0/24, ::1" }).success).toBe(true);
+  });
+
+  it("rejects an invalid value with a message naming the variable", () => {
+    const res = prod({ ...GOOGLE, ARTEFACTOR_TRUSTED_PROXIES: "nope" });
+    expect(res.success).toBe(false);
+    expect(messages(res)).toContain("ARTEFACTOR_TRUSTED_PROXIES");
+  });
+});

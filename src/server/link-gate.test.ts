@@ -68,12 +68,24 @@ async function makePublic(
   return (await res.json()) as ArtefactSummary;
 }
 
-function unlock(target: Hono, slug: string, password: string, headers: Record<string, string> = {}) {
-  return target.request(`/a/${slug}/unlock`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
-    body: new URLSearchParams({ password }).toString(),
-  });
+// `peer` is the socket address the request arrives from (IA8): an in-process
+// request has none unless its Node bindings carry one.
+function unlock(
+  target: Hono,
+  slug: string,
+  password: string,
+  headers: Record<string, string> = {},
+  peer?: string,
+) {
+  return target.request(
+    `/a/${slug}/unlock`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
+      body: new URLSearchParams({ password }).toString(),
+    },
+    peer === undefined ? undefined : { incoming: { socket: { remoteAddress: peer } } },
+  );
 }
 
 // Unlock and return the pass cookie ("name=value").
@@ -305,18 +317,36 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
 
   it("the 11th unlock attempt for one holder from one IP within 15 minutes is refused (429)", async () => {
     const a = await makePublic({ password: PASSWORD });
-    // The proxy appends the real client (198.51.100.7) after whatever the
-    // client sent, so rotating the client-sent value earns no fresh attempts.
+    // Behind a trusted proxy (a Docker-network peer), the proxy appends the real
+    // client (198.51.100.7) after whatever the client sent, so rotating the
+    // client-sent value earns no fresh attempts (IA8).
+    const PROXY = "10.0.1.5";
     const via = (spoofed: string) => ({ "X-Forwarded-For": `${spoofed}, 198.51.100.7` });
     for (let i = 0; i < 10; i++) {
-      expect((await unlock(app, a.publicSlug!, "wrong-password", via(`10.9.9.${i}`))).status).toBe(401);
+      expect((await unlock(app, a.publicSlug!, "wrong-password", via(`203.0.113.${i}`), PROXY)).status).toBe(401);
     }
-    const blocked = await unlock(app, a.publicSlug!, PASSWORD, via("10.9.9.99"));
+    const blocked = await unlock(app, a.publicSlug!, PASSWORD, via("203.0.113.99"), PROXY);
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get("set-cookie")).toBeNull();
     expect(await blocked.text()).toContain("Too many attempts");
-    // Another client is unaffected.
-    expect((await unlock(app, a.publicSlug!, PASSWORD, { "X-Forwarded-For": "198.51.100.8" })).status).toBe(303);
+    // Another client behind the same proxy is unaffected.
+    const other = { "X-Forwarded-For": "198.51.100.8" };
+    expect((await unlock(app, a.publicSlug!, PASSWORD, other, PROXY)).status).toBe(303);
+  });
+
+  it("a public peer forging X-Forwarded-For earns no fresh attempts (S42, IA8)", async () => {
+    const a = await makePublic({ password: PASSWORD });
+    // A client reaching the app port directly: its header is ignored, so every
+    // attempt counts against its socket address.
+    const PEER = "198.51.100.9";
+    for (let i = 0; i < 10; i++) {
+      const forged = { "X-Forwarded-For": `203.0.113.${i}` };
+      expect((await unlock(app, a.publicSlug!, "wrong-password", forged, PEER)).status).toBe(401);
+    }
+    const blocked = await unlock(app, a.publicSlug!, PASSWORD, { "X-Forwarded-For": "203.0.113.99" }, PEER);
+    expect(blocked.status).toBe(429);
+    // Another public peer is unaffected.
+    expect((await unlock(app, a.publicSlug!, PASSWORD, {}, "198.51.100.10")).status).toBe(303);
   });
 
   it("unlocking an ungated or unknown link reveals nothing new", async () => {

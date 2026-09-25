@@ -169,6 +169,39 @@ Verified email+password sign-up needs a mail transport, which OSS does not have 
 **IA1, IA2, IA3, IA5 and IA6 are unchanged.** Nothing here changes *who* may hold an account, only
 *how* they authenticate and *whether the door is open*.
 
+## Amendment (post-v0.2) — the client address
+
+> **Status:** DDD amendment (FDD slice **S42**). **IA1–IA7 are unchanged by S42**: nothing here
+> changes who may read, unlock or sign in — only the *key* the rate limits count against.
+
+**Problem.** The app decided "who is the client" in two places, and neither could be trusted. The
+S32a unlock limit took the last `X-Forwarded-For` hop from **any** peer, so a client reaching the
+app port directly forged its key. BetterAuth read the **first** `X-Forwarded-For` value, which a
+client chooses even behind the proxy (the proxy appends its hop and keeps what the client sent), so
+a client could reset BetterAuth's sign-in rate limit and choose the `ipAddress` stored on its
+session row.
+
+**IA8 — the client address is resolved once, and only a trusted proxy may name it.**
+
+- Every consumer of a client address takes it from one resolver (`src/server/client-ip.ts`),
+  resolved once per request by a root middleware in `createApp`.
+- The resolver starts from the socket peer (an IPv4-mapped IPv6 address counts as its IPv4 form).
+- While the current address is a **trusted proxy**, it steps one hop left in `X-Forwarded-For`.
+  The first untrusted hop is the client. When every hop is trusted, the leftmost one is. An empty
+  or unparsable hop stops the walk at the nearest trusted address, so garbage never becomes a key.
+- A header from an untrusted peer is ignored.
+- The trusted set is deployment configuration: `ARTEFACTOR_TRUSTED_PROXIES`, a comma-separated
+  list of CIDRs or bare addresses that **replaces** the default. The default is loopback plus the
+  private and link-local ranges — `127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12,
+  192.168.0.0/16, 169.254.0.0/16, fc00::/7, fe80::/10` — which is where a same-host or
+  Docker-network proxy connects from, so a peer from a public address never names its own client
+  address. An invalid entry fails the boot, naming the variable.
+
+BetterAuth reads the address only from the `X-Artefactor-Client-IP` header, which the middleware
+strips from every incoming request and sets to the IA8 address; the raw `X-Forwarded-For` never
+reaches BetterAuth's IP logic. The S32a unlock limit ("per holder and client address",
+`artefact-hosting.md` *Passes*) keys on the same address.
+
 ## Open questions
 
 - MCP OAuth scopes: a single implicit "act as me" grant vs. finer scopes (read-only vs.

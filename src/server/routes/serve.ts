@@ -1,5 +1,4 @@
-import { Hono, type Context } from "hono";
-import { getConnInfo } from "@hono/node-server/conninfo";
+import { Hono } from "hono";
 import { defaultAccessPolicy, type AccessPolicy } from "../../domain/artefact/access";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import { isLinkExpired, type LinkPasswordHasher } from "../../domain/artefact/link-gate";
@@ -7,7 +6,7 @@ import type { CollectionRepository } from "../../domain/collection/collection-re
 import { ScryptLinkPasswordHasher } from "../../infra/crypto/link-password-hasher";
 import { authorizeRead } from "../link-gate/authorize";
 import { createAttachLinkPasses, issuePass, linkPassesOf } from "../link-gate/passes";
-import { UnlockRateLimiter, clientIp } from "../link-gate/rate-limit";
+import { UnlockRateLimiter } from "../link-gate/rate-limit";
 import { renderUnlockPage } from "../runtime/unlock";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
@@ -173,7 +172,7 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
       return c.notFound();
     }
 
-    if (!limiter.attempt(artefact.id, requestIp(c), now)) {
+    if (!limiter.attempt(artefact.id, c.get("clientIp") ?? "unknown", now)) {
       return c.html(renderUnlockPage({ slug, error: "rate-limited" }), 429);
     }
     const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
@@ -186,16 +185,4 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
   });
 
   return app;
-}
-
-// The client an unlock attempt is counted against (S32a): the last
-// `X-Forwarded-For` hop (appended by the proxy), else the socket address.
-function requestIp(c: Context): string {
-  let socket: string | undefined;
-  try {
-    socket = getConnInfo(c).remote.address;
-  } catch {
-    socket = undefined; // no socket (e.g. an in-process request)
-  }
-  return clientIp(c.req.header("X-Forwarded-For"), socket);
 }
