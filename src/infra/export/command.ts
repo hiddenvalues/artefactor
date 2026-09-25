@@ -10,11 +10,17 @@ import { readBundle } from "./read-bundle";
 // Returns the exit code: 0 on success, 1 on a failed export/verify (naming the
 // check), 2 on a usage error.
 
-export interface ExportCommandDeps {
-  // Opened only for --out, and read-only (DX1).
+// What --out needs, loaded only for --out: --verify reads nothing but the
+// bundle, so it must not depend on the server's configuration.
+export interface ExportSource {
+  // Opened read-only (DX1).
   openDatabase: () => Database.Database;
   payloadStore: PayloadStore;
   build: string;
+}
+
+export interface ExportCommandDeps {
+  loadSource: () => Promise<ExportSource>;
   stdout: (line: string) => void;
   stderr: (line: string) => void;
 }
@@ -45,8 +51,14 @@ export async function runExportCommand(argv: string[], deps: ExportCommandDeps):
 
   let sqlite: Database.Database | undefined;
   try {
-    sqlite = deps.openDatabase();
-    const manifest = await exportBundle({ sqlite, payloadStore: deps.payloadStore, out: dir, build: deps.build });
+    const source = await deps.loadSource();
+    sqlite = source.openDatabase();
+    const manifest = await exportBundle({
+      sqlite,
+      payloadStore: source.payloadStore,
+      out: dir,
+      build: source.build,
+    });
     deps.stdout(`exported to ${dir}`);
     deps.stdout(formatCounts(manifest.counts));
     return 0;

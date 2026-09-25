@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BundleError } from "./format";
@@ -220,6 +220,33 @@ describe("exportBundle — output directory", () => {
     expect((err as BundleError).check).toBe("out");
     expect(readdirSync(out)).toEqual(["keep.txt"]);
     expect(existsSync(`${out}.partial`)).toBe(false);
+  });
+
+  it("refuses when <out>.partial already exists, leaving it untouched", async () => {
+    const seed = await seedDeployment();
+    const out = join(seed.dir, "bundle");
+    mkdirSync(`${out}.partial`);
+    writeFileSync(join(`${out}.partial`, "unrelated.txt"), "not ours");
+    const err = await exportOf(seed, out).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BundleError);
+    expect((err as BundleError).check).toBe("out");
+    expect(readdirSync(`${out}.partial`)).toEqual(["unrelated.txt"]);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("writes the bundle owner-only: directories 0700, files 0600", async () => {
+    const seed = await seedDeployment();
+    const out = join(seed.dir, "bundle");
+    const umask = process.umask(0o000); // the most permissive ambient umask
+    try {
+      await exportOf(seed, out);
+    } finally {
+      process.umask(umask);
+    }
+    const mode = (p: string) => statSync(p).mode & 0o777;
+    expect(mode(out)).toBe(0o700);
+    expect(mode(join(out, "payloads"))).toBe(0o700);
+    for (const f of filesUnder(out)) expect(mode(f), f).toBe(0o600);
   });
 
   it("writes into an existing empty out directory", async () => {

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runExportCommand } from "./command";
@@ -12,12 +13,14 @@ function run(seed: SeededDeployment, argv: string[]) {
   const stderr: string[] = [];
   let opened = 0;
   const code = runExportCommand(argv, {
-    openDatabase: () => {
+    loadSource: async () => {
       opened++;
-      return openSource(seed.dbPath, { readonly: true });
+      return {
+        openDatabase: () => openSource(seed.dbPath, { readonly: true }),
+        payloadStore: seed.payloadStore,
+        build: "cli-test",
+      };
     },
-    payloadStore: seed.payloadStore,
-    build: "cli-test",
     stdout: (s) => stdout.push(s),
     stderr: (s) => stderr.push(s),
   });
@@ -42,7 +45,7 @@ describe("export CLI (S39)", () => {
     expect(verified.exitCode).toBe(0);
     expect(verified.stdout).toMatch(/accounts\s+2/);
     expect(verified.stdout).toMatch(/payloads\s+5/);
-    expect(verified.opened()).toBe(0); // verify never touches the database
+    expect(verified.opened()).toBe(0); // verify never loads the source (database, env)
   });
 
   it("--verify on a tampered bundle exits non-zero, naming the failing check", async () => {
@@ -87,4 +90,18 @@ describe("export CLI (S39)", () => {
       expect(res.stderr).toContain("--out <dir>");
     },
   );
+
+  it("cli.ts --verify runs in production without the server's auth configuration", async () => {
+    const seed = await seedDeployment();
+    const out = join(seed.dir, "bundle");
+    expect((await run(seed, ["--out", out])).exitCode).toBe(0);
+    const env: Record<string, string> = { PATH: process.env.PATH ?? "", NODE_ENV: "production" };
+    const res = spawnSync("node_modules/.bin/tsx", ["src/infra/export/cli.ts", "--verify", out], {
+      env,
+      encoding: "utf8",
+    });
+    expect(res.stderr).toBe("");
+    expect(res.status).toBe(0);
+    expect(res.stdout).toMatch(/artefacts\s+6/);
+  });
 });

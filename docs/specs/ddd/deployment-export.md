@@ -20,7 +20,8 @@ matrix is not involved. Implemented in `src/infra/export/` (slice S39 — Deploy
 A bundle is **sensitive operator material**. It carries private artefacts, every user's saved
 data, email addresses and the scrypt hashes of link-gate passwords. It never carries an Account
 credential (DX2), but it must be stored and moved like a database backup: never published, never
-left on a shared volume.
+left on a shared volume. The writer creates it **owner-only** whatever the ambient umask —
+directories `0700`, files `0600` — including a failed run's `<out>.partial`.
 
 ## Format — `artefactor-export` 1.0
 
@@ -76,7 +77,9 @@ is part of the format):
    `payloadHash` of every artefact naming it. The export fails rather than write a bundle with a
    missing or mismatched payload — it writes into `<out>.partial` and renames it to `<out>` only
    on success, so a failed run never leaves a complete-looking bundle — and the reader rejects a
-   bundle whose payload bytes don't hash to their name.
+   bundle whose payload bytes don't hash to their name. The writer never deletes or reuses an
+   existing directory: a non-empty `<out>`, or any existing `<out>.partial` (a failed run's
+   leftover, which the operator inspects and removes), refuses the export before it writes.
 5. **DX5 — Versioned format.** `manifest.json` names `format: "artefactor-export"` and a
    `major.minor` version. A **minor** bump only adds optional fields or record types; a reader
    rejects an unknown **major** and ignores unknown fields and files under a known one.
@@ -103,7 +106,8 @@ know); anything a 1.0 reader would misread — a renamed, removed or re-typed fi
 ## Decided
 
 - **Operator CLI only** (`pnpm export:bundle`, or `node dist/server/export.js` in the image). No
-  HTTP route or admin UI.
+  HTTP route or admin UI. `--verify` reads only the bundle, so it needs none of the server's
+  configuration (no auth secret, no sign-in method).
 - **A directory, not an archive.** Compression, encryption and signing are the operator's.
 - **No importer here.** EM1 imports into the cloud; an OSS → OSS restore can be added later
   without a format change.

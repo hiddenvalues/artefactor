@@ -143,12 +143,14 @@ the humlytech → `artefactor.cloud` move. **Format and invariants DX1–DX5:
 - **Writer** (`src/infra/export/`): `exportBundle({ sqlite, payloadStore, out })` reads every
   record in one read transaction (DX3), then copies each distinct payload under its sha256,
   hashing each artefact's file against its `payloadHash` (DX4). It writes into `<out>.partial`
-  and renames to `<out>` only on success, and refuses an `out` that exists and is non-empty.
+  and renames to `<out>` only on success, and refuses an `out` that exists and is non-empty, or an
+  existing `<out>.partial`. Everything it writes is owner-only (directories `0700`, files `0600`).
 - **CLI** (`src/infra/export/cli.ts`): `pnpm export:bundle --out <dir>` exports the deployment
   named by `DATABASE_PATH` / `ARTEFACTOR_PAYLOAD_DIR` (the database opened read-only);
   `--verify <dir>` runs `readBundle` and prints the counts. Any failure exits non-zero, naming the
-  failing check. `build:server` bundles it to `dist/server/export.js`, so an operator runs
-  `node dist/server/export.js --out /data/export-…` inside the image (as the `node` user).
+  failing check; `--verify` loads none of the server's configuration. `build:server` bundles it
+  to `dist/server/export.js`, so an operator runs `node dist/server/export.js --out
+  /data/export-…` inside the image (as the `node` user).
 - **Acceptance:** exporting a seeded deployment (two Accounts, artefacts across all four
   visibility tiers incl. an archived one, a `selected` access list, a gated public artefact, a
   two-level collection tree with a root access list, data entries from two authors, views, both
@@ -162,7 +164,9 @@ the humlytech → `artefactor.cloud` move. **Format and invariants DX1–DX5:
   rejects an unknown major, a missing manifest, a schema failure, a count mismatch, a dangling
   reference and a payload that doesn't hash to its name, and accepts an unknown extra field and an
   unknown extra `.jsonl` under a known major (DX5); two exports of an unchanged deployment differ
-  only in `manifest.exportedAt`; a non-empty `--out` is refused with nothing written; `--verify`
+  only in `manifest.exportedAt`; a non-empty `--out`, or an existing `<out>.partial`, is refused
+  with nothing written; the bundle is owner-only even under umask `000`; `--verify` runs in
+  production without the auth configuration; `--verify`
   exits 0 with the counts on a good bundle and non-zero naming the check on a tampered one.
 - **Not in scope:** any importer (EM1; an OSS → OSS restore can follow without a format change),
   exporting from the Postgres adapter, an HTTP route or UI, incremental exports, encryption,

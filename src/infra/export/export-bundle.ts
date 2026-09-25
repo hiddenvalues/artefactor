@@ -2,8 +2,8 @@ import type Database from "better-sqlite3";
 import { asc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { mkdir, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import type { PayloadStore } from "../../domain/artefact/ports";
 import * as schema from "../db/schema";
 import {
@@ -46,6 +46,9 @@ interface PayloadSource {
   bytes: number;
 }
 
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
+
 const iso = (d: Date) => d.toISOString();
 const isoOrNull = (d: Date | null) => (d ? d.toISOString() : null);
 
@@ -53,11 +56,18 @@ export async function exportBundle(input: ExportBundleInput): Promise<Manifest> 
   const out = resolve(input.out);
   const partial = `${out}.partial`;
   await assertUsableOut(out);
+  if (await stat(partial).catch(() => undefined)) {
+    throw new BundleError("out", `${partial} already exists (an earlier failed run?); remove it first`);
+  }
 
   const { records, payloads } = readSnapshot(input.sqlite, input.afterSnapshot);
 
-  await rm(partial, { recursive: true, force: true });
-  await mkdir(join(partial, PAYLOAD_DIR), { recursive: true });
+  // Owner-only throughout: the bundle is sensitive operator material, whatever
+  // the ambient umask. `partial` is created, never reused, so no existing
+  // directory is ever deleted or written into.
+  await mkdir(dirname(partial), { recursive: true });
+  await mkdir(partial, { mode: DIR_MODE });
+  await mkdir(join(partial, PAYLOAD_DIR), { mode: DIR_MODE });
 
   const written = new Set<string>();
   for (const p of payloads) {
@@ -76,7 +86,7 @@ export async function exportBundle(input: ExportBundleInput): Promise<Manifest> 
       );
     }
     if (written.has(hash)) continue;
-    await writeFile(join(partial, PAYLOAD_DIR, hash), bytes);
+    await writeFile(join(partial, PAYLOAD_DIR, hash), bytes, { mode: FILE_MODE });
     written.add(hash);
   }
 
@@ -85,6 +95,7 @@ export async function exportBundle(input: ExportBundleInput): Promise<Manifest> 
     await writeFile(
       join(partial, RECORD_FILES[kind].file),
       rows.map((r) => `${JSON.stringify(r)}\n`).join(""),
+      { mode: FILE_MODE },
     );
   }
 
@@ -106,7 +117,9 @@ export async function exportBundle(input: ExportBundleInput): Promise<Manifest> 
       payloads: written.size,
     },
   };
-  await writeFile(join(partial, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(join(partial, MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`, {
+    mode: FILE_MODE,
+  });
 
   // An existing `out` is empty (checked above); rename replaces an empty directory.
   await rename(partial, out);
