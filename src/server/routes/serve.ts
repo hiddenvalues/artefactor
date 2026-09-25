@@ -188,8 +188,8 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
   return app;
 }
 
-// The client an unlock attempt is counted against (S32a): the first
-// `X-Forwarded-For` hop behind the proxy, else the socket address.
+// The client an unlock attempt is counted against (S32a): the last
+// `X-Forwarded-For` hop (appended by the proxy), else the socket address.
 function requestIp(c: Context): string {
   let socket: string | undefined;
   try {

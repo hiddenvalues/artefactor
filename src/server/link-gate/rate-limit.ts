@@ -52,10 +52,12 @@ export class UnlockRateLimiter {
   }
 }
 
-// The client behind Coolify's proxy: the first `X-Forwarded-For` hop when
-// present, else the socket address.
+// The client behind Coolify's proxy: the **last** `X-Forwarded-For` hop — the
+// address the proxy appends — when present, else the socket address. Earlier
+// hops are whatever the client sent, so keying on them would let a client pick
+// a fresh key per guess.
 export function clientIp(forwardedFor: string | undefined, socketAddress: string | undefined): string {
-  const first = forwardedFor?.split(",")[0]?.trim();
-  if (first) return first;
+  const last = forwardedFor?.split(",").pop()?.trim();
+  if (last) return last;
   return socketAddress?.trim() || "unknown";
 }

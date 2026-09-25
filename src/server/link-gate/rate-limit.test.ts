@@ -48,8 +48,9 @@ describe("UnlockRateLimiter bounds (S32a)", () => {
 });
 
 describe("clientIp (S32a)", () => {
-  it("takes the first X-Forwarded-For hop", () => {
-    expect(clientIp("203.0.113.9, 10.0.0.1", "10.0.0.2")).toBe("203.0.113.9");
+  it("takes the last X-Forwarded-For hop — the one the proxy appends, not a client-sent value", () => {
+    expect(clientIp("203.0.113.9, 198.51.100.4", "10.0.0.2")).toBe("198.51.100.4");
+    expect(clientIp("198.51.100.4", "10.0.0.2")).toBe("198.51.100.4");
   });
 
   it("falls back to the socket address, then to a fixed key", () => {

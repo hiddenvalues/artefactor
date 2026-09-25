@@ -305,11 +305,13 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
 
   it("the 11th unlock attempt for one holder from one IP within 15 minutes is refused (429)", async () => {
     const a = await makePublic({ password: PASSWORD });
-    const ip = { "X-Forwarded-For": "198.51.100.7, 10.0.0.1" };
+    // The proxy appends the real client (198.51.100.7) after whatever the
+    // client sent, so rotating the client-sent value earns no fresh attempts.
+    const via = (spoofed: string) => ({ "X-Forwarded-For": `${spoofed}, 198.51.100.7` });
     for (let i = 0; i < 10; i++) {
-      expect((await unlock(app, a.publicSlug!, "wrong-password", ip)).status).toBe(401);
+      expect((await unlock(app, a.publicSlug!, "wrong-password", via(`10.9.9.${i}`))).status).toBe(401);
     }
-    const blocked = await unlock(app, a.publicSlug!, PASSWORD, ip);
+    const blocked = await unlock(app, a.publicSlug!, PASSWORD, via("10.9.9.99"));
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get("set-cookie")).toBeNull();
     expect(await blocked.text()).toContain("Too many attempts");
