@@ -21,6 +21,8 @@
     "export:bundle": "tsx src/infra/export/cli.ts",
     "spec:dag": "tsx src/specs/spec-dag.ts",
     "lint": "eslint src/client",
+    "design:catalog": "vite --config vite.design.config.ts",
+    "design:export": "vite build --config vite.design.config.ts",
     "lint:md": "markdownlint-cli2",
     "lint:md:fix": "markdownlint-cli2 --fix"
   },
