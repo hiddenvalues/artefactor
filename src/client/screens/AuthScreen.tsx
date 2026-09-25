@@ -83,14 +83,20 @@ export function AuthScreen() {
   async function google() {
     setError(null);
     setBusy(true);
-    await authClient.signIn.social({
-      provider: "google",
-      callbackURL: returnTo ?? "/",
-      errorCallbackURL: returnTo ? `/?auth_error=1&returnTo=${encodeURIComponent(returnTo)}` : "/?auth_error=1",
-    });
-    // On success the browser is redirected to Google; this line is only reached
-    // if the redirect didn't start.
-    setBusy(false);
+    try {
+      const res = await authClient.signIn.social({
+        provider: "google",
+        callbackURL: returnTo ?? "/",
+        errorCallbackURL: returnTo ? `/?auth_error=1&returnTo=${encodeURIComponent(returnTo)}` : "/?auth_error=1",
+      });
+      if (res.error) setError(res.error.message ?? "Google sign-in failed.");
+    } catch {
+      setError("Google sign-in failed. Check your connection and try again.");
+    } finally {
+      // On success the browser is already on its way to Google; this only
+      // matters when the redirect didn't start.
+      setBusy(false);
+    }
   }
 
   async function submit(e: FormEvent) {

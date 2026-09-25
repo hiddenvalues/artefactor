@@ -64,7 +64,7 @@ with, and a different Node then refuses to load it (ABI mismatch).
 pnpm install
 pnpm approve-builds --all     # compile better-sqlite3 (native; pnpm blocks build scripts by default)
 pnpm db:migrate               # create the SQLite schema
-pnpm dev                      # Vite (5173) + Hono (3000); open http://localhost:5173
+pnpm dev                      # Vite (5273) + Hono (3000); open http://localhost:5273
 ```
 
 Other commands:

@@ -65,6 +65,19 @@ export function kindChips(base: ArtefactSummary[]): Chip<KindFilter>[] {
   return chips;
 }
 
+// A collection page shows its kind chips only when it holds more than one kind
+// — or while a kind filter is active, so a filter that now matches nothing can
+// still be cleared.
+export function showCollectionKindChips(chips: Chip<KindFilter>[], kind: KindFilter): boolean {
+  return chips.length > 2 || kind !== "all";
+}
+
+// A collection page offers sorting whenever it lists any artefact — yours or
+// others' (a contributor's, or the owner's in a shared tree).
+export function showCollectionSort(mine: ArtefactSummary[], theirs: ArtefactSummary[]): boolean {
+  return mine.length + theirs.length > 0;
+}
+
 // Access chips, mirroring kindChips but over the *effective* tiers (AH20).
 export function accessChips(base: ArtefactSummary[]): Chip<AccessFilter>[] {
   const chips: Chip<AccessFilter>[] = [{ key: "all", label: "All access", count: base.length }];

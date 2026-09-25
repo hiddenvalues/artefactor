@@ -103,7 +103,7 @@ export function UploadDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit artefact" : "New artefact"}</DialogTitle>
@@ -239,7 +239,7 @@ export function UploadDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button onClick={submit} disabled={busy}>

@@ -75,7 +75,8 @@ export function AddToCollectionDialog({
 
   async function createInline() {
     const name = inlineName.trim();
-    if (!name) return;
+    // Enter still reaches here while a create is in flight; the button can't.
+    if (!name || inlineBusy) return;
     setInlineBusy(true);
     setInlineError(null);
     try {

@@ -48,6 +48,8 @@ export function CollectionEditorDialog({
       : "A new top-level collection.";
 
   function submit() {
+    // Enter in the name field bypasses the disabled button.
+    if (busy) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setNameError("Give your collection a name.");

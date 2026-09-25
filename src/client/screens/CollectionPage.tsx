@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "$lib/components/ui/dropdown-menu";
-import { applyFilters, kindChips } from "$lib/browse";
+import { applyFilters, kindChips, showCollectionKindChips, showCollectionSort } from "$lib/browse";
 import {
   CollectionTile,
   countsLine,
@@ -120,7 +120,7 @@ export function CollectionPage({
       <ScreenHeader
         controls={
           <ViewControls
-            sort={mine.length > 0 ? filters.sort : undefined}
+            sort={showCollectionSort(mine, theirs) ? filters.sort : undefined}
             onSort={onSort}
             density={density}
             onDensity={onDensity}
@@ -230,8 +230,8 @@ export function CollectionPage({
       )}
 
       <SectionLabel>Artefacts</SectionLabel>
-      {/* Kind chips appear only when the collection holds more than one kind. */}
-      {chips.length > 2 && <KindChips chips={chips} value={filters.kind} onChange={onKind} />}
+      {/* Kind chips: more than one kind here, or a kind filter to clear. */}
+      {showCollectionKindChips(chips, filters.kind) && <KindChips chips={chips} value={filters.kind} onChange={onKind} />}
       {visibleMine.length === 0 && visibleTheirs.length === 0 ? (
         filtered ? (
           <EmptyState title="No matches" sub="No artefacts in this collection match your current kind filter or search." />

@@ -228,7 +228,7 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
 ## Commands
 
 ```bash
-pnpm dev                       # Vite (5173) + Hono (3000) together; Vite proxies /api,/health
+pnpm dev                       # Vite (5273) + Hono (3000) together; Vite proxies /api,/health,/a/
 pnpm build                     # build:client (Vite → dist/client) + build:server (esbuild → dist/server)
 pnpm start                     # run the built server: node dist/server/index.js
 pnpm test                      # Vitest (domain unit tests)
