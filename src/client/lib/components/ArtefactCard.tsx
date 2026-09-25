@@ -104,11 +104,15 @@ export function useOwnedItem(p: OwnedItemProps, variant: "block" | "pill") {
 
 export const Dot = () => <span className="opacity-50">·</span>;
 
-// Grid cards (not list rows) lift on hover: a small rise and scale, a deeper
-// shadow and a tinted border, raised above their neighbours so the shadow isn't
-// drawn under them. Reduced motion keeps only the shadow and border change.
+// Grid cards (not list rows) lift on hover — the Svelte client's `.af-card-grid`
+// pop, value for value: a 6 px rise and 1.5 % scale, its own shadow and a tinted
+// border, eased over 150 ms and raised above neighbours so the shadow isn't
+// drawn under them. The lift sets `transform` itself, not Tailwind's
+// `translate-*` / `scale-*` (those move the separate `translate` and `scale`
+// properties, which a `transform` transition doesn't ease — the card would
+// snap). Reduced motion keeps only the shadow and border change.
 export const cardLift =
-  "relative transition-[transform,box-shadow,border-color] duration-150 ease-out hover:z-20 hover:-translate-y-1.5 hover:scale-[1.015] hover:border-primary/40 hover:shadow-xl motion-reduce:transition-[box-shadow,border-color] motion-reduce:hover:translate-y-0 motion-reduce:hover:scale-100";
+  "relative transition-[transform,box-shadow,border-color] duration-150 ease-out hover:z-20 hover:[transform:translateY(-6px)_scale(1.015)] hover:border-primary/40 hover:shadow-card-lift motion-reduce:transition-[box-shadow,border-color] motion-reduce:hover:transform-none";
 
 // A grid card of an artefact you own.
 export function ArtefactCard(p: OwnedItemProps) {

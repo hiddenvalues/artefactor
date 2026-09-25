@@ -446,32 +446,60 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     await page.close();
   });
 
-  it("lifts a grid card on hover, and leaves list rows still", async () => {
+  it("lifts a grid card on hover exactly as the Svelte client did — eased, not snapped — and leaves list rows still", async () => {
     const u = await newUser();
     await createArtefact(u, "Hovered");
     const page = await openApp(u);
     const open = page.locator("main [aria-label='Open Hovered']");
     // The card is the thumbnail button's nearest ancestor with a border radius.
-    // A lift may use `transform` or the individual `translate` / `scale`
-    // properties (Tailwind v4's utilities); "none" means none of them is set.
-    const cardTransform = () =>
+    const card = () =>
       open.evaluate((el) => {
         let n: HTMLElement | null = el.parentElement;
         while (n && getComputedStyle(n).borderTopLeftRadius === "0px") n = n.parentElement;
         const s = getComputedStyle(n!);
-        const moved = [s.transform, s.translate, s.scale].filter((v) => v && v !== "none");
-        return moved.length ? moved.join(" ") : "none";
+        // Every property a lift can move: `transform`, or Tailwind v4's
+        // individual `translate` / `scale`.
+        const moved = ["transform", "translate", "scale"].filter((p) => {
+          const v = s.getPropertyValue(p);
+          return v !== "" && v !== "none";
+        });
+        const durations = s.transitionDuration.split(",").map((d) => parseFloat(d));
+        const transitioned = s.transitionProperty.split(",").map((p, i) => ({
+          p: p.trim(),
+          ms: (durations[i % durations.length] ?? 0) * 1000,
+        }));
+        return {
+          moved,
+          transform: s.transform,
+          // The visible layers only: Tailwind pads a shadow with transparent,
+          // zero-size ring/inset layers that draw nothing.
+          shadow: s.boxShadow
+            .split(/,(?![^(]*\))/)
+            .map((l) => l.trim())
+            .filter((l) => l !== "rgba(0, 0, 0, 0) 0px 0px 0px 0px")
+            .join(", "),
+          // A moved property eases only when it (or `all`) has a transition.
+          eased: moved.every((p) => transitioned.some((t) => (t.p === p || t.p === "all") && t.ms >= 100)),
+        };
       });
 
-    expect(await cardTransform()).toBe("none");
+    expect((await card()).moved).toEqual([]);
     await open.hover();
-    await eventually(async () => expect(await cardTransform()).not.toBe("none"));
+    await eventually(async () =>
+      expect(await card()).toEqual({
+        moved: ["transform"],
+        // translateY(-6px) scale(1.015), and the original lift shadow.
+        transform: "matrix(1.015, 0, 0, 1.015, 0, -6)",
+        shadow: "rgba(16, 17, 18, 0.32) 0px 18px 38px -12px",
+        eased: true,
+      }),
+    );
 
     await page.locator("main [title='List']").click();
     await eventually(async () => expect((await open.boundingBox())!.width).toBeLessThan(80));
     await open.hover();
     await new Promise((r) => setTimeout(r, 300));
-    expect(await cardTransform()).toBe("none");
+    expect((await card()).moved).toEqual([]);
     await page.close();
   });
 
