@@ -33,9 +33,9 @@ export default definePreview({
       ),
     },
     {
-      name: "Busy, with server error",
+      name: "Busy, with server error (Escape closes the preview)",
       render: () => (
-        <Launcher label="Open with error">
+        <Launcher label="Open with error" escapable>
           {(close) => (
             <CollectionEditorDialog
               editing={collection()}

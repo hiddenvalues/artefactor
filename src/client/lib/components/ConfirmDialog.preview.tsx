@@ -19,9 +19,9 @@ export default definePreview({
       ),
     },
     {
-      name: "Busy",
+      name: "Busy (Escape closes the preview)",
       render: () => (
-        <Launcher label="Open busy confirm">
+        <Launcher label="Open busy confirm" escapable>
           {(close) => <ConfirmDialog {...copy} confirmLabel="Deleting…" busy onConfirm={close} onClose={close} />}
         </Launcher>
       ),

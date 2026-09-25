@@ -6,7 +6,7 @@ function Example({ size = "default", primary = false }: { size?: "sm" | "default
   const standalone = useStandalone();
   return (
     <Select defaultValue="7d" defaultOpen={standalone && primary}>
-      <SelectTrigger size={size} className="w-48">
+      <SelectTrigger size={size} className="w-48" aria-label="Link expiry">
         <SelectValue placeholder="Expires" />
       </SelectTrigger>
       <SelectContent>
@@ -41,7 +41,7 @@ export default definePreview({
       name: "Placeholder, disabled",
       render: () => (
         <Select disabled>
-          <SelectTrigger className="w-48">
+          <SelectTrigger className="w-48" aria-label="Duration">
             <SelectValue placeholder="Pick a duration" />
           </SelectTrigger>
           <SelectContent>
@@ -54,7 +54,7 @@ export default definePreview({
       name: "Invalid",
       render: () => (
         <Select>
-          <SelectTrigger className="w-48" aria-invalid>
+          <SelectTrigger className="w-48" aria-label="Duration" aria-invalid>
             <SelectValue placeholder="Required" />
           </SelectTrigger>
           <SelectContent>

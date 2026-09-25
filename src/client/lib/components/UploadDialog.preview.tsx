@@ -23,9 +23,9 @@ export default definePreview({
       ),
     },
     {
-      name: "Uploading (busy)",
+      name: "Uploading, busy (Escape closes the preview)",
       render: () => (
-        <Launcher label="Open busy upload">
+        <Launcher label="Open busy upload" escapable>
           {(close) => <UploadDialog editing={artefact()} busy serverError={null} onClose={close} onSubmit={noop} />}
         </Launcher>
       ),

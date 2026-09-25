@@ -7,7 +7,8 @@ import { Sidebar } from "./Sidebar";
 function Example({ view, active = null, empty = false }: { view: View; active?: string | null; empty?: boolean }) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({ "col-design": true });
   return (
-    <div className="h-[32rem] w-64 overflow-hidden rounded-lg border">
+    // The sidebar is viewport-tall in the app; here it fills the frame instead.
+    <div className="h-[32rem] w-66 overflow-hidden rounded-lg border [&>aside]:h-full">
       <Sidebar
         view={view}
         collections={empty ? [] : collections}

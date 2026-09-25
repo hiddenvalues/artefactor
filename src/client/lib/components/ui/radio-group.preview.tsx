@@ -8,7 +8,7 @@ export default definePreview({
     {
       name: "States",
       render: () => (
-        <RadioGroup defaultValue="private">
+        <RadioGroup defaultValue="private" aria-label="Who can open it">
           <Label>
             <RadioGroupItem value="private" />
             Private
@@ -27,7 +27,7 @@ export default definePreview({
     {
       name: "Invalid",
       render: () => (
-        <RadioGroup>
+        <RadioGroup aria-label="Pick one">
           <Label>
             <RadioGroupItem value="a" aria-invalid />
             Choose one

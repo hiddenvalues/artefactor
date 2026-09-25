@@ -78,6 +78,30 @@ describe.skipIf(!runBrowserTests)("the design catalog in Chromium", { timeout: 1
     await page.close();
   });
 
+  it("closes a busy dialog preview on Escape and hands focus back to its launcher", async () => {
+    const { page, errors } = await open("index.html");
+    const launcher = page.getByRole("button", { name: "Open busy confirm" });
+    await launcher.click();
+    await page.getByRole("alertdialog").waitFor();
+    await page.keyboard.press("Escape");
+    await page.getByRole("alertdialog").waitFor({ state: "detached" });
+    expect(await launcher.evaluate((el) => el === document.activeElement)).toBe(true);
+    expect(errors).toEqual([]);
+    await page.close();
+  });
+
+  it("adds a collection created in the picker preview and selects it", async () => {
+    const { page, errors } = await open("components/add-to-collection-dialog.html");
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: /New collection/ }).click();
+    await dialog.getByRole("textbox").fill("Launch");
+    await dialog.getByRole("button", { name: "Create" }).click();
+    await dialog.getByRole("button", { name: "Add to Launch" }).waitFor();
+    expect(await dialog.getByRole("button", { name: /^Launch$/ }).count()).toBe(1);
+    expect(errors).toEqual([]);
+    await page.close();
+  });
+
   it("exports every preview as a standalone page carrying its design-sync card marker", async () => {
     for (const file of previews) {
       const id = previewId(file);
