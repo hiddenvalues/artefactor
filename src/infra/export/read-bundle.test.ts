@@ -204,4 +204,64 @@ describe("readBundle (S39)", () => {
     expect(read).toHaveLength(6);
     expect(read[0]).not.toHaveProperty("futureField");
   });
+
+  describe("a bundle changed after readBundle verified it", () => {
+    async function drain<T>(it: AsyncIterable<T>): Promise<T[]> {
+      const out: T[] = [];
+      for await (const r of it) out.push(r);
+      return out;
+    }
+
+    it("iterates an unchanged record file in full", async () => {
+      const bundle = await readBundle(copy());
+      expect(await drain(bundle.artefacts())).toHaveLength(6);
+    });
+
+    it("fails the iterator of a record file edited after verification", async () => {
+      const dir = copy();
+      const bundle = await readBundle(dir);
+      const artefacts = lines(dir, "artefacts.jsonl");
+      artefacts[0].title = "swapped in after verify"; // still schema-valid
+      writeLines(dir, "artefacts.jsonl", artefacts);
+      const err = await drain(bundle.artefacts()).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BundleError);
+      expect((err as BundleError).check).toBe("changed");
+      expect((err as BundleError).message).toContain("artefacts.jsonl");
+    });
+
+    it("fails the iterator of a record file replaced by a symlink after verification", async () => {
+      const dir = copy();
+      const bundle = await readBundle(dir);
+      const outside = join(seed.dir, `outside-${n++}`);
+      renameSync(join(dir, "views.jsonl"), outside);
+      symlinkSync(outside, join(dir, "views.jsonl"));
+      const err = await drain(bundle.views()).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BundleError);
+    });
+
+    it("readPayload returns the verified bytes of a payload", async () => {
+      const dir = copy();
+      const bundle = await readBundle(dir);
+      const [first] = await drain(bundle.artefacts());
+      const bytes = await bundle.readPayload(first!.payloadHash);
+      expect(Buffer.from(bytes).equals(readFileSync(bundle.payloadPath(first!.payloadHash)))).toBe(true);
+    });
+
+    it("readPayload rejects a payload altered after verification", async () => {
+      const dir = copy();
+      const bundle = await readBundle(dir);
+      const [first] = await drain(bundle.artefacts());
+      writeFileSync(join(dir, "payloads", first!.payloadHash), "<p>swapped</p>");
+      const err = await bundle.readPayload(first!.payloadHash).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BundleError);
+      expect((err as BundleError).check).toBe("changed");
+    });
+
+    it("readPayload rejects a hash the bundle doesn't hold", async () => {
+      const bundle = await readBundle(copy());
+      const err = await bundle.readPayload("0".repeat(64)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BundleError);
+      expect((err as BundleError).check).toBe("payload");
+    });
+  });
 });

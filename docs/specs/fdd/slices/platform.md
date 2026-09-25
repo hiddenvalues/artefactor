@@ -138,8 +138,10 @@ the humlytech → `artefactor.cloud` move. **Format and invariants DX1–DX5:
 
 - **Reader** (`src/infra/export/`): zod schemas for the manifest and each record type — the
   format's single definition — and `readBundle(dir)`, which validates the whole bundle (format +
-  major, schemas, counts, referential closure, payload hashes) and returns the manifest plus one
-  async iterator per record type. Exported for EM1.
+  major, schemas, counts, referential closure, payload hashes) and returns the manifest, one
+  async iterator per record type and `readPayload(hash)` — each re-proving on read that the bytes
+  are the verified ones (a record file or payload changed since verification throws `changed`).
+  Exported for EM1, which imports in one transaction.
 - **Writer** (`src/infra/export/`): `exportBundle({ sqlite, payloadStore, out })` reads every
   record in one read transaction (DX3), then copies each distinct payload under its sha256,
   hashing each artefact's file against its `payloadHash` (DX4). It writes into `<out>.partial`

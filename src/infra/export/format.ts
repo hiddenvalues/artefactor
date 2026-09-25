@@ -22,7 +22,9 @@ export type BundleCheck =
   | "count"
   | "duplicate"
   | "reference"
-  | "payload";
+  | "payload"
+  // A file the reader verified was different when it was read again.
+  | "changed";
 
 export class BundleError extends Error {
   constructor(

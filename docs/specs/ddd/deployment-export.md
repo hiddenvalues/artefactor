@@ -98,7 +98,14 @@ an artefact whose `payloadHash` names no payload file; any bundle entry that is 
 — the manifest, a record file or a payload that is not a regular file, or a `payloads/` that is not
 a real directory (a symbolic link is never followed); or a payload whose bytes don't hash to its
 name or whose size disagrees with an artefact's `payloadBytes` (DX4). It then hands back the
-manifest and one async iterator per record type.
+manifest, one async iterator per record type, and `readPayload(hash)`.
+
+Those read the bundle again, so they re-prove it is the bundle that was verified. `readBundle`
+records each record file's sha256; its iterator re-hashes the file as it streams and, once the
+file ends, throws (check `changed`) if the file differs. `readPayload` re-checks that the payload
+is still a regular file hashing to its name. Records are yielded before a file's end, so an
+importer consumes them inside **one transaction** and treats any throw as an abort — a bundle
+edited between verification and import then imports nothing.
 
 ## Versioning
 

@@ -24,10 +24,20 @@ import {
 // and major version (DX5), every record against its schema, counts, referential
 // closure and every payload's sha256 (DX4) — and rejects it with a BundleError
 // naming the failing check. The EE importer (EM1) reads bundles through this.
+//
+// What it hands back reads the bundle again, so it re-proves that the bytes are
+// the ones it verified: each record iterator re-hashes its file as it streams
+// and throws (`changed`) once the file ends if it differs from what was
+// verified, and `readPayload` re-hashes every payload it returns. A consumer
+// imports inside one transaction and treats a throw as an abort — records are
+// yielded before their file's end is reached.
 
 export type Bundle = {
   manifest: Manifest;
-  // Where a payload's bytes live, by the `payloadHash` an artefact names.
+  // A payload's verified bytes, by the `payloadHash` an artefact names.
+  readPayload(hash: string): Promise<Uint8Array>;
+  // Where a payload lives on disk. Reading it here bypasses the re-check —
+  // prefer readPayload.
   payloadPath(hash: string): string;
 } & { [K in RecordKind]: () => AsyncIterable<RecordsByKind[K]> };
 
@@ -49,10 +59,13 @@ export async function readBundle(dir: string): Promise<Bundle> {
   // payloadHash → the artefacts naming it, with the size each one records
   const payloadUses = new Map<string, { artefactId: string; bytes: number }[]>();
 
+  // record kind → the sha256 of the file as verified
+  const digests = new Map<RecordKind, string>();
+
   for (const kind of RECORD_KINDS) {
     const { file } = RECORD_FILES[kind];
     let count = 0;
-    for await (const { line, record } of readRecords(dir, kind)) {
+    for await (const { line, record } of readRecords(dir, kind, { seen: (d) => digests.set(kind, d) })) {
       count++;
       const r = record as Record<string, unknown> & RecordsByKind[RecordKind];
       if (kind in ids && typeof r.id === "string") {
@@ -129,14 +142,15 @@ export async function readBundle(dir: string): Promise<Bundle> {
     }
   }
 
-  await verifyPayloads(dir, manifest, payloadUses);
+  const payloads = await verifyPayloads(dir, manifest, payloadUses);
 
   const bundle = {
     manifest,
+    readPayload: (hash: string) => readPayload(dir, payloads, hash),
     payloadPath: (hash: string) => join(dir, PAYLOAD_DIR, hash),
   } as Bundle;
   for (const kind of RECORD_KINDS) {
-    (bundle as Record<RecordKind, unknown>)[kind] = () => records(dir, kind);
+    (bundle as Record<RecordKind, unknown>)[kind] = () => records(dir, kind, digests.get(kind)!);
   }
   return bundle;
 }
@@ -168,15 +182,21 @@ async function readManifest(dir: string): Promise<Manifest> {
   return parsed.data;
 }
 
-// Every line of a record file, parsed and validated; `line` is 1-based.
+// Every line of a record file, parsed and validated; `line` is 1-based. The
+// file's sha256 is computed as it streams: handed to `seen` once the file ends,
+// and compared with `expect` there (a mismatch throws `changed`).
 async function* readRecords<K extends RecordKind>(
   dir: string,
   kind: K,
+  digest: { seen?: (sha256: string) => void; expect?: string } = {},
 ): AsyncGenerator<{ line: number; record: RecordsByKind[K] }> {
   const { file, schema } = RECORD_FILES[kind];
   const path = join(dir, file);
   await assertEntry(path, "file", "schema", file);
-  const lines = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
+  const stream = createReadStream(path);
+  const hash = createHash("sha256");
+  stream.on("data", (chunk) => hash.update(chunk));
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
   let line = 0;
   for await (const text of lines) {
     line++;
@@ -192,10 +212,34 @@ async function* readRecords<K extends RecordKind>(
     }
     yield { line, record: parsed.data };
   }
+  const sha256 = hash.digest("hex");
+  digest.seen?.(sha256);
+  if (digest.expect !== undefined && sha256 !== digest.expect) {
+    throw new BundleError("changed", `${file} changed after readBundle verified it`);
+  }
 }
 
-async function* records<K extends RecordKind>(dir: string, kind: K): AsyncGenerator<RecordsByKind[K]> {
-  for await (const { record } of readRecords(dir, kind)) yield record;
+async function* records<K extends RecordKind>(
+  dir: string,
+  kind: K,
+  verified: string,
+): AsyncGenerator<RecordsByKind[K]> {
+  for await (const { record } of readRecords(dir, kind, { expect: verified })) yield record;
+}
+
+// A payload's bytes, re-checked: still a regular file among the verified ones,
+// still hashing to its name.
+async function readPayload(dir: string, verified: Set<string>, hash: string): Promise<Uint8Array> {
+  if (!verified.has(hash)) {
+    throw new BundleError("payload", `${PAYLOAD_DIR}/${hash} is not a payload of this bundle`);
+  }
+  const path = join(dir, PAYLOAD_DIR, hash);
+  await assertEntry(path, "file", "changed", `${PAYLOAD_DIR}/${hash}`);
+  const bytes = new Uint8Array(await readFile(path));
+  if (createHash("sha256").update(bytes).digest("hex") !== hash) {
+    throw new BundleError("changed", `${PAYLOAD_DIR}/${hash} changed after readBundle verified it`);
+  }
+  return bytes;
 }
 
 // DX4 — each payload file hashes to its name, the manifest counts them, and
@@ -204,7 +248,7 @@ async function verifyPayloads(
   dir: string,
   manifest: Manifest,
   uses: Map<string, { artefactId: string; bytes: number }[]>,
-): Promise<void> {
+): Promise<Set<string>> {
   const root = join(dir, PAYLOAD_DIR);
   await assertEntry(root, "directory", "payload", `${PAYLOAD_DIR}/`);
   const names = await readdir(root);
@@ -238,6 +282,7 @@ async function verifyPayloads(
       }
     }
   }
+  return new Set(sizes.keys());
 }
 
 // Every entry the reader opens must be what it claims, inside the bundle: a
