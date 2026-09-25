@@ -58,9 +58,11 @@ export function createRendererApp(options: RendererAppOptions) {
       state = { kind: "ready" };
       return;
     }
-    const exitAt = Math.max(uptimeMs(), minUptimeMs);
+    // One clock reading for both, so a job past the minimum can't get a negative delay.
+    const now = uptimeMs();
+    const exitAt = Math.max(now, minUptimeMs);
     state = { kind: "draining", exitAt };
-    setTimeout(() => exit(0), exitAt - uptimeMs());
+    setTimeout(() => exit(0), exitAt - now);
   };
 
   const refuse = (retryAfterS: number) =>

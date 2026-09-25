@@ -228,6 +228,29 @@ describe("renderer role (S37, AH29)", () => {
       expect(r.engine.renders).toBe(1);
     });
 
+    it("after a job past the minimum uptime: exits at once, with a zero (never negative) delay", async () => {
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+      // Uptime 20 s, and the clock moves 1 ms on every later reading.
+      let now = 20_000;
+      const exit = vi.fn();
+      const r = createRendererApp({
+        engine: fakeEngine(),
+        exitAfterJob: true,
+        minUptimeMs: 10_000,
+        uptimeMs: () => now++,
+        exit,
+        log: () => {},
+      });
+      await r.ready;
+
+      expect((await post(r.app, "<p>late</p>")).status).toBe(200);
+      expect(setTimeoutSpy).toHaveBeenCalledOnce();
+      expect(setTimeoutSpy.mock.calls[0]![1]).toBe(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(exit).toHaveBeenCalledExactlyOnceWith(0);
+    });
+
     it("drains after a failed render too", async () => {
       const engine = fakeEngine();
       engine.failWith = new Error("page crashed");
