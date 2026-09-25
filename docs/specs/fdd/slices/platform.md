@@ -138,3 +138,46 @@ the EE importer (EM1 — Import an OSS export bundle as a cloud org) consumes �
 the humlytech → `artefactor.cloud` move.
 
 - **Boundary:** **OSS**.
+
+### S43 — React client on stock shadcn/ui
+
+- **Status:** in progress
+- **Depends on:** S0
+- **Linear:** ALI-383
+
+A behaviour-preserving re-platform of the SPA (`src/client`) from Svelte 5 to **React** on stock
+**shadcn/ui** (Tailwind v4, the default theme), so designs made in Claude design (which works in
+React) land without a hand translation. It touches no domain invariant: the BFF contracts
+(`src/shared`, `lib/api.ts`), the server, the domain and the serving runtime are unchanged.
+"Behaviour-preserving" means the same flows, the same copy and the same persisted UI preferences;
+only the look changes.
+
+- **Behaviour suite first.** `src/client/e2e/app.browser.test.ts` drives the built client in a
+  real Chromium (Vitest + `playwright-core`, the S35/S36 pattern) against the real app on a
+  throwaway SQLite database. It was written and made to pass on the Svelte app before any port
+  code, then passes unchanged on the React app.
+- **Foundation.** `@vitejs/plugin-react` replaces the Svelte plugin; shadcn/ui components live
+  under `src/client/lib/components/ui/` (`components.json`, `cn` in `lib/utils.ts`); the `$lib`
+  alias, the dev proxy and port 5273 stay. `pnpm check` is `tsc` for the client and the server.
+- **Tokens.** One tokens file (`src/client/app.css`): shadcn's stock CSS variables plus the
+  app-specific tokens that carry meaning — the five artefact-kind colours and tints (mirroring
+  `src/shared/kind-presentation.ts`, which the server-rendered shell keeps using) and the six
+  collection hues.
+- **Port.** An app shell (TopBar + Sidebar + layout) and one component per screen: `Dashboard`,
+  `SharedGallery`, `CollectionPage`, `Archive`, `AuthScreen`. Menus are `DropdownMenu`, modals
+  `Dialog`, the delete confirmation `AlertDialog`, the toast `Sonner`, the visibility picker
+  `Popover`; icons come from `lucide-react`; auth from `better-auth/react`. Persisted UI
+  preferences keep their `localStorage` keys (`artefactor:` + view/density/kind/access/sort/sidebar).
+- **Guardrail.** `pnpm lint` (ESLint, CI) bans inline `style` props and raw hex/rgb/hsl colour
+  literals in `src/client`; a `style` whose keys are all CSS custom properties
+  (`style={{ "--hue": … }}`) is the one allowed form.
+
+**Acceptance:** the behaviour suite passes (auth, upload + cap error, edit, visibility + share
+link + copy toast, archive + undo + restore, permanent delete, collections + breadcrumb + tree
+expand/collapse + archive, manage access, bookmarks, "Shared with you" in grid and list, filters
+surviving a reload, keyboard: Esc closes menus and dialogs, Tab reaches controls with a visible
+focus ring); the lint fails on `style={{ color: "#fff" }}` and passes on `style={{ "--hue": x }}`;
+`pnpm build` and `pnpm check` pass and `dist/client` carries no Svelte runtime.
+
+- **Boundary:** **OSS** (core client). Up-sync is held until the design system stabilizes
+  (ALI-382).
