@@ -387,7 +387,9 @@ reply path the firewall outside it admits.
    restart can send the VM's internet traffic into the private network, where outgoing Drop cuts
    it off.
 
-### 9.2 Host prep, on the VM as root
+### 9.2 Host prep
+
+As root on the VM, except the copies, which run from a checkout.
 
 1. **Swap** — Chromium's peaks are short, and the host OOM killer is worse than a slow render:
 
@@ -402,9 +404,9 @@ reply path the firewall outside it admits.
    intact:
 
    ```bash
-   mkdir -p /etc/artefactor
-   # from a checkout: scp deploy/chromium-seccomp.json root@<renderer-public-ip>:/etc/artefactor/
-   sha256sum /etc/artefactor/chromium-seccomp.json   # must match the repo's copy
+   ssh root@<renderer-public-ip> mkdir -p /etc/artefactor                          # from a checkout
+   scp deploy/chromium-seccomp.json root@<renderer-public-ip>:/etc/artefactor/     # from a checkout
+   sha256sum /etc/artefactor/chromium-seccomp.json   # on the VM: must match the repo's copy
    ```
 
 3. **The renderer's network**, created by hand so Coolify never creates or changes it: bridge
@@ -419,11 +421,17 @@ reply path the firewall outside it admits.
 
 4. **The egress rules** — [`deploy/renderer-egress.sh`](../deploy/renderer-egress.sh), unchanged:
    public internet and DNS allowed, every private and link-local range dropped (including
-   `169.254.169.254`), and nothing new into the host itself. Install it, and re-run it at every
-   boot (`DOCKER-USER` survives a Docker restart, not a reboot):
+   `169.254.169.254`), and nothing new into the host itself. Copy it over from a checkout:
 
    ```bash
-   install -m 0755 renderer-egress.sh /usr/local/sbin/artefactor-renderer-egress.sh
+   scp deploy/renderer-egress.sh root@<renderer-public-ip>:/usr/local/sbin/artefactor-renderer-egress.sh
+   ```
+
+   Then, on the VM, make it executable and re-run it at every boot (`DOCKER-USER` survives a
+   Docker restart, not a reboot):
+
+   ```bash
+   chmod 0755 /usr/local/sbin/artefactor-renderer-egress.sh
    cat > /etc/systemd/system/artefactor-renderer-egress.service <<'UNIT'
    [Unit]
    Description=Artefactor renderer egress rules (DOCKER-USER, INPUT)
