@@ -16,7 +16,8 @@ built on an unfinished one) or when this catalog and the context files drift apa
 [`../README.md`](../README.md).
 
 Acceptance criteria are the seed for each slice's unit tests. Invariant numbers reference
-`ddd/artefact-hosting.md` (AH), `ddd/identity-access.md` (IA), and `ddd/artefact-data.md` (AD).
+`ddd/artefact-hosting.md` (AH), `ddd/identity-access.md` (IA), `ddd/artefact-data.md` (AD), and
+`ddd/deployment-export.md` (DX).
 
 ## Contexts
 

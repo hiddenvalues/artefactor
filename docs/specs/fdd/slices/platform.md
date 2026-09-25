@@ -123,20 +123,50 @@ superset can wire a different backend (Postgres) without forking the composition
 
 ### S39 — Deployment export bundle
 
-- **Status:** specced
-- **Depends on:** S1, S2, S11, S21, S25
+- **Status:** in progress
+- **Depends on:** S1, S2, S11, S16, S21, S25, S27, S32a, S41
 - **Linear:** ALI-351
 
-*Not yet specced in detail; `/refine` pins the bundle format and acceptance.*
-
 An operator command that writes a whole deployment's state as one self-describing, versioned
-**bundle**: Accounts (id, email, name — never credentials or sessions), every artefact with its
-payload file, data entries, collections and their tree, access lists, slugs, link state and views.
-Read-only against the source, taken from one consistent snapshot, and verifiable (payload hashes
-travel with the bundle). It is a self-host backup/move format in its own right, and the contract
+**export bundle** — Accounts (identity only, never credentials), every artefact with its payload,
+access lists, collections and their tree, data entries, views and bookmarks, with slugs,
+visibility and link gates intact. Read-only against the source, taken from one consistent
+snapshot, and verifiable. It is a self-host backup/move format in its own right, and the contract
 the EE importer (EM1 — Import an OSS export bundle as a cloud org) consumes — the first user being
-the humlytech → `artefactor.cloud` move.
+the humlytech → `artefactor.cloud` move. **Format and invariants DX1–DX5:
+[`ddd/deployment-export.md`](../../ddd/deployment-export.md).**
 
+- **Reader** (`src/infra/export/`): zod schemas for the manifest and each record type — the
+  format's single definition — and `readBundle(dir)`, which validates the whole bundle (format +
+  major, schemas, counts, referential closure, payload hashes) and returns the manifest plus one
+  async iterator per record type. Exported for EM1.
+- **Writer** (`src/infra/export/`): `exportBundle({ sqlite, payloadStore, out })` reads every
+  record in one read transaction (DX3), then copies each distinct payload under its sha256,
+  hashing each artefact's file against its `payloadHash` (DX4). It writes into `<out>.partial`
+  and renames to `<out>` only on success, and refuses an `out` that exists and is non-empty.
+- **CLI** (`src/infra/export/cli.ts`): `pnpm export:bundle --out <dir>` exports the deployment
+  named by `DATABASE_PATH` / `ARTEFACTOR_PAYLOAD_DIR` (the database opened read-only);
+  `--verify <dir>` runs `readBundle` and prints the counts. Any failure exits non-zero, naming the
+  failing check. `build:server` bundles it to `dist/server/export.js`, so an operator runs
+  `node dist/server/export.js --out /data/export-…` inside the image (as the `node` user).
+- **Acceptance:** exporting a seeded deployment (two Accounts, artefacts across all four
+  visibility tiers incl. an archived one, a `selected` access list, a gated public artefact, a
+  two-level collection tree with a root access list, data entries from two authors, views, both
+  bookmark kinds) → `readBundle` returns records equal to the seed, field for field, with
+  matching manifest counts; no password hash, session, verification or OAuth value appears
+  anywhere in the bundle (DX2); a gated artefact's `linkGate.passwordHash` equals the stored
+  scrypt hash, an ungated one's `linkGate` is `null`; the source DB file and payload directory are
+  byte-identical before and after (DX1); identical HTML → one payload file named by both rows; a
+  missing or altered payload fails the export with only `<out>.partial` left (DX4); a write
+  committed after the snapshot opened is absent and the bundle still verifies (DX3); `readBundle`
+  rejects an unknown major, a missing manifest, a schema failure, a count mismatch, a dangling
+  reference and a payload that doesn't hash to its name, and accepts an unknown extra field and an
+  unknown extra `.jsonl` under a known major (DX5); two exports of an unchanged deployment differ
+  only in `manifest.exportedAt`; a non-empty `--out` is refused with nothing written; `--verify`
+  exits 0 with the counts on a good bundle and non-zero naming the check on a tampered one.
+- **Not in scope:** any importer (EM1; an OSS → OSS restore can follow without a format change),
+  exporting from the Postgres adapter, an HTTP route or UI, incremental exports, encryption,
+  signing or compression, and S32b's collection link-gate fields (a later `1.1`).
 - **Boundary:** **OSS**.
 
 ### S43 — React client on stock shadcn/ui
