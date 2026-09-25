@@ -168,8 +168,8 @@ only the look changes.
   `Dialog`, the delete confirmation `AlertDialog`, the toast `Sonner`, the visibility picker
   `Popover`; icons come from `lucide-react`; auth from `better-auth/react`. Persisted UI
   preferences keep their `localStorage` keys (`artefactor:` + view/density/kind/access/sort/sidebar).
-  Grid cards keep the Svelte client's hover lift (rise, scale, deeper shadow; reduced motion keeps
-  only the shadow); list rows stay still.
+  Grid cards keep the Svelte client's hover lift (rise, scale, deeper shadow, tinted border;
+  reduced motion drops the rise and scale, keeping the shadow and border); list rows stay still.
 - **Guardrail.** `pnpm lint` (ESLint, CI) bans inline `style` props and raw hex/rgb/hsl colour
   literals in `src/client`; a `style` whose keys are all CSS custom properties
   (`style={{ "--hue": … }}`) is the one allowed form.
