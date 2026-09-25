@@ -41,7 +41,7 @@ is part of the format):
 | `views.jsonl` | `id, artefactId, viewerId, viewedAt` |
 | `artefact-bookmarks.jsonl` | `userId, artefactId, createdAt` |
 | `collection-bookmarks.jsonl` | `userId, collectionId, createdAt` |
-| `payloads/<sha256>` | each distinct HTML payload once, bytes as stored — a regular file, never a symlink |
+| `payloads/<sha256>` | each distinct HTML payload once, bytes as stored |
 
 - `counts` has one entry per record file — `accounts, artefacts, artefactAccess, collections,
   collectionAccess, dataEntries, views, artefactBookmarks, collectionBookmarks` — plus
@@ -57,6 +57,8 @@ is part of the format):
   (the bundle addresses payloads by hash), `tenantId` (a target assigns its own), and every
   credential (DX2).
 - **Archived** artefacts and collections are included, with their `status` and `archivedAt`.
+- **Self-contained.** Every entry is a regular file or a real directory inside the bundle; a
+  symbolic link anywhere in it makes the bundle invalid.
 - **Stable order**, so two exports of an unchanged deployment are byte-identical apart from
   `manifest.exportedAt`: collections parents-before-children (by depth, then id); every other
   file by id, or by its key columns for keyless rows (access lists and bookmarks).
@@ -92,10 +94,11 @@ failing check) on: a missing or malformed manifest, a foreign `format`, an unkno
 (DX5); a missing record file or a record failing its schema; a count that disagrees with the
 manifest; a dangling reference — every `ownerId`/`userId`/`authorId`/`viewerId` must be an
 exported Account, and every `artefactId`/`collectionId`/`parentId`/`rootId` an exported record;
-an artefact whose `payloadHash` names no payload file; a payload entry that is not a regular file
-(a symlink or a directory); or a payload whose bytes don't hash to its name or whose size
-disagrees with an artefact's `payloadBytes` (DX4). It then hands back the manifest and one async
-iterator per record type.
+an artefact whose `payloadHash` names no payload file; any bundle entry that is not what it claims
+— the manifest, a record file or a payload that is not a regular file, or a `payloads/` that is not
+a real directory (a symbolic link is never followed); or a payload whose bytes don't hash to its
+name or whose size disagrees with an artefact's `payloadBytes` (DX4). It then hands back the
+manifest and one async iterator per record type.
 
 ## Versioning
 

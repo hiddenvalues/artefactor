@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, readdir, stat } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { z } from "zod";
@@ -13,6 +13,7 @@ import {
   RECORD_KINDS,
   SUPPORTED_MAJOR,
   manifestSchema,
+  type BundleCheck,
   type Manifest,
   type RecordKind,
   type RecordsByKind,
@@ -143,9 +144,11 @@ export async function readBundle(dir: string): Promise<Bundle> {
 async function readManifest(dir: string): Promise<Manifest> {
   let raw: unknown;
   try {
+    await assertEntry(join(dir, MANIFEST_FILE), "file", "manifest", MANIFEST_FILE);
     raw = JSON.parse(await readFile(join(dir, MANIFEST_FILE), "utf8"));
   } catch (e) {
-    throw new BundleError("manifest", `${MANIFEST_FILE} is missing or not JSON (${String(e)})`);
+    if (e instanceof BundleError) throw e;
+    throw new BundleError("manifest", `${MANIFEST_FILE} is not JSON (${String(e)})`);
   }
   const head = raw as { format?: unknown; version?: unknown } | null;
   if (typeof head !== "object" || head === null || head.format !== FORMAT) {
@@ -172,9 +175,7 @@ async function* readRecords<K extends RecordKind>(
 ): AsyncGenerator<{ line: number; record: RecordsByKind[K] }> {
   const { file, schema } = RECORD_FILES[kind];
   const path = join(dir, file);
-  if (!(await stat(path).catch(() => undefined))?.isFile()) {
-    throw new BundleError("schema", `${file} is missing`);
-  }
+  await assertEntry(path, "file", "schema", file);
   const lines = createInterface({ input: createReadStream(path, "utf8"), crlfDelay: Infinity });
   let line = 0;
   for await (const text of lines) {
@@ -205,17 +206,12 @@ async function verifyPayloads(
   uses: Map<string, { artefactId: string; bytes: number }[]>,
 ): Promise<void> {
   const root = join(dir, PAYLOAD_DIR);
-  const names = await readdir(root).catch(() => {
-    throw new BundleError("payload", `${PAYLOAD_DIR}/ is missing`);
-  });
+  await assertEntry(root, "directory", "payload", `${PAYLOAD_DIR}/`);
+  const names = await readdir(root);
   const sizes = new Map<string, number>();
   for (const name of names.sort()) {
     const path = join(root, name);
-    // A payload is a regular file inside the bundle — never a symlink to bytes
-    // elsewhere, which would verify a bundle that doesn't carry its payload.
-    if (!(await lstat(path)).isFile()) {
-      throw new BundleError("payload", `${PAYLOAD_DIR}/${name} is not a regular file`);
-    }
+    await assertEntry(path, "file", "payload", `${PAYLOAD_DIR}/${name}`);
     const { hash, bytes } = await hashFile(path);
     if (hash !== name) {
       throw new BundleError("payload", `${PAYLOAD_DIR}/${name} hashes to ${hash}, not its name`);
@@ -241,6 +237,26 @@ async function verifyPayloads(
         );
       }
     }
+  }
+}
+
+// Every entry the reader opens must be what it claims, inside the bundle: a
+// regular file or a real directory, never a symlink (which could point at the
+// right bytes elsewhere and verify a bundle that doesn't carry them, DX4).
+async function assertEntry(
+  path: string,
+  kind: "file" | "directory",
+  check: BundleCheck,
+  label: string,
+): Promise<void> {
+  const info = await lstat(path).catch(() => undefined);
+  if (!info) throw new BundleError(check, `${label} is missing`);
+  const ok = kind === "file" ? info.isFile() : info.isDirectory();
+  if (!ok) {
+    throw new BundleError(
+      check,
+      `${label} is not a ${kind === "file" ? "regular file" : "directory"}${info.isSymbolicLink() ? " (a symbolic link)" : ""}`,
+    );
   }
 }
 

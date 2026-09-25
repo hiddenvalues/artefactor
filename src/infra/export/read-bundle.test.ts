@@ -142,6 +142,34 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain(name);
   });
 
+  it("rejects a payloads/ directory that is a symbolic link (DX4)", async () => {
+    const dir = copy();
+    const outside = join(seed.dir, `outside-payloads-${n++}`);
+    renameSync(join(dir, "payloads"), outside);
+    symlinkSync(outside, join(dir, "payloads"));
+    const err = await rejection(dir);
+    expect(err.check).toBe("payload");
+    expect(err.message).toContain("payloads/");
+  });
+
+  it("rejects a missing payloads/ directory", async () => {
+    const dir = copy();
+    rmSync(join(dir, "payloads"), { recursive: true });
+    expect((await rejection(dir)).check).toBe("payload");
+  });
+
+  it.each(["manifest.json", "artefacts.jsonl"])(
+    "rejects %s when it is a symbolic link, even to the right content",
+    async (file) => {
+      const dir = copy();
+      const outside = join(seed.dir, `outside-${n++}`);
+      renameSync(join(dir, file), outside);
+      symlinkSync(outside, join(dir, file));
+      const err = await rejection(dir);
+      expect(err.message).toContain(file);
+    },
+  );
+
   it("rejects a payload entry that is a directory, as a BundleError", async () => {
     const dir = copy();
     mkdirSync(join(dir, "payloads", "a".repeat(64)));
