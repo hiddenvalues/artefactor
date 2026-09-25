@@ -65,7 +65,7 @@ export async function exportBundle(input: ExportBundleInput): Promise<Manifest> 
   // Owner-only throughout: the bundle is sensitive operator material, whatever
   // the ambient umask. `partial` is created, never reused, so no existing
   // directory is ever deleted or written into.
-  await mkdir(dirname(partial), { recursive: true });
+  await mkdir(dirname(partial), { recursive: true, mode: DIR_MODE });
   await mkdir(partial, { mode: DIR_MODE });
   await mkdir(join(partial, PAYLOAD_DIR), { mode: DIR_MODE });
 

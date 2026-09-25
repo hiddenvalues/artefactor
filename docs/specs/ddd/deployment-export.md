@@ -21,7 +21,8 @@ A bundle is **sensitive operator material**. It carries private artefacts, every
 data, email addresses and the scrypt hashes of link-gate passwords. It never carries an Account
 credential (DX2), but it must be stored and moved like a database backup: never published, never
 left on a shared volume. The writer creates it **owner-only** whatever the ambient umask —
-directories `0700`, files `0600` — including a failed run's `<out>.partial`.
+directories `0700` (including any missing ancestors of `<out>` it creates), files `0600` —
+including a failed run's `<out>.partial`.
 
 ## Format — `artefactor-export` 1.0
 
@@ -40,7 +41,7 @@ is part of the format):
 | `views.jsonl` | `id, artefactId, viewerId, viewedAt` |
 | `artefact-bookmarks.jsonl` | `userId, artefactId, createdAt` |
 | `collection-bookmarks.jsonl` | `userId, collectionId, createdAt` |
-| `payloads/<sha256>` | each distinct HTML payload once, bytes as stored |
+| `payloads/<sha256>` | each distinct HTML payload once, bytes as stored — a regular file, never a symlink |
 
 - `counts` has one entry per record file — `accounts, artefacts, artefactAccess, collections,
   collectionAccess, dataEntries, views, artefactBookmarks, collectionBookmarks` — plus
@@ -91,9 +92,10 @@ failing check) on: a missing or malformed manifest, a foreign `format`, an unkno
 (DX5); a missing record file or a record failing its schema; a count that disagrees with the
 manifest; a dangling reference — every `ownerId`/`userId`/`authorId`/`viewerId` must be an
 exported Account, and every `artefactId`/`collectionId`/`parentId`/`rootId` an exported record;
-an artefact whose `payloadHash` names no payload file; or a payload whose bytes don't hash to
-its name or whose size disagrees with an artefact's `payloadBytes` (DX4). It then hands back the
-manifest and one async iterator per record type.
+an artefact whose `payloadHash` names no payload file; a payload entry that is not a regular file
+(a symlink or a directory); or a payload whose bytes don't hash to its name or whose size
+disagrees with an artefact's `payloadBytes` (DX4). It then hands back the manifest and one async
+iterator per record type.
 
 ## Versioning
 

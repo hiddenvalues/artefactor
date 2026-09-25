@@ -1,4 +1,4 @@
-import { cpSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BundleError } from "./format";
@@ -129,6 +129,23 @@ describe("readBundle (S39)", () => {
     const err = await rejection(dir);
     expect(err.check).toBe("payload");
     expect(err.message).toContain(name);
+  });
+
+  it("rejects a payload that is a symbolic link, even to the right bytes (DX4)", async () => {
+    const dir = copy();
+    const name = readdirSync(join(dir, "payloads"))[0]!;
+    const outside = join(seed.dir, `outside-${n++}`);
+    renameSync(join(dir, "payloads", name), outside);
+    symlinkSync(outside, join(dir, "payloads", name));
+    const err = await rejection(dir);
+    expect(err.check).toBe("payload");
+    expect(err.message).toContain(name);
+  });
+
+  it("rejects a payload entry that is a directory, as a BundleError", async () => {
+    const dir = copy();
+    mkdirSync(join(dir, "payloads", "a".repeat(64)));
+    expect((await rejection(dir)).check).toBe("payload");
   });
 
   it("rejects an artefact whose payload file is missing (DX4)", async () => {

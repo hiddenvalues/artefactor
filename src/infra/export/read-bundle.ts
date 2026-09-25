@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { z } from "zod";
@@ -210,7 +210,13 @@ async function verifyPayloads(
   });
   const sizes = new Map<string, number>();
   for (const name of names.sort()) {
-    const { hash, bytes } = await hashFile(join(root, name));
+    const path = join(root, name);
+    // A payload is a regular file inside the bundle — never a symlink to bytes
+    // elsewhere, which would verify a bundle that doesn't carry its payload.
+    if (!(await lstat(path)).isFile()) {
+      throw new BundleError("payload", `${PAYLOAD_DIR}/${name} is not a regular file`);
+    }
+    const { hash, bytes } = await hashFile(path);
     if (hash !== name) {
       throw new BundleError("payload", `${PAYLOAD_DIR}/${name} hashes to ${hash}, not its name`);
     }

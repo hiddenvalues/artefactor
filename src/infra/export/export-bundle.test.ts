@@ -249,6 +249,19 @@ describe("exportBundle — output directory", () => {
     for (const f of filesUnder(out)) expect(mode(f), f).toBe(0o600);
   });
 
+  it("creates missing ancestors of out owner-only too", async () => {
+    const seed = await seedDeployment();
+    const out = join(seed.dir, "new-parent", "nested", "bundle");
+    const umask = process.umask(0o000);
+    try {
+      await exportOf(seed, out);
+    } finally {
+      process.umask(umask);
+    }
+    expect(statSync(join(seed.dir, "new-parent")).mode & 0o777).toBe(0o700);
+    expect(statSync(join(seed.dir, "new-parent", "nested")).mode & 0o777).toBe(0o700);
+  });
+
   it("writes into an existing empty out directory", async () => {
     const seed = await seedDeployment();
     const out = join(seed.dir, "empty");
