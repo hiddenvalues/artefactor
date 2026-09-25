@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1
+# Needs BuildKit (the default builder in current Docker and in buildx): the
+# runtime stage's Chromium step uses `RUN --mount`.
 
-# ---- build stage ----------------------------------------------------------
-FROM node:26-bookworm-slim AS build
+# ---- deps stage -----------------------------------------------------------
+# Only the package manifests, so this stage — and the Chromium layer that
+# bind-mounts it below — is rebuilt when the lockfile changes, not per commit.
+FROM node:26-bookworm-slim AS deps
 WORKDIR /app
 
 # Toolchain for compiling better-sqlite3's native addon.
@@ -17,6 +21,8 @@ RUN npm install -g pnpm@11
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile && pnpm approve-builds --all
 
+# ---- build stage ----------------------------------------------------------
+FROM deps AS build
 COPY . .
 RUN pnpm build
 # Drop dev dependencies but keep the compiled native modules. `CI=true` is what
@@ -36,13 +42,8 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends curl gosu \
   && rm -rf /var/lib/apt/lists/*
 
-# Stamp the build commit (passed by CI as --build-arg GIT_SHA=<sha>); surfaced at
-# GET /health so a deploy can be confirmed against the shipped commit.
-ARG GIT_SHA=dev
-
 ENV NODE_ENV=production \
     PORT=3000 \
-    GIT_SHA=${GIT_SHA} \
     DATABASE_PATH=/data/artefactor.db \
     ARTEFACTOR_PAYLOAD_DIR=/data/payloads \
     ARTEFACTOR_THUMBNAIL_DIR=/data/thumbnails \
@@ -51,16 +52,23 @@ ENV NODE_ENV=production \
     MIGRATIONS_DIR=/app/migrations \
     AUTHORING_GUIDE_PATH=/app/skills/artefactor/SKILL.md
 
-COPY --from=build /app/node_modules ./node_modules
 # S35/S37 — headless Chromium (plus its system libraries) for artefact card
 # thumbnails. Installed as root into PLAYWRIGHT_BROWSERS_PATH and left readable
 # by everyone, so the unprivileged renderer user can launch it. It is used
 # **only** by the renderer role (ARTEFACTOR_ROLE=renderer, AH29): the app role
 # never starts a browser, and points at the renderer with ARTEFACTOR_RENDERER_URL.
 # Without a renderer, cards show the kind placeholder.
-RUN node node_modules/playwright-core/cli.js install --with-deps chromium-headless-shell \
+# This ~600 MB layer sits before every `COPY --from=build` and before
+# `ARG GIT_SHA`, and runs playwright-core from a bind mount of the `deps` stage
+# (which copies nothing into the layer), so its cache key is the base image plus
+# the lockfile only: the build stage's node_modules changes on every build
+# (`pnpm prune` stamps its state files), and GIT_SHA on every commit.
+RUN --mount=type=bind,from=deps,source=/app/node_modules,target=/tmp/deps \
+    node /tmp/deps/playwright-core/cli.js install --with-deps chromium-headless-shell \
   && rm -rf /var/lib/apt/lists/* \
   && chmod -R a+rX /ms-playwright
+
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/infra/db/migrations ./migrations
 # The authoring skill is served at runtime by the MCP `get_authoring_guide` tool
@@ -69,6 +77,13 @@ COPY --from=build /app/skills ./skills
 COPY --from=build /app/package.json ./package.json
 COPY docker-entrypoint.sh ./
 RUN chmod +x docker-entrypoint.sh
+
+# Stamp the build commit (passed by CI as --build-arg GIT_SHA=<sha>); surfaced at
+# GET /health so a deploy can be confirmed against the shipped commit. It comes
+# after the last RUN: an ARG in scope keys every later RUN's cache, and this one
+# changes on every commit.
+ARG GIT_SHA=dev
+ENV GIT_SHA=${GIT_SHA}
 
 # The SQLite DB file, artefact payloads and thumbnails must live on a persistent
 # volume mounted at /data (Coolify: an explicit named volume); the entrypoint's
