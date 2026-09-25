@@ -1,4 +1,5 @@
 import { cpSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BundleError } from "./format";
@@ -238,6 +239,26 @@ describe("readBundle (S39)", () => {
       const err = await drain(bundle.views()).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(BundleError);
     });
+
+    it("fails, rather than hangs, on a record file swapped for a FIFO after verification", async () => {
+      const dir = copy();
+      const bundle = await readBundle(dir);
+      rmSync(join(dir, "views.jsonl"));
+      execFileSync("mkfifo", [join(dir, "views.jsonl")]);
+      const err = await drain(bundle.views()).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BundleError);
+    }, 5000);
+
+    it("readPayload fails, rather than hangs, on a payload swapped for a FIFO", async () => {
+      const dir = copy();
+      const bundle = await readBundle(dir);
+      const [first] = await drain(bundle.artefacts());
+      rmSync(join(dir, "payloads", first!.payloadHash));
+      execFileSync("mkfifo", [join(dir, "payloads", first!.payloadHash)]);
+      const err = await bundle.readPayload(first!.payloadHash).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(BundleError);
+      expect((err as BundleError).check).toBe("changed");
+    }, 5000);
 
     it("readPayload returns the verified bytes of a payload", async () => {
       const dir = copy();

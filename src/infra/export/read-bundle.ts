@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readdir, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type { z } from "zod";
@@ -158,8 +158,12 @@ export async function readBundle(dir: string): Promise<Bundle> {
 async function readManifest(dir: string): Promise<Manifest> {
   let raw: unknown;
   try {
-    await assertEntry(join(dir, MANIFEST_FILE), "file", "manifest", MANIFEST_FILE);
-    raw = JSON.parse(await readFile(join(dir, MANIFEST_FILE), "utf8"));
+    const handle = await openFile(join(dir, MANIFEST_FILE), "manifest", MANIFEST_FILE);
+    try {
+      raw = JSON.parse(await handle.readFile("utf8"));
+    } finally {
+      await handle.close();
+    }
   } catch (e) {
     if (e instanceof BundleError) throw e;
     throw new BundleError("manifest", `${MANIFEST_FILE} is not JSON (${String(e)})`);
@@ -192,8 +196,7 @@ async function* readRecords<K extends RecordKind>(
 ): AsyncGenerator<{ line: number; record: RecordsByKind[K] }> {
   const { file, schema } = RECORD_FILES[kind];
   const path = join(dir, file);
-  await assertEntry(path, "file", "schema", file);
-  const stream = createReadStream(path);
+  const stream = (await openFile(path, "schema", file)).createReadStream({ autoClose: true });
   const hash = createHash("sha256");
   stream.on("data", (chunk) => hash.update(chunk));
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -233,13 +236,16 @@ async function readPayload(dir: string, verified: Set<string>, hash: string): Pr
   if (!verified.has(hash)) {
     throw new BundleError("payload", `${PAYLOAD_DIR}/${hash} is not a payload of this bundle`);
   }
-  const path = join(dir, PAYLOAD_DIR, hash);
-  await assertEntry(path, "file", "changed", `${PAYLOAD_DIR}/${hash}`);
-  const bytes = new Uint8Array(await readFile(path));
-  if (createHash("sha256").update(bytes).digest("hex") !== hash) {
-    throw new BundleError("changed", `${PAYLOAD_DIR}/${hash} changed after readBundle verified it`);
+  const handle = await openFile(join(dir, PAYLOAD_DIR, hash), "changed", `${PAYLOAD_DIR}/${hash}`);
+  try {
+    const bytes = new Uint8Array(await handle.readFile());
+    if (createHash("sha256").update(bytes).digest("hex") !== hash) {
+      throw new BundleError("changed", `${PAYLOAD_DIR}/${hash} changed after readBundle verified it`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
   }
-  return bytes;
 }
 
 // DX4 — each payload file hashes to its name, the manifest counts them, and
@@ -255,8 +261,7 @@ async function verifyPayloads(
   const sizes = new Map<string, number>();
   for (const name of names.sort()) {
     const path = join(root, name);
-    await assertEntry(path, "file", "payload", `${PAYLOAD_DIR}/${name}`);
-    const { hash, bytes } = await hashFile(path);
+    const { hash, bytes } = await hashFile(await openFile(path, "payload", `${PAYLOAD_DIR}/${name}`));
     if (hash !== name) {
       throw new BundleError("payload", `${PAYLOAD_DIR}/${name} hashes to ${hash}, not its name`);
     }
@@ -305,10 +310,35 @@ async function assertEntry(
   }
 }
 
-async function hashFile(path: string): Promise<{ hash: string; bytes: number }> {
+// A bundle file, opened once and checked through that descriptor, so nothing
+// can be swapped in between the check and the read: O_NOFOLLOW refuses a
+// symlink, O_NONBLOCK keeps a FIFO from blocking the open, and the descriptor
+// must be a regular file. The caller reads from — and closes — the handle.
+async function openFile(path: string, check: BundleCheck, label: string): Promise<FileHandle> {
+  let handle: FileHandle;
+  try {
+    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") throw new BundleError(check, `${label} is missing`);
+    if (code === "ELOOP") throw new BundleError(check, `${label} is not a regular file (a symbolic link)`);
+    throw new BundleError(check, `${label} is unreadable (${String(e)})`);
+  }
+  const isFile = await handle.stat().then(
+    (info) => info.isFile(),
+    () => false,
+  );
+  if (!isFile) {
+    await handle.close();
+    throw new BundleError(check, `${label} is not a regular file`);
+  }
+  return handle;
+}
+
+async function hashFile(handle: FileHandle): Promise<{ hash: string; bytes: number }> {
   const hash = createHash("sha256");
   let bytes = 0;
-  for await (const chunk of createReadStream(path)) {
+  for await (const chunk of handle.createReadStream({ autoClose: true })) {
     hash.update(chunk as Buffer);
     bytes += (chunk as Buffer).byteLength;
   }

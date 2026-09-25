@@ -103,9 +103,11 @@ manifest, one async iterator per record type, and `readPayload(hash)`.
 Those read the bundle again, so they re-prove it is the bundle that was verified. `readBundle`
 records each record file's sha256; its iterator re-hashes the file as it streams and, once the
 file ends, throws (check `changed`) if the file differs. `readPayload` re-checks that the payload
-is still a regular file hashing to its name. Records are yielded before a file's end, so an
-importer consumes them inside **one transaction** and treats any throw as an abort — a bundle
-edited between verification and import then imports nothing.
+is still a regular file hashing to its name. Every file is opened once — never following a
+symlink, never blocking on a FIFO — checked through that open descriptor and read from it, so
+nothing can be swapped in between the check and the read. Records are yielded before a file's
+end, so an importer consumes them inside **one transaction** and treats any throw as an abort — a
+bundle edited between verification and import then imports nothing.
 
 ## Versioning
 
