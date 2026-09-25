@@ -1,0 +1,70 @@
+# Artefactor — the isolated thumbnail renderer on a VM of its own (S37, AH29).
+#
+# This is the renderer of deploy/docker-compose.example.yml, alone, for a
+# dedicated renderer VM: the shape docs/deployment.md §9 documents for Coolify,
+# and the file to paste into a Coolify Docker Compose resource. Every hardening
+# key is the example's (src/deploy/renderer-compose.test.ts holds them equal);
+# only the networking differs, because the VM boundary and a firewall outside it
+# replace the example's app ↔ renderer link network. Read
+# docs/renderer-isolation.md before changing anything below.
+#
+#   1. Host prep on the VM (docs/deployment.md §9), as root:
+#        - the seccomp profile at /etc/artefactor/chromium-seccomp.json
+#        - the network this file joins:
+#            docker network create \
+#              -o com.docker.network.bridge.name=br-art-egress \
+#              -o com.docker.network.bridge.enable_icc=false \
+#              --subnet 172.31.240.0/24 artefactor-renderer
+#        - deploy/renderer-egress.sh, re-run at every boot by a systemd unit
+#   2. Paste this file into the Compose resource; set RENDERER_BIND_IP to the
+#      VM's private address (and RENDERER_IMAGE if it is not the default).
+#   3. docs/renderer-isolation.md § Verify a deployment (the VM variant), then
+#      ARTEFACTOR_RENDERER_URL=http://<renderer-private-ip>:3001 on the app.
+
+services:
+  renderer:
+    image: ${RENDERER_IMAGE:-ghcr.io/hiddenvalues/artefactor:latest}
+    # Coolify's deploy webhook runs `docker compose up -d` on a Compose resource
+    # without pulling, so without this line the renderer keeps the cached :latest
+    # and never follows the app. Docker's own per-job restarts (below) don't go
+    # through Compose, so they never pull: only a deploy does.
+    pull_policy: always
+    # Every render is one job in a fresh container: the process exits 0 when it is
+    # done (after ≥ 10 s of uptime, which keeps Docker's restart delay at ~100 ms)
+    # and this policy starts a new one with an empty tmpfs.
+    restart: always
+    environment:
+      ARTEFACTOR_ROLE: renderer
+      # No secrets, no database, no storage paths — the renderer's own startup
+      # self-check refuses to run in production if any of them appear.
+      PORT: "3001"
+      NODE_ENV: production
+    # Unprivileged, and it stays that way: no capabilities, no setuid escalation.
+    user: node
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default profile plus clone/unshare/chroot — exactly what
+      # Chromium's unprivileged sandbox needs, and nothing that needs a capability.
+      # By absolute path: a Coolify resource has no project directory of yours to
+      # resolve a relative one against.
+      - seccomp=/etc/artefactor/chromium-seccomp.json
+    # Nothing on disk survives a job: the root filesystem is read-only and the
+    # writable paths are tmpfs (Chromium's profile, its temp files and $HOME).
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=${RENDERER_TMP_SIZE:-512m}
+      - /home/node:mode=0700,uid=1000,gid=1000,size=64m
+    # No volume. The one network is the host-created `artefactor-renderer`
+    # (bridge br-art-egress, icc=false), whose egress deploy/renderer-egress.sh
+    # restricts to the public internet. `network_mode` — never `networks:` — is
+    # what stops Coolify attaching its own per-resource network as well.
+    network_mode: artefactor-renderer
+    # Published on the VM's private address only, never 0.0.0.0: the app reaches
+    # it there, and the firewall outside the VM admits only the app to this port.
+    ports:
+      - "${RENDERER_BIND_IP:?the VM's private IP}:3001:3001"
+    mem_limit: ${RENDERER_MEM_LIMIT:-1g}
+    memswap_limit: ${RENDERER_MEMSWAP_LIMIT:-1g}
+    cpus: 1.0
+    pids_limit: 256

@@ -480,8 +480,16 @@ that no signature matches, while legitimate artefacts do exactly what a scanner 
 > - **Cycle.** Container start → ready → one render → exit → restart measured on the compose
 >   example: see *Cycle time* in `docs/renderer-isolation.md`.
 > - **Coolify.** An *application*'s custom Docker options omit `--read-only`, `--tmpfs`,
->   `--pids-limit` and `--user`, so the renderer runs as a Docker Compose resource; that
->   Coolify keeps every hardening key is unverified until the deployment check passes.
+>   `--pids-limit` and `--user`, so the renderer runs as a Docker Compose resource. Verified
+>   under Coolify 4.3.23 (Ubuntu 24.04, Docker 29): `docker inspect` shows every hardening key
+>   coming through. The **network does not isolate on the app's host**: Coolify force-attaches
+>   each Compose service to a per-resource network, the only path to a separate app application
+>   is its shared `coolify` bridge beside the app and the proxy, and without `br_netfilter` (not
+>   loaded on that host) nothing filters traffic inside one bridge. So the renderer runs on a VM
+>   of its own behind a firewall outside it, joining a host-created network through
+>   `network_mode` (`deploy/docker-compose.renderer-vm.yml`), and the renderer-isolation
+>   checklist passes there. On that host `apparmor_restrict_unprivileged_userns=1`, and the
+>   sandbox still launches under `docker-default`.
 
 **AH11 amendment.** Permanent delete — of the artefact, or of it through a collection's CL8
 cascade — also removes the artefact's thumbnail files.

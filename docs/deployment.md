@@ -12,13 +12,16 @@ push to main  (humlytech/artefactor)
        └─ curl Coolify deploy webhook
             └─ Coolify (your instance) → existing UpCloud VPS (se-sto1)
                  ├─ container: BFF :3000 serving API + SPA, NODE_ENV=production
-                 ├─ container: thumbnail renderer (same image, ARTEFACTOR_ROLE=renderer,
-                 │     no secrets, no volume, sandboxed Chromium — §9)
                  ├─ named volume artefactor-data → /data
                  │     ├─ /data/artefactor.db   (SQLite, DATABASE_PATH)
                  │     ├─ /data/payloads/        (artefact HTML, up to 100 MB each)
                  │     └─ /data/thumbnails/      (rendered card images)
                  └─ Coolify proxy: https://<domain>  (Let's Encrypt)
+                       │  private network, http://<renderer-private-ip>:3001
+                       ▼  (optional — §9)
+            renderer VM, behind a firewall outside it (app → :3001, Coolify → :22, nothing else)
+                 └─ container: thumbnail renderer (same image, ARTEFACTOR_ROLE=renderer,
+                       no secrets, no volume, sandboxed Chromium, one job per container)
 UpCloud Backups: scheduled snapshots of the whole VPS (including the volume)
 ```
 
@@ -43,7 +46,8 @@ Design decisions baked into this setup:
 
 Placeholders used below: `<domain>` (the public hostname you serve at, e.g.
 `artefactor.example.com`), `<coolify-url>` (your Coolify instance), `<vps-ip>` (the existing
-VPS's public IP), `<app-uuid>` (assigned when the Coolify app is created).
+VPS's public IP), `<app-uuid>` (assigned when the Coolify app is created), and
+`<renderer-private-ip>` / `<renderer-public-ip>` (the renderer VM of §9).
 
 ---
 
@@ -164,7 +168,7 @@ How much work this is depends on the **fork's visibility**:
    | `AUTH_ALLOW_SIGNUP` | `true` / `false` (or `1` / `0`) | Optional. Gates account **creation**, for every provider. Unset: **closed** when production has email+password enabled, **open** otherwise. Empty counts as unset. |
    | `AUTH_ALLOWED_EMAIL_DOMAINS` | your org domain(s), e.g. `example.com,example.org` | **Set this in prod.** Comma-separated; account creation is restricted to these domains (every provider). The code default is `example.com` (dev only). |
    | `AUTH_TRUSTED_ORIGINS` | `https://<domain>` | Optional. The `BETTER_AUTH_URL` origin is trusted implicitly and the SPA is same-origin, so this is usually unnecessary — set it only if a separate origin must call the auth API. |
-   | `ARTEFACTOR_RENDERER_URL` | `http://renderer:3001` | Optional, and **only** once the isolated renderer of §9 is running and verified. Unset: no card thumbnails, everything else unchanged. Never point it at a renderer that is not isolated. |
+   | `ARTEFACTOR_RENDERER_URL` | `http://<renderer-private-ip>:3001` | Optional, and **only** once the isolated renderer VM of §9 is running and verified. Unset: no card thumbnails, everything else unchanged. Never point it at a renderer that is not isolated. |
    | `ARTEFACTOR_CONTENT_ORIGIN` | `https://<content-domain>` | Optional, defence in depth. `scheme://host[:port]`, no path: the origin artefact frames are served on, on a **separate registrable domain** from `<domain>`. See §5b. |
    | `ARTEFACTOR_TRUSTED_PROXIES` | *(unset)* | Optional. Comma-separated CIDRs or addresses of the proxies allowed to name the client in `X-Forwarded-For` (IA8). Unset: loopback plus the private and link-local ranges. A value **replaces** that default, so list every hop to trust (e.g. your proxy's address plus a CDN's ranges); an invalid entry fails the boot. |
 
@@ -322,52 +326,162 @@ may display it as `ci / gate`).
 ## 9. Card thumbnails: the isolated renderer
 
 Thumbnails are rendered by **screenshotting the artefact's HTML**, which means running a
-stranger's JavaScript on the box. That happens in a second container from the same image, with
+stranger's JavaScript on a server of yours. That happens in a container from the same image, with
 Chromium's sandbox on, no secrets, no volume, one job per container and no route back to the app
 — the rationale, the layers and the verification checklist are in
 [renderer-isolation.md](renderer-isolation.md) (**read it before this section**). The app is
 perfectly happy without it: leave `ARTEFACTOR_RENDERER_URL` unset and every card shows its kind
 placeholder.
 
-**Coolify shape.** A Coolify *application*'s custom Docker options cover `--cap-drop` and
-`--security-opt` but **not** `--read-only`, `--tmpfs`, `--pids-limit` or `--user` — four of the
-renderer's defences. So the renderer is added as a **Docker Compose resource**, not as a second
-application:
+Under Coolify the renderer runs on **a VM of its own**, beside the app server on a private
+network, behind a firewall enforced **outside** the VM. That is the only Coolify shape this
+runbook documents. The reasons come first, because the obvious same-host shape looks right and
+isn't.
 
-1. Coolify → the `humly-artefactor` project → **+ New Resource → Docker Compose**, on the same
-   server.
-2. Paste [`deploy/docker-compose.example.yml`](../deploy/docker-compose.example.yml), keeping the
-   `renderer` service and dropping the `app` service (the app stays the existing Docker Image
-   application). Point the image at `ghcr.io/humlytech/artefactor:latest`, and make sure the
-   `renderer` service keeps `user`, `read_only`, `tmpfs`, `cap_drop`, `security_opt`,
-   `pids_limit`, `mem_limit` and `restart: always`, and gains **no** volume and **no** `ports:`.
-3. The seccomp profile must exist on the server at the path `security_opt` names — copy
-   `deploy/chromium-seccomp.json` next to the compose file (Coolify's `content:` bind-mount
-   extension can create it for you) and reference it by that path.
-4. Put the app application and this resource on a shared network so `app` can resolve `renderer`
-   (Coolify → the application → **Connect to Predefined Network**), or move the app into the same
-   Compose resource.
-5. On the server, apply the firewall rules and make them survive a reboot:
+### Why not on the app server
+
+[`deploy/docker-compose.example.yml`](../deploy/docker-compose.example.yml) isolates the renderer
+on one host with Docker networks: an `icc=false` link network plus `DOCKER-USER` rules that allow
+exactly app → renderer:3001. Under Coolify (verified on 4.3.23, Ubuntu 24.04, Docker 29) that
+shape can't be reproduced:
+
+- **Coolify adds its own network.** Its Compose parser force-attaches every service of a Docker
+  Compose resource to a per-resource network, beside whatever `networks:` the file declares.
+- **The only way to reach the app is the wrong one.** The app is a separate Docker Image
+  application, so the two can only meet on a network Coolify shares between resources — which
+  puts the renderer on Coolify's shared `coolify` bridge, beside the app **and** the Traefik
+  proxy.
+- **Nothing filters traffic inside one bridge.** `DOCKER-USER` sees bridged traffic only with
+  the `br_netfilter` kernel module loaded, and it was not loaded on a stock Ubuntu 24.04 host. So
+  renderer → app is open: layer 4 of [renderer-isolation.md](renderer-isolation.md#the-layers) is
+  simply gone.
+
+> **Don't use *Connect to Predefined Network* for the renderer**, and don't put it on any network
+> the app or the proxy is on. If you can't give it a VM of its own, leave
+> `ARTEFACTOR_RENDERER_URL` unset: thumbnails off is safe, an unisolated renderer is not.
+
+A VM of its own fixes all three, and adds layer 5: even a full escape from the container lands on
+a machine holding nothing but the renderer, whose only way into the private network is the one
+reply path the firewall outside it admits.
+
+### 9.1 The VM and its firewall
+
+1. Create a small VM (1 vCPU / 1 GB is enough for one job at a time) in the app server's zone,
+   running Ubuntu 24.04, attached to the **same private network** as the app server. It is
+   stateless, so it needs no backups.
+2. On the **private** network, a firewall enforced **outside** the VM — the provider's network
+   firewall, not `ufw` on the VM, which a root escape could turn off — with both the incoming and
+   the outgoing default **Drop**, and exactly two inbound rules:
+   - TCP **3001** from the **app server's** private address;
+   - TCP **22** from the **Coolify server's** private address.
+
+   Make it stateful, so the replies need no rules of their own. With outgoing Drop, not even root
+   on the VM can open a connection to anything on the private network.
+3. The **public** interface needs outbound internet (image pulls, and the CDN assets artefacts
+   load) and SSH for you. Admit inbound SSH from your address only, then whatever return traffic
+   your provider's firewall needs (a stateless one also needs the ephemeral range, ICMP and the
+   DNS replies), then drop. Port 3001 is never published there: the Compose file binds it to the
+   private address.
+4. If the private network's DHCP hands out a default route, make sure the **public** route wins —
+   e.g. a netplan override giving the private interface a higher `route-metric` — or a network
+   restart can send the VM's internet traffic into the private network, where outgoing Drop cuts
+   it off.
+
+### 9.2 Host prep, on the VM as root
+
+1. **Swap** — Chromium's peaks are short, and the host OOM killer is worse than a slow render:
 
    ```bash
-   ssh root@<vps-ip>
-   /path/to/artefactor/deploy/renderer-egress.sh           # DOCKER-USER + INPUT rules
-   # re-run at boot (a systemd unit or @reboot cron): DOCKER-USER survives a Docker
-   # restart, but not a reboot.
+   fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+   echo '/swapfile none swap sw 0 0' >> /etc/fstab
+   echo 'vm.swappiness=10' > /etc/sysctl.d/99-swappiness.conf && sysctl --system
    ```
 
-   Adjust `LINK_IF` / `EGRESS_IF` if the networks have different bridge names:
-   `docker network inspect <network> -f '{{index .Options "com.docker.network.bridge.name"}}'`.
-6. **Verify** with
-   [renderer-isolation.md § Verify a deployment](renderer-isolation.md#verify-a-deployment).
-   Only when every check passes, set `ARTEFACTOR_RENDERER_URL=http://renderer:3001` on the app
-   and redeploy it. Upload an artefact: its card picks up an image within a few seconds.
+2. **The seccomp profile**, at the absolute path the Compose file names — copy
+   [`deploy/chromium-seccomp.json`](../deploy/chromium-seccomp.json) over, and check it arrived
+   intact:
 
-> **Not yet verified on Coolify.** The hardening above is verified on plain Docker (the S37 spike
-> and manual check). Whether Coolify passes every one of these Compose keys through untouched —
-> and tolerates a container that exits and restarts every ~10 s under load — has not been tried
-> on the real instance. The verification checklist is what settles it: if a check fails, leave
-> `ARTEFACTOR_RENDERER_URL` unset (thumbnails off) rather than run an unisolated renderer.
+   ```bash
+   mkdir -p /etc/artefactor
+   # from a checkout: scp deploy/chromium-seccomp.json root@<renderer-public-ip>:/etc/artefactor/
+   sha256sum /etc/artefactor/chromium-seccomp.json   # must match the repo's copy
+   ```
+
+3. **The renderer's network**, created by hand so Coolify never creates or changes it: bridge
+   `br-art-egress` (the name the egress rules match on), no container-to-container traffic:
+
+   ```bash
+   docker network create \
+     -o com.docker.network.bridge.name=br-art-egress \
+     -o com.docker.network.bridge.enable_icc=false \
+     --subnet 172.31.240.0/24 artefactor-renderer
+   ```
+
+4. **The egress rules** — [`deploy/renderer-egress.sh`](../deploy/renderer-egress.sh), unchanged:
+   public internet and DNS allowed, every private and link-local range dropped (including
+   `169.254.169.254`), and nothing new into the host itself. Install it, and re-run it at every
+   boot (`DOCKER-USER` survives a Docker restart, not a reboot):
+
+   ```bash
+   install -m 0755 renderer-egress.sh /usr/local/sbin/artefactor-renderer-egress.sh
+   cat > /etc/systemd/system/artefactor-renderer-egress.service <<'UNIT'
+   [Unit]
+   Description=Artefactor renderer egress rules (DOCKER-USER, INPUT)
+   After=docker.service
+   Requires=docker.service
+
+   [Service]
+   Type=oneshot
+   ExecStart=/usr/local/sbin/artefactor-renderer-egress.sh
+   RemainAfterExit=yes
+
+   [Install]
+   WantedBy=multi-user.target
+   UNIT
+   systemctl daemon-reload && systemctl enable --now artefactor-renderer-egress.service
+   ```
+
+   The script's `LINK_IF` rules name `br-art-link`, the example's link bridge, which doesn't
+   exist on this VM: they match nothing and are harmless. The VM boundary and the firewall
+   outside it do that job here.
+5. **GHCR** — for a private package, `docker login ghcr.io` with a `read:packages` PAT, as in §4.
+
+### 9.3 The Coolify side
+
+1. Coolify → **Servers → + Add**: the VM, by its **private** address, with an SSH key of its own
+   (not the app server's). Validate it, then **stop its proxy** — nothing on this VM is served
+   through Traefik.
+2. The project → **+ New Resource → Docker Compose**, on that server. Paste
+   [`deploy/docker-compose.renderer-vm.yml`](../deploy/docker-compose.renderer-vm.yml) as it is,
+   and set its variables: `RENDERER_BIND_IP` to the VM's private address (required), and
+   `RENDERER_IMAGE` to your image, e.g. `ghcr.io/humlytech/artefactor:latest`.
+   `RENDERER_MEM_LIMIT`, `RENDERER_MEMSWAP_LIMIT` and `RENDERER_TMP_SIZE` default to `1g`, `1g`
+   and `512m`; on a 1 GB VM lower them (e.g. `512m`, `768m`, `256m`) and keep the swap of §9.2.
+
+   Change nothing else. A Coolify *application*'s custom Docker options cover `--cap-drop` and
+   `--security-opt` but not `--read-only`, `--tmpfs`, `--pids-limit` or `--user`, which is why
+   this is a Compose resource; `network_mode` is what keeps Coolify's own network off it; and
+   `pull_policy: always` is what makes a deploy pull the new image — Coolify's deploy webhook
+   runs `docker compose up -d` on a Compose resource without pulling, so without it the renderer
+   keeps its cached `:latest` and never follows the app. `src/deploy/renderer-compose.test.ts`
+   holds the file to all of that.
+3. Deploy it. If your pipeline should redeploy the renderer on every push along with the app,
+   take the resource's **Deploy Webhook** URL too (§6).
+
+### 9.4 Verify, then switch on
+
+1. [renderer-isolation.md § Verify a deployment](renderer-isolation.md#verify-a-deployment), the
+   **VM variant**: every check must pass.
+2. Only then set `ARTEFACTOR_RENDERER_URL=http://<renderer-private-ip>:3001` on the app and
+   redeploy it. Upload an artefact: its card picks up an image within a few seconds.
+3. **Rollback:** unset `ARTEFACTOR_RENDERER_URL` and redeploy the app. Thumbnails already rendered
+   stay; new cards show their placeholder.
+
+> **Verified on Coolify** (4.3.23, Ubuntu 24.04, Docker 29): `docker inspect` shows every hardening
+> key of the Compose file coming through — the user, the read-only root, `cap_drop: ALL`,
+> `no-new-privileges` and the seccomp profile, the tmpfs mounts, the pids limit,
+> `restart: always`, no mounts and no secrets — and the container exiting and restarting every
+> ~10 s under load runs as designed. The network is what didn't hold on one host, hence the VM.
 
 ## Operations
 

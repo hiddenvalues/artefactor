@@ -6,7 +6,9 @@ container, what protects it instead, and how to check a deployment.
 
 The domain rule is **AH29** in [`specs/ddd/artefact-hosting.md`](specs/ddd/artefact-hosting.md);
 the slice is **S37 — Isolated thumbnail renderer**. The configuration that implements it is
-[`../deploy/docker-compose.example.yml`](../deploy/docker-compose.example.yml) and
+[`../deploy/docker-compose.example.yml`](../deploy/docker-compose.example.yml) (app and renderer on
+one plain-Docker host), [`../deploy/docker-compose.renderer-vm.yml`](../deploy/docker-compose.renderer-vm.yml)
+(the renderer alone, on a VM of its own — the Coolify shape) and
 [`../deploy/renderer-egress.sh`](../deploy/renderer-egress.sh).
 
 ## Threat model
@@ -33,7 +35,7 @@ payload and thumbnail under `/data`, the SQLite database, `BETTER_AUTH_SECRET` (
 session), `GOOGLE_CLIENT_SECRET`, the internal network, and the HTML of every artefact rendered
 afterwards. That is why S35 shipped with rendering off.
 
-## The four layers
+## The layers
 
 Each layer assumes the ones before it may fail.
 
@@ -43,6 +45,7 @@ Each layer assumes the ones before it may fail.
 | **2. The container is empty** | An escape lands in a container with no secrets, no database, no `/data`, a **read-only** root filesystem, no capabilities (`cap_drop: ALL`, `no-new-privileges`), an unprivileged user, and only tmpfs to write to. The renderer's own startup self-check refuses to run in production if a secret, a database URL, or an app storage directory is visible, or if it is running as root. |
 | **3. One job per container** | The process answers exactly one render and exits; the restart policy brings back a fresh container with an empty tmpfs. Anything an artefact leaves behind — a foothold in the browser, a file in `/tmp`, a resident process — is gone before the next artefact is rendered, so one artefact can never see another's HTML. |
 | **4. It cannot reach anything worth reaching** | Host firewall rules let the renderer talk to the public internet (so CDN CSS, fonts and images still load) and to DNS, and drop new connections to every private and link-local range — including `169.254.169.254`, the cloud metadata service. The app can reach the renderer; the renderer cannot reach the app. |
+| **5. It runs on a machine of its own** | The renderer gets a VM to itself, on a private network with the app server, behind a firewall enforced **outside** the VM that admits only app → 3001 and the orchestrator's SSH, with both defaults Drop. Even a full container escape, root on the VM included, lands on a machine holding nothing but the renderer and can open nothing on the private network. **Recommended for any multi-tenant deployment** (the uploaders are strangers to each other), and **required under Coolify**, where layer 4 can't be built on the app's host ([deployment.md §9](deployment.md#9-card-thumbnails-the-isolated-renderer)). |
 
 Inside the page, S35's measures still hold: a synthetic `https://artefact.invalid/` origin (so
 Chromium's Local Network Access check refuses loopback and private addresses even where layer 4
@@ -62,8 +65,10 @@ host settings can stand in the way:
    `--cap-add SYS_ADMIN`: those give away more than the sandbox is worth.
 2. **AppArmor (Ubuntu 23.10+).** `kernel.apparmor_restrict_unprivileged_userns=1` can stop
    unprivileged user namespaces. Containers run under the `docker-default` profile, which in
-   the current Ubuntu policy is not subject to the restriction — but this is exactly the kind of
-   thing a distro changes. If the renderer reports a launch failure, check:
+   the current Ubuntu policy is not subject to the restriction. **Observed** on a stock Ubuntu
+   24.04 host with Docker 29: the sysctl is `1`, and the sandbox still launches under
+   `docker-default` with nothing changed. But this is exactly the kind of thing a distro
+   changes. If the renderer reports a launch failure, check:
 
    ```bash
    sysctl kernel.apparmor_restrict_unprivileged_userns
@@ -81,6 +86,8 @@ firewall backend. On a host running Docker's nftables backend, translate the rul
 an equivalent nftables chain and verify with the checks below.
 
 ## Verify a deployment
+
+### On one host (the Compose example)
 
 After `docker compose up -d` **and** `sudo ./deploy/renderer-egress.sh`:
 
@@ -116,6 +123,70 @@ docker events --filter container=artefactor-renderer-1 --filter event=die --filt
 
 A render should be followed by `die` and a `start` about 100 ms later — a new container, with a
 new tmpfs, for the next artefact.
+
+### On a renderer VM
+
+The shape of [deployment.md §9](deployment.md#9-card-thumbnails-the-isolated-renderer): the
+renderer alone on a VM, from
+[`../deploy/docker-compose.renderer-vm.yml`](../deploy/docker-compose.renderer-vm.yml). There is no
+Compose project holding both services, so the checks run with `docker exec` **on the renderer
+VM**, and the app-side check runs on the app server. The container restarts after every job, so
+look its name up again for each block:
+
+```bash
+# On the renderer VM, as root.
+R=$(docker ps -q --filter name=renderer)
+
+# 1–2. No secrets, no /data, read-only root, not root.
+docker exec "$R" env | grep -Ei 'secret|token|password|database' ; echo "exit=$?"  # expect no matches
+docker exec "$R" ls /data              # expect: No such file or directory
+docker exec "$R" sh -c 'touch /nope'   # expect: Read-only file system
+docker exec "$R" id -u                 # expect: 1000
+
+# 3. The sandbox is on.
+docker logs "$R" 2>&1 | tail -3        # expect: "sandboxed Chromium launched — ready"
+
+# 4. The public internet and DNS work…
+docker exec "$R" sh -c 'curl -sk -m 5 -o /dev/null -w "cdn:%{http_code}\n" https://cdnjs.cloudflare.com/'  # expect 200
+docker exec "$R" getent hosts cdnjs.cloudflare.com                                                       # expect an address
+# …and everything private times out: the app server's private (and public) address,
+# the Coolify server, the metadata service, the bridge gateway, and the VM's own addresses.
+for target in <app-private-ip>:3000 <app-private-ip>:22 <coolify-private-ip>:22 \
+              169.254.169.254:80 172.31.240.1:22 <renderer-private-ip>:22 <renderer-public-ip>:22; do
+  docker exec "$R" timeout 5 bash -c "</dev/tcp/${target%:*}/${target#*:}"
+  echo "$target exit=$?"   # expect 124: timed out (0 = connected, 1 = refused — both mean a packet got through)
+done
+```
+
+From **outside** — your laptop, on the internet:
+
+```bash
+curl -s -m 5 http://<renderer-public-ip>:3001/health; echo "exit=$?"   # expect non-zero: never published publicly
+```
+
+From the **app container**, on the app server — the one path that must work:
+
+```bash
+docker exec <app-container> curl -s -m 5 http://<renderer-private-ip>:3001/health
+# expect: {"status":"ready"}  (HTTP 200)
+```
+
+The job cycle is watched the same way, on the renderer VM:
+`docker events --filter container="$R" --filter event=die --filter event=start`.
+
+### After a deploy: is the renderer on the new image?
+
+`restart: always` restarts the container from the image it already has, and so does a
+`docker compose up -d` that finds `:latest` cached — Coolify's deploy webhook for a Compose
+resource is exactly that, and never pulls. `pull_policy: always` in
+[`../deploy/docker-compose.renderer-vm.yml`](../deploy/docker-compose.renderer-vm.yml) makes every
+deploy pull first; the per-job restarts in between still don't, which is what you want. Check that
+the renderer follows the app after a deploy — its `GIT_SHA` must match the app's `/health`
+`build`:
+
+```bash
+docker exec "$(docker ps -q --filter name=renderer)" printenv GIT_SHA
+```
 
 ### Cycle time
 
