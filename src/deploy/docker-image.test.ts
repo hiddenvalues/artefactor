@@ -155,7 +155,9 @@ describe("Dockerfile layer caching (Chromium keyed on the lockfile only)", () =>
     );
     expect(browsersPath).toBeGreaterThanOrEqual(0);
     expect(browsersPath).toBeLessThan(runtime().findIndex(isChromiumRun));
-    const gitShaEnv = runtime().findIndex((i) => i.op === "ENV" && i.args.includes("GIT_SHA=${GIT_SHA}"));
+    const gitShaEnv = runtime().findIndex(
+      (i) => i.op === "ENV" && /(?:^|\s)GIT_SHA=\$\{GIT_SHA\}(?:\s|$)/.test(i.args),
+    );
     expect(gitShaEnv).toBeGreaterThan(runtime().findIndex(isGitShaArg));
   });
 });
