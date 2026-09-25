@@ -120,7 +120,7 @@ describe("Dockerfile layer caching (Chromium keyed on the lockfile only)", () =>
   };
   const runtime = () => stage("runtime").instructions;
   const isChromiumRun = (i: Instruction) =>
-    i.op === "RUN" && /playwright-core\/cli\.js install\b/.test(i.args);
+    i.op === "RUN" && /playwright-core\/cli\.js install\b.*\bchromium-headless-shell\b/.test(i.args);
   const isGitShaArg = (i: Instruction) => i.op === "ARG" && /^GIT_SHA\b/.test(i.args);
 
   it("the deps stage copies only the package manifests, and build is FROM deps", () => {
@@ -149,13 +149,14 @@ describe("Dockerfile layer caching (Chromium keyed on the lockfile only)", () =>
     expect(runtime().slice(arg + 1).filter((i) => i.op === "RUN")).toEqual([]);
   });
 
-  it("sets PLAYWRIGHT_BROWSERS_PATH before the Chromium install, and still sets GIT_SHA", () => {
+  it("sets PLAYWRIGHT_BROWSERS_PATH before the Chromium install, and sets GIT_SHA from its ARG", () => {
     const browsersPath = runtime().findIndex(
       (i) => i.op === "ENV" && /\bPLAYWRIGHT_BROWSERS_PATH=\/ms-playwright\b/.test(i.args),
     );
     expect(browsersPath).toBeGreaterThanOrEqual(0);
     expect(browsersPath).toBeLessThan(runtime().findIndex(isChromiumRun));
-    expect(runtime().some((i) => i.op === "ENV" && i.args.includes("GIT_SHA=${GIT_SHA}"))).toBe(true);
+    const gitShaEnv = runtime().findIndex((i) => i.op === "ENV" && i.args.includes("GIT_SHA=${GIT_SHA}"));
+    expect(gitShaEnv).toBeGreaterThan(runtime().findIndex(isGitShaArg));
   });
 });
 
