@@ -79,6 +79,13 @@ shape rather than a bounded context, so no spec governs them.
   and `get_authoring_guide` returns the full `skills/artefactor/SKILL.md` body —
   `src/server/mcp/authoring-guide.ts` and the skill are kept in sync.
   → [`fdd/slices/mcp-connector.md`](docs/specs/fdd/slices/mcp-connector.md)
+- **Deployment export** (`src/infra/export/`) — an operator CLI (`pnpm export:bundle`) that writes
+  the whole deployment as a versioned, verifiable **export bundle** from one read-only snapshot:
+  Accounts without credentials, artefacts + payloads, access lists, collections, data, views and
+  bookmarks. Its reader, `readBundle`, is the format's single definition and the contract the EE
+  importer consumes.
+  → [`ddd/deployment-export.md`](docs/specs/ddd/deployment-export.md),
+  [`fdd/slices/platform.md`](docs/specs/fdd/slices/platform.md)
 - **Two publishing paths.** *Path A* — the MCP connector pushes HTML, but cannot carry base64
   raster image bytes through a tool call. *Path B* — the **manual HTML upload** dialog in the
   client, the supported way to publish an artefact that embeds raster images. Both run the same
@@ -238,6 +245,7 @@ pnpm lint                      # ESLint over src/client: no inline styles, no ra
 pnpm db:generate               # drizzle-kit: generate a migration from src/infra/db/schema.ts
 pnpm db:migrate                # apply migrations (tsx src/infra/db/migrate.ts)
 pnpm db:studio                 # drizzle studio
+pnpm export:bundle --out <dir>  # write the deployment's export bundle (S39); --verify <dir> checks one
 pnpm spec:dag [catalog]        # slice DAG → mermaid graph + build waves + next free id (default: core catalog)
 pnpm lint:md                   # markdownlint-cli2 over every tracked .md (.markdownlint-cli2.jsonc); CI gate
 pnpm lint:md:fix               # apply markdownlint's auto-fixes (over-long prose lines still rewrap by hand)

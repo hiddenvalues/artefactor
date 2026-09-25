@@ -123,7 +123,7 @@ superset can wire a different backend (Postgres) without forking the composition
 
 ### S39 — Deployment export bundle
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S1, S2, S11, S16, S21, S25, S27, S32a, S41
 - **Linear:** ALI-351
 
