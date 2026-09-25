@@ -24,12 +24,13 @@ services:
   app:
     image: ghcr.io/hiddenvalues/artefactor:latest
     restart: always
-    # Put a reverse proxy (TLS) in front and let only it reach this port — e.g.
-    # "127.0.0.1:3000:3000" with the proxy on the host. The app keys the
-    # link-password rate limit (S32a) on the last X-Forwarded-For hop, which the
-    # proxy appends; a client reaching 3000 directly can forge that header.
+    # Loopback only: put a reverse proxy (TLS) on the host in front of it, and
+    # never publish 3000 on a public interface. The app keys the link-password
+    # rate limit (S32a) on the last X-Forwarded-For hop, which the proxy appends;
+    # a client reaching 3000 directly could forge that header. A proxy running
+    # in Compose instead joins this project's network and needs no port here.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       # The isolated renderer. Unset this and thumbnails are simply off (AH25).
       ARTEFACTOR_RENDERER_URL: http://renderer:3001
