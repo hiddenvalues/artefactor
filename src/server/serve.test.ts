@@ -121,6 +121,8 @@ describe("serve artefact by slug (S6)", () => {
     expect(body).toContain("Prototype");
     // The kind icon tile is present (rendered from shared kind-presentation).
     expect(body).toContain('class="ae-tile"');
+    // …and its icon is stroked in the Mint garden light prototype colour.
+    expect(body).toContain('stroke="oklch(0.56 0.09 170)"');
   });
 
   it("hides the back-to-admin button from anonymous viewers, shows it for signed-in viewers", async () => {

@@ -5,8 +5,8 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 
-// The theme itself, drawn from the tokens in app.css alone: colours (light and
-// dark), product colours, type, radius and a few components in use. Design-only
+// The theme itself, drawn from the tokens in app.css alone: colours and product
+// colours (light and dark), type, radius and a few components in use. Design-only
 // — the catalog and the Claude design sync show it; the app never imports it.
 // Every colour is read as `var(--…)` through a custom-property style, so a
 // `:root` / `.dark` override restyles it, and the app's Tailwind gains no
@@ -121,8 +121,7 @@ function Colours() {
 
 function Product() {
   return (
-    <div className="flex w-full flex-col gap-4">
-      <Caption>Kind and collection tokens have no dark values: they read the same in both themes.</Caption>
+    <LightDark>
       <div className="flex flex-col gap-2">
         {KINDS.map((kind) => (
           <div
@@ -146,7 +145,7 @@ function Product() {
           </div>
         ))}
       </div>
-    </div>
+    </LightDark>
   );
 }
 

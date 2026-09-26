@@ -195,10 +195,11 @@ only the look changes.
 - **Foundation.** `@vitejs/plugin-react` replaces the Svelte plugin; shadcn/ui components live
   under `src/client/lib/components/ui/` (`components.json`, `cn` in `lib/utils.ts`); the `$lib`
   alias, the dev proxy and port 5273 stay. `pnpm check` is `tsc` for the client and the server.
-- **Tokens.** One tokens file (`src/client/app.css`): shadcn's stock CSS variables plus the
-  app-specific tokens that carry meaning — the five artefact-kind colours and tints (mirroring
-  `src/shared/kind-presentation.ts`, which the server-rendered shell keeps using) and the six
-  collection hues.
+- **Tokens.** One tokens file (`src/client/app.css`): the Mint garden theme
+  (`docs/design/theme/mint-garden.md`) on shadcn's CSS variables, light in `:root` and dark in
+  `.dark`, plus the app-specific tokens that carry meaning — the five artefact-kind colours and
+  tints and the six collection hues, in light and dark. The light kind colours mirror
+  `src/shared/kind-presentation.ts`, which the server-rendered shell keeps using.
 - **Port.** An app shell (TopBar + Sidebar + layout) and one component per screen: `Dashboard`,
   `SharedGallery`, `CollectionPage`, `Archive`, `AuthScreen`. Menus are `DropdownMenu`, modals
   `Dialog`, the delete confirmation `AlertDialog`, the toast `Sonner`, the visibility picker

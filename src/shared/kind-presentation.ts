@@ -2,7 +2,8 @@
 // ported from the Artefactor.dc.html design source. The server-rendered host
 // shell (`/a/:slug`) draws its chrome from all of it; the React SPA takes the
 // labels, and its kind colours are the `--kind-*` tokens in
-// src/client/app.css, kept equal to these by src/client/lib/tokens.test.ts.
+// src/client/app.css — the Mint garden light values — kept equal to these by
+// src/client/lib/tokens.test.ts.
 // Pure data — no framework imports.
 
 import type { ArtefactKind } from "../domain/artefact/kind";
@@ -17,8 +18,8 @@ export interface KindPresentation {
 export const KIND_PRESENTATION: Record<ArtefactKind, KindPresentation> = {
   prototype: {
     label: "Prototype",
-    color: "#2563eb",
-    tint: "rgba(37,99,235,0.12)",
+    color: "oklch(0.56 0.09 170)",
+    tint: "oklch(0.56 0.09 170 / 12%)",
     icon: [
       "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
       "M3 9h18",
@@ -26,14 +27,14 @@ export const KIND_PRESENTATION: Record<ArtefactKind, KindPresentation> = {
   },
   "slide-deck": {
     label: "Slide deck",
-    color: "#d97706",
-    tint: "rgba(217,119,6,0.13)",
+    color: "oklch(0.64 0.13 55)",
+    tint: "oklch(0.64 0.13 55 / 13%)",
     icon: ["M2 3h20", "M21 3v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3", "M7 21l5-4 5 4"],
   },
   form: {
     label: "Form",
-    color: "#16a34a",
-    tint: "rgba(22,163,74,0.12)",
+    color: "oklch(0.56 0.11 240)",
+    tint: "oklch(0.56 0.11 240 / 12%)",
     icon: [
       "M9 2h6a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
       "M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2",
@@ -43,8 +44,8 @@ export const KIND_PRESENTATION: Record<ArtefactKind, KindPresentation> = {
   },
   "interactive-doc": {
     label: "Interactive doc",
-    color: "#7c3aed",
-    tint: "rgba(124,58,237,0.13)",
+    color: "oklch(0.60 0.14 350)",
+    tint: "oklch(0.60 0.14 350 / 12%)",
     icon: [
       "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z",
       "M14 2v6h6",
@@ -54,8 +55,8 @@ export const KIND_PRESENTATION: Record<ArtefactKind, KindPresentation> = {
   },
   other: {
     label: "Other",
-    color: "#64748b",
-    tint: "rgba(100,116,139,0.12)",
+    color: "oklch(0.55 0.02 160)",
+    tint: "oklch(0.55 0.02 160 / 12%)",
     icon: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6"],
   },
 };

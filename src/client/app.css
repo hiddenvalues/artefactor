@@ -2,11 +2,12 @@
 @import "tw-animate-css";
 
 /* ------------------------------------------------------------------ *
- * The one tokens file (S43). shadcn/ui's stock CSS variables (neutral
- * base, default radius), plus the app-specific tokens that carry
- * meaning: the artefact-kind colours and tints, and the collection hues.
- * No other client file may hold a raw colour literal — `pnpm lint`
- * enforces it; components reach these through Tailwind classes or
+ * The one tokens file (S43): the Mint garden theme
+ * (docs/design/theme/mint-garden.md) on shadcn/ui's CSS variables, light
+ * in `:root` and dark in `.dark`, plus the app-specific tokens that carry
+ * meaning: the artefact-kind colours and tints, and the collection hues,
+ * in both. No other client file may hold a raw colour literal — `pnpm
+ * lint` enforces it; components reach these through Tailwind classes or
  * `var(--…)`.
  * ------------------------------------------------------------------ */
 
@@ -49,82 +50,102 @@
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
+  --background: #fff;
   --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
+  --card: #fff;
   --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
+  --popover: #fff;
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.85 0.05 170);
+  --primary-foreground: oklch(0.26 0.05 150);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: oklch(0.577 0.245 27.3);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --sidebar: oklch(0.985 0 0);
+  --ring: oklch(0.62 0.1 170);
+  --sidebar: #fff;
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.85 0.05 170);
+  --sidebar-primary-foreground: oklch(0.26 0.05 150);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: oklch(0.62 0.1 170);
 
   /* Artefact kinds — mirrors src/shared/kind-presentation.ts, which the
    * server-rendered host shell reads (a test keeps the two in step). */
-  --kind-prototype: #2563eb;
-  --kind-prototype-tint: rgba(37, 99, 235, 0.12);
-  --kind-slide-deck: #d97706;
-  --kind-slide-deck-tint: rgba(217, 119, 6, 0.13);
-  --kind-form: #16a34a;
-  --kind-form-tint: rgba(22, 163, 74, 0.12);
-  --kind-interactive-doc: #7c3aed;
-  --kind-interactive-doc-tint: rgba(124, 58, 237, 0.13);
-  --kind-other: #64748b;
-  --kind-other-tint: rgba(100, 116, 139, 0.12);
+  --kind-prototype: oklch(0.56 0.09 170);
+  --kind-prototype-tint: oklch(0.56 0.09 170 / 12%);
+  --kind-slide-deck: oklch(0.64 0.13 55);
+  --kind-slide-deck-tint: oklch(0.64 0.13 55 / 13%);
+  --kind-form: oklch(0.56 0.11 240);
+  --kind-form-tint: oklch(0.56 0.11 240 / 12%);
+  --kind-interactive-doc: oklch(0.60 0.14 350);
+  --kind-interactive-doc-tint: oklch(0.60 0.14 350 / 12%);
+  --kind-other: oklch(0.55 0.02 160);
+  --kind-other-tint: oklch(0.55 0.02 160 / 12%);
 
   /* Collection hues — a collection keeps the one its id hashes to for life. */
-  --collection-1: #2563eb;
-  --collection-2: #7c3aed;
-  --collection-3: #0f766e;
-  --collection-4: #d97706;
-  --collection-5: #db2777;
-  --collection-6: #16a34a;
+  --collection-1: oklch(0.58 0.09 170);
+  --collection-2: oklch(0.64 0.13 40);
+  --collection-3: oklch(0.56 0.11 240);
+  --collection-4: oklch(0.68 0.13 70);
+  --collection-5: oklch(0.62 0.14 350);
+  --collection-6: oklch(0.50 0.10 145);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --background: oklch(0.11 0.02 150);
+  --foreground: oklch(0.97 0.02 90);
+  --card: oklch(0.155 0.025 150);
+  --card-foreground: oklch(0.97 0.02 90);
+  --popover: oklch(0.155 0.025 150);
+  --popover-foreground: oklch(0.97 0.02 90);
+  --primary: oklch(0.85 0.05 170);
+  --primary-foreground: oklch(0.26 0.05 150);
+  --secondary: oklch(0.21 0.025 150);
+  --secondary-foreground: oklch(0.97 0.02 90);
+  --muted: oklch(0.21 0.025 150);
+  --muted-foreground: oklch(0.78 0.03 150);
+  --accent: oklch(0.25 0.035 150);
+  --accent-foreground: oklch(0.85 0.05 170);
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.85 0.05 170);
+  --sidebar: oklch(0.155 0.025 150);
+  --sidebar-foreground: oklch(0.97 0.02 90);
+  --sidebar-primary: oklch(0.85 0.05 170);
+  --sidebar-primary-foreground: oklch(0.26 0.05 150);
+  --sidebar-accent: oklch(0.25 0.035 150);
+  --sidebar-accent-foreground: oklch(0.85 0.05 170);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.85 0.05 170);
+
+  /* Artefact kinds and collection hues in dark. The host shell stays light,
+   * so it has no dark mirror. */
+  --kind-prototype: oklch(0.85 0.06 170);
+  --kind-prototype-tint: oklch(0.85 0.06 170 / 16%);
+  --kind-slide-deck: oklch(0.80 0.11 60);
+  --kind-slide-deck-tint: oklch(0.80 0.11 60 / 16%);
+  --kind-form: oklch(0.78 0.08 240);
+  --kind-form-tint: oklch(0.78 0.08 240 / 16%);
+  --kind-interactive-doc: oklch(0.80 0.09 350);
+  --kind-interactive-doc-tint: oklch(0.80 0.09 350 / 16%);
+  --kind-other: oklch(0.74 0.02 160);
+  --kind-other-tint: oklch(0.74 0.02 160 / 16%);
+
+  --collection-1: oklch(0.85 0.05 170);
+  --collection-2: oklch(0.80 0.08 40);
+  --collection-3: oklch(0.76 0.08 240);
+  --collection-4: oklch(0.80 0.10 75);
+  --collection-5: oklch(0.80 0.09 350);
+  --collection-6: oklch(0.72 0.08 145);
 }
 
 @layer base {
