@@ -32,7 +32,8 @@ export function previewId(path: string): string {
   return [...sub.split("/").filter(Boolean), name].map(kebab).join("-");
 }
 
-/** The catalog group: the stock shadcn/ui primitives, or the app's own components. */
-export function previewGroup(path: string): "UI" | "App" {
-  return /\/components\/ui\//.test(path) ? "UI" : "App";
+/** The catalog group: the stock shadcn/ui primitives, the theme specimen, or the app's own components. */
+export function previewGroup(path: string): "UI" | "App" | "Theme" {
+  if (/\/components\/ui\//.test(path)) return "UI";
+  return /\/components\/theme\//.test(path) ? "Theme" : "App";
 }

@@ -78,6 +78,38 @@ describe.skipIf(!runBrowserTests)("the design catalog in Chromium", { timeout: 1
     await page.close();
   });
 
+  it("renders the Theme page's five sections, the dark column mirroring the light one", async () => {
+    const { page, errors } = await open("components/theme-theme-specimen.html");
+    const specimens = page.locator('[data-slot="theme-specimen"]');
+    expect(await specimens.evaluateAll((els) => els.map((e) => e.getAttribute("data-section")))).toEqual([
+      "colours",
+      "product",
+      "type",
+      "radius",
+      "in-use",
+    ]);
+    for (const name of ["Colours", "Product colours", "Type", "Radius", "In use"])
+      expect(await page.getByText(name, { exact: true }).count(), name).toBe(1);
+
+    const colours = page.locator('[data-section="colours"]');
+    const light = await colours.locator('[data-column="light"] [data-swatch]').count();
+    expect(light).toBeGreaterThan(0);
+    expect(await colours.locator('.dark[data-column="dark"] [data-swatch]').count()).toBe(light);
+    expect(errors).toEqual([]);
+    await page.close();
+  });
+
+  it("reads the theme from tokens only: a :root override restyles the primary swatch", async () => {
+    const { page } = await open("components/theme-theme-specimen.html");
+    const swatch = page.locator('[data-section="colours"] [data-column="light"] [data-swatch="primary"]');
+    const background = () => swatch.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const before = await background();
+    await page.evaluate(() => document.documentElement.style.setProperty("--primary", "rgb(255, 0, 128)"));
+    expect(await background()).toBe("rgb(255, 0, 128)");
+    expect(before).not.toBe("rgb(255, 0, 128)");
+    await page.close();
+  });
+
   it("closes a busy dialog preview on Escape and hands focus back to its launcher", async () => {
     const { page, errors } = await open("index.html");
     const launcher = page.getByRole("button", { name: "Open busy confirm" });

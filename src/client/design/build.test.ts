@@ -52,6 +52,12 @@ describe("the production client build", { timeout: 120_000 }, () => {
     expect(leaking).toEqual([]);
   });
 
+  it("carries no design-only component", () => {
+    // ThemeSpecimen (lib/components/theme/) is catalog-only: the app never imports it.
+    const slot = ["theme", "specimen"].join("-");
+    expect(files.filter((f) => readFileSync(join(out, f), "latin1").includes(slot))).toEqual([]);
+  });
+
   it("carries none of the design safelist", () => {
     const css = builtCss(out);
     expect(SAFELIST_ONLY.filter((selector) => css.includes(selector))).toEqual([]);

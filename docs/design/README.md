@@ -57,9 +57,15 @@ pnpm design:export    # dist/design: the catalog + one standalone page per previ
 ```
 
 A standalone page is `dist/design/components/<id>.html`, or `?preview=<id>` in dev. Its first
-line is Claude design's card marker (`<!-- @dsCard group="UI" -->` or `group="App"`), and it opens
-the preview's main dialog or menu, so the card shows the thing itself. `/design-sync` uploads
-these pages. The catalog is dev-only: nothing of it reaches `pnpm build`'s `dist/client`.
+line is Claude design's card marker (`<!-- @dsCard group="UI" -->`, `group="App"` or
+`group="Theme"`), and it opens the preview's main dialog or menu, so the card shows the thing
+itself. `/design-sync` uploads these pages. The catalog is dev-only: nothing of it reaches `pnpm
+build`'s `dist/client`.
+
+The catalog's **Theme** group holds one card, `ThemeSpecimen`
+(`src/client/lib/components/theme/`), which shows every token: colours light and dark, product
+colours, type, radius and components in use, all read through `var(--…)` only. After a theme
+hand-back lands and `/design-sync` runs, that card is the check that it landed.
 
 The export's stylesheet also carries a safelist of common Tailwind utilities
 (`src/client/design/safelist.css`), so designs made in Claude design can use them even where the

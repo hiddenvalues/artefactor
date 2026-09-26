@@ -44,6 +44,11 @@ describe("component preview coverage", () => {
     expect(previewGroup(`${base}/ArtefactCard.preview.tsx`)).toBe("App");
   });
 
+  it("puts the theme specimen in its own Theme group", () => {
+    expect(previewId(`${base}/theme/ThemeSpecimen.preview.tsx`)).toBe("theme-theme-specimen");
+    expect(previewGroup(`${base}/theme/ThemeSpecimen.preview.tsx`)).toBe("Theme");
+  });
+
   it("finds a preview for every component in the client as it stands", () => {
     const tree = componentTree();
     expect(tree.length).toBeGreaterThan(0);

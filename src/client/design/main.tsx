@@ -11,11 +11,12 @@ import { CATALOG_MARKER, type DefinedPreview } from "./preview";
 import { previewGroup, previewId } from "./registry";
 
 // The design catalog: every component's preview on one page, grouped UI (the
-// stock shadcn/ui primitives) then App. A standalone page (the export's
+// stock shadcn/ui primitives), App, then Theme (the tokens themselves). A standalone page (the export's
 // components/<id>.html, or ?preview=<id> in dev) narrows it to one preview.
 
 const modules = import.meta.glob<{ default: DefinedPreview }>("../lib/components/**/*.preview.tsx", { eager: true });
-const GROUPS = ["UI", "App"] as const;
+const GROUPS = ["UI", "App", "Theme"] as const;
+const HEADINGS: Record<(typeof GROUPS)[number], string> = { UI: "UI primitives", App: "App components", Theme: "Theme" };
 
 const entries = Object.entries(modules)
   .map(([path, m]) => ({ id: previewId(path), group: previewGroup(path), preview: m.default }))
@@ -89,7 +90,7 @@ function Catalog() {
       <main className="flex min-w-0 flex-1 flex-col gap-12 p-8">
         {GROUPS.map((g) => (
           <div key={g} className="flex flex-col gap-10">
-            <h1 className="text-2xl font-bold">{g === "UI" ? "UI primitives" : "App components"}</h1>
+            <h1 className="text-2xl font-bold">{HEADINGS[g]}</h1>
             {entries
               .filter((e) => e.group === g)
               .map((e) => (
