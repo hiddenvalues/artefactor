@@ -341,7 +341,10 @@ export function renderHostShell(ctx: HostShellContext): string {
   .ae-viewers-name { font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ae-viewers-meta { font-size: 12px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ae-viewers-empty { padding: .5rem .4rem; font-size: 13px; color: var(--muted-foreground); }
-  .ae-frame { flex: 1 1 auto; width: 100%; border: 0; }
+  /* The iframe's used color-scheme is the artefact's preferred one and decides
+     whether its canvas shows through, so the chrome's theme stops here: the
+     frame keeps the browser default whatever the viewer picked (S36, S45). */
+  .ae-frame { flex: 1 1 auto; width: 100%; border: 0; color-scheme: normal; }
   .ae-conflict { flex: 0 0 auto; display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem; font-size: 13px; color: var(--warn-fg); background: var(--warn-bg); border-bottom: 1px solid var(--warn-border); }
   .ae-conflict[hidden] { display: none; }
   .ae-conflict span { margin-right: auto; }

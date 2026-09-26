@@ -114,11 +114,11 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     return { name, email, cookie: res.headers.get("set-cookie")!.split(";")[0]! };
   }
 
-  async function createArtefact(u: User, title: string, kind = "prototype"): Promise<ArtefactSummary> {
+  async function createArtefact(u: User, title: string, kind = "prototype", payload = html(title)): Promise<ArtefactSummary> {
     const form = new FormData();
     form.set("title", title);
     form.set("kind", kind);
-    form.set("payload", new File([html(title)], "a.html"));
+    form.set("payload", new File([payload], "a.html"));
     const res = await app.request("/api/artefacts", { method: "POST", body: form, headers: { cookie: u.cookie } });
     expect(res.status).toBe(201);
     return (await res.json()) as ArtefactSummary;
@@ -651,8 +651,8 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
       await control(page, label).click();
     };
 
-    async function publicSlug(u: User, title: string): Promise<string> {
-      const a = await createArtefact(u, title);
+    async function publicSlug(u: User, title: string, payload?: string): Promise<string> {
+      const a = await createArtefact(u, title, "prototype", payload);
       await setVisibility(u, a.id, "public");
       const got = (await (await app.request(`/api/artefacts/${a.id}`, { headers: { cookie: u.cookie } })).json()) as ArtefactSummary;
       return got.publicSlug!;
@@ -750,6 +750,64 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
       const dark = await frameBody("dark");
       expect(dark.length).toBeGreaterThan(0);
       expect(dark.equals(light)).toBe(true);
+    });
+
+    // The iframe element's used color-scheme is the embedded document's
+    // preferred one (CSS Color Adjust), so the shell's own `color-scheme` must
+    // not reach the frame: a theme-responsive artefact follows the OS alone.
+    it("keeps a theme-responsive artefact on the OS scheme whatever the viewer's theme", async () => {
+      const responsive = `<!doctype html><html><head><style>body{background:white}@media (prefers-color-scheme: dark){body{background:black}}</style></head><body><h1>Responsive</h1></body></html>`;
+      const slug = await publicSlug(await newUser(), "Responsive", responsive);
+      const inFrame = async (theme: string) => {
+        const ctx = await context(undefined, "light");
+        await storeTheme(ctx, theme);
+        const page = await ctx.newPage();
+        await page.goto(`${ORIGIN}/a/${slug}`);
+        expect(await isDark(page)).toBe(theme === "dark");
+        let frame = page.frames().find((f) => new URL(f.url()).pathname === `/a/${slug}/frame`);
+        await eventually(() => {
+          frame = page.frames().find((f) => new URL(f.url()).pathname === `/a/${slug}/frame`);
+          expect(frame).toBeDefined();
+        });
+        await frame!.waitForSelector("h1");
+        const seen = await frame!.evaluate(() => ({
+          prefersDark: matchMedia("(prefers-color-scheme: dark)").matches,
+          body: getComputedStyle(document.body).backgroundColor,
+        }));
+        await page.close();
+        return seen;
+      };
+      const light = await inFrame("light");
+      const dark = await inFrame("dark");
+      expect(light.prefersDark).toBe(false);
+      expect(dark).toEqual(light);
+    });
+
+    // An artefact that opts into both schemes and paints no background shows
+    // its canvas — opaque or see-through depending on whether the iframe's used
+    // color-scheme matches its own. The frame must look the same either way.
+    it("renders an artefact that opts into color-scheme identically under either viewer theme", async () => {
+      const optIn = `<!doctype html><html><head><style>:root{color-scheme: light dark}</style></head><body><h1>Opt in</h1></body></html>`;
+      const slug = await publicSlug(await newUser(), "Opt in", optIn);
+      const shot = async (theme: string) => {
+        const ctx = await context(undefined, "dark");
+        await storeTheme(ctx, theme);
+        const page = await ctx.newPage();
+        await page.goto(`${ORIGIN}/a/${slug}`);
+        await eventually(async () => {
+          const f = page.frames().find((fr) => new URL(fr.url()).pathname === `/a/${slug}/frame`);
+          expect(f).toBeDefined();
+          await f!.waitForSelector("h1", { timeout: 1000 });
+        });
+        const scheme = await page.evaluate(() => getComputedStyle(document.getElementById("ae-frame")!).colorScheme);
+        const png = await page.locator("#ae-frame").screenshot();
+        await page.close();
+        return { scheme, png };
+      };
+      const light = await shot("light");
+      const dark = await shot("dark");
+      expect(dark.scheme).toBe(light.scheme);
+      expect(dark.png.equals(light.png)).toBe(true);
     });
 
     it("gives an anonymous OS-dark viewer of a public link a dark shell", async () => {

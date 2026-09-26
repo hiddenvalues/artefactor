@@ -258,7 +258,9 @@ byte-identical whatever the viewer's theme — an artefact renders exactly as au
   form for the shell (`:root` + `.dark`, driven by `THEME_BOOT_JS`) and a **media** form for the
   script-free unlock page (`:root` + `@media (prefers-color-scheme: dark)`). The shell carries no
   colour literal of its own; `KindPresentation` gains `darkColor`/`darkTint` and the kind icon
-  strokes with `var(--kind)`. Nothing is injected into the frame.
+  strokes with `var(--kind)`. Nothing is injected into the frame, and the iframe element keeps
+  `color-scheme: normal`: its used scheme is the artefact's preferred one, so the chrome's theme
+  must not reach it.
 
 **Acceptance:** `resolveTheme` maps system/OS, light and dark as named, and an unknown or missing
 stored value restores as `system`; the boot script, evaluated with injected globals, sets `.dark`
