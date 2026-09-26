@@ -1,4 +1,4 @@
-import { ChevronDown, LogOut, Menu, Plus, Search } from "lucide-react";
+import { ChevronDown, LogOut, Menu, Monitor, Moon, Plus, Search, Sun } from "lucide-react";
 import { Avatar, AvatarFallback } from "$lib/components/ui/avatar";
 import { Button } from "$lib/components/ui/button";
 import {
@@ -6,14 +6,24 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "$lib/components/ui/dropdown-menu";
 import { Input } from "$lib/components/ui/input";
 import { initials } from "../format";
+import { THEMES, useTheme, type Theme } from "../theme";
 import type { View } from "../view";
 import { cn } from "../utils";
 import { Logo } from "./Logo";
+
+// S45 — the avatar menu's theme choice.
+const THEME_OPTIONS: Record<Theme, { label: string; Icon: typeof Sun }> = {
+  light: { label: "Light", Icon: Sun },
+  dark: { label: "Dark", Icon: Moon },
+  system: { label: "System", Icon: Monitor },
+};
 
 export function TopBar({
   view,
@@ -40,6 +50,7 @@ export function TopBar({
   onToggleSidebar: () => void;
 }) {
   const displayName = user.name || user.email;
+  const { theme, setTheme } = useTheme();
   // Plain buttons (not roving tabs): Tab reaches both views.
   const tab = (active: boolean) =>
     cn("h-7 px-3.5 font-medium", active ? "bg-background shadow-sm hover:bg-background" : "text-muted-foreground");
@@ -119,6 +130,19 @@ export function TopBar({
                 <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
               </span>
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Theme</DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)}>
+              {THEMES.map((t) => {
+                const { label, Icon } = THEME_OPTIONS[t];
+                return (
+                  <DropdownMenuRadioItem key={t} value={t}>
+                    <Icon />
+                    {label}
+                  </DropdownMenuRadioItem>
+                );
+              })}
+            </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={onSignOut}>
               <LogOut />

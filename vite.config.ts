@@ -1,10 +1,19 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath } from "node:url";
+import { THEME_BOOT_JS } from "./src/shared/theme-boot";
+
+// S45 — inline the theme boot script at the top of index.html's <head>, ahead
+// of every stylesheet, so a dark-mode visitor never sees a light first paint.
+// The host shell inlines the same string (src/server/runtime/shell.ts).
+const themeBoot = (): Plugin => ({
+  name: "artefactor-theme-boot",
+  transformIndexHtml: () => [{ tag: "script", children: THEME_BOOT_JS, injectTo: "head-prepend" }],
+});
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), themeBoot()],
   resolve: {
     alias: {
       $lib: fileURLToPath(new URL("./src/client/lib", import.meta.url)),

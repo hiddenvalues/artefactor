@@ -6,13 +6,15 @@ import {
   TriangleAlertIcon,
 } from "lucide-react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
+import { useTheme } from "$lib/theme"
 
-// Stock shadcn/ui Sonner, minus `next-themes`: nothing toggles dark mode (S43
-// leaves it out of scope), so the toaster is pinned to the light theme.
+// Stock shadcn/ui Sonner, with our `useTheme` (S45) standing in for
+// `next-themes`: the toaster follows the app's resolved light/dark theme.
 const Toaster = ({ ...props }: ToasterProps) => {
+  const { resolved } = useTheme()
   return (
     <Sonner
-      theme="light"
+      theme={resolved}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,

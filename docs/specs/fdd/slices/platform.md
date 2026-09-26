@@ -199,7 +199,8 @@ only the look changes.
   (`docs/design/theme/mint-garden.md`) on shadcn's CSS variables, light in `:root` and dark in
   `.dark`, plus the app-specific tokens that carry meaning — the five artefact-kind colours and
   tints and the six collection hues, in light and dark. The light kind colours mirror
-  `src/shared/kind-presentation.ts`, which the server-rendered shell keeps using.
+  `src/shared/kind-presentation.ts`, which the server-rendered shell keeps using. S45 — App dark
+  mode with a UI toggle adds the dark kind values there too, once the shell follows the theme.
 - **Port.** An app shell (TopBar + Sidebar + layout) and one component per screen: `Dashboard`,
   `SharedGallery`, `CollectionPage`, `Archive`, `AuthScreen`. Menus are `DropdownMenu`, modals
   `Dialog`, the delete confirmation `AlertDialog`, the toast `Sonner`, the visibility picker
@@ -221,3 +222,56 @@ no Svelte runtime.
 
 - **Boundary:** **OSS** (core client). Up-sync is held until the design system stabilizes
   (ALI-382).
+
+### S45 — App dark mode with a UI toggle
+
+- **Status:** in progress
+- **Depends on:** S43, S36
+- **Linear:** ALI-410
+
+The app applies the Mint garden `.dark` values S43 already ships, behind a toggle, and the
+server-rendered host shell (`/a/:slug`) and unlock page move onto Mint garden in light and dark.
+Theme is host presentation and touches no domain invariant. The one rule it respects is the
+sandboxed frame (S36): the theme lives only in the host chrome, and the frame's payload response is
+byte-identical whatever the viewer's theme — an artefact renders exactly as authored.
+
+- **Preference.** `src/client/lib/theme.ts`: `THEMES = ["light", "dark", "system"]`, a per-browser
+  UI preference stored under `artefactor:theme` through `lib/prefs.ts` (the class of
+  view/density/sort — never the artefact's hijacked store, never the backend); the default, and the
+  fallback for an unknown value, is `system`. `resolveTheme(pref, prefersDark)` is pure.
+  `useTheme()` gives `{ theme, resolved, setTheme }` from one `ThemeProvider` at the app root
+  (`App.tsx`, so the auth screen follows too), which persists through `usePref`, follows
+  `matchMedia("(prefers-color-scheme: dark)")` while the pref is `system`, and toggles `.dark` on
+  `<html>`. `app.css` sets `color-scheme` in `:root` and `.dark`, so native controls follow.
+- **No flash.** `src/shared/theme-boot.ts` exports `THEME_BOOT_JS`, one dependency-free script
+  that reads `artefactor:theme` (a throw counts as `system`), resolves it against the OS and sets
+  `.dark` on `<html>` synchronously, and keeps following the OS while the pref is `system`. Vite's
+  `transformIndexHtml` inlines it at the top of `index.html`'s `<head>` (dev and build); the host
+  shell inlines the same string in its own `<head>`. There is one copy of the resolution logic.
+- **Toggle and toast.** The TopBar avatar menu has a **Theme** radio group — Light, Dark, System —
+  above Sign out. The auth screen and the host shell have no toggle: they apply the stored choice,
+  else the OS. The Sonner toaster takes `resolved` in place of the pinned light theme.
+- **Host shell and unlock page.** `src/server/runtime/shell-theme.ts` holds the chrome's tokens as
+  Mint garden values in light and dark (background, foreground, card, muted, muted-foreground,
+  border, primary, primary-foreground, ring), plus shell-local `--warn-bg`/`--warn-fg`/
+  `--warn-border` for the read-only badge and the conflict/expired banners. It emits a **class**
+  form for the shell (`:root` + `.dark`, driven by `THEME_BOOT_JS`) and a **media** form for the
+  script-free unlock page (`:root` + `@media (prefers-color-scheme: dark)`). The shell carries no
+  colour literal of its own; `KindPresentation` gains `darkColor`/`darkTint` and the kind icon
+  strokes with `var(--kind)`. Nothing is injected into the frame.
+
+**Acceptance:** `resolveTheme` maps system/OS, light and dark as named, and an unknown or missing
+stored value restores as `system`; the boot script, evaluated with injected globals, sets `.dark`
+for stored dark, OS dark with nothing stored, and OS dark when `localStorage` throws (without
+throwing), leaves it off for stored light under OS dark, and follows a media change only while the
+pref is `system`; `shell-theme.ts` tokens and the dark kind values equal their `app.css`
+counterparts; the rendered shell has `THEME_BOOT_JS` ahead of its `<style>`, no hex/rgb literal,
+and a `var(--kind)` icon; the unlock page has a dark `@media` block and no `<script>`. In Chromium:
+an OS-dark visitor with nothing stored gets `.dark` and the dark background before the bundle runs;
+the avatar menu's Light/Dark/System apply, persist across a reload and (System) follow the OS live;
+a toast in dark mode renders dark; `/a/:slug` with stored dark has a dark toolbar, and an anonymous
+OS-dark viewer of a public link a dark shell; the frame's payload body is identical under stored
+light and dark.
+
+- **Boundary:** **OSS** (core client, shared and serving runtime). Up-sync is held until the design
+  system stabilizes (ALI-382).

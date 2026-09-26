@@ -692,10 +692,11 @@ describe("the real specs", () => {
     expect(validateSliceDag(coreDag)).toEqual([]);
   });
 
-  it("loads exactly the core slices S0–S43 plus S34b (S19 and S32 each split into a + b)", () => {
+  // S44 is allocated to ALI-394, not yet on main; S45 — App dark mode with a UI toggle sits past it.
+  it("loads exactly the core slices S0–S43, S45 plus S34b (S19 and S32 each split into a + b)", () => {
     const expected = Array.from({ length: 44 }, (_, n) => `S${n}`)
       .flatMap((id) => (id === "S19" || id === "S32" ? [`${id}a`, `${id}b`] : [id]))
-      .concat("S34b");
+      .concat("S34b", "S45");
     expect(coreDag.map((s) => s.id).sort()).toEqual(expected.sort());
   });
 
