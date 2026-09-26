@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { SHELL_TOKENS, type ShellMode } from "../../server/runtime/shell-theme";
 import { KIND_ORDER, KIND_PRESENTATION } from "../../shared/kind-presentation";
 import { COLLECTION_HUE_COUNT, collectionColor } from "./format";
 
 // S43 — the one tokens file carries the Mint garden theme
 // (docs/design/theme/mint-garden.md) and the app-specific colours, in light
-// (`:root`) and dark (`.dark`). The light kind colours also live in
-// `shared/kind-presentation.ts` for the server-rendered host shell, so the two
-// must not drift apart.
+// (`:root`) and dark (`.dark`). S45 — the server-rendered host shell follows
+// the viewer's theme too, so the kind colours in `shared/kind-presentation.ts`
+// (light and dark) and the shell's chrome tokens in
+// `server/runtime/shell-theme.ts` must not drift from these.
 const css = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 
 /** The declarations of the top-level rule whose selector is exactly `selector`. */
@@ -109,5 +111,38 @@ describe("app tokens (S43)", () => {
     expect(light("background")).toBe("#fff");
     expect(dark("background")).toBe("oklch(0.11 0.02 150)");
     expect(dark("destructive")).toBe("oklch(0.704 0.191 22.216)");
+  });
+
+  it.each(KIND_ORDER)("defines the dark %s kind colour and tint as the shared presentation has them (S45)", (kind) => {
+    expect(dark(`kind-${kind}`)).toBe(KIND_PRESENTATION[kind].darkColor);
+    expect(dark(`kind-${kind}-tint`)).toBe(KIND_PRESENTATION[kind].darkTint);
+  });
+});
+
+// The shell writes white as `oklch(1 0 0)` so it carries no hex literal; app.css
+// writes it `#fff`. The same colour either way.
+const canon = (value: string) => (/^#f{3}(f{3})?$/i.test(value) ? "oklch(1 0 0)" : value);
+
+describe("host shell tokens (S45)", () => {
+  const CHROME = [
+    "background", "foreground", "card", "muted", "muted-foreground", "border", "primary", "primary-foreground", "ring",
+  ];
+  const app: Record<ShellMode, (name: string) => string | null> = { light, dark };
+
+  it.each(["light", "dark"] as const)("keeps every %s shell token named like an app.css token equal to it", (mode) => {
+    const shared = Object.entries(SHELL_TOKENS[mode]).filter(([name]) => app[mode](name) !== null);
+    expect(shared.map(([name]) => name)).toEqual(expect.arrayContaining(CHROME));
+    for (const [name, value] of shared) expect(canon(value), `--${name}`).toBe(canon(app[mode](name)!));
+  });
+
+  it("gives light and dark the same token names", () => {
+    expect(Object.keys(SHELL_TOKENS.dark).sort()).toEqual(Object.keys(SHELL_TOKENS.light).sort());
+  });
+
+  // The read-only badge and the conflict/expired banners set warning text on the warning background.
+  it.each(["light", "dark"] as const)("draws the %s warning text at 4.5:1 on the warning background", (mode) => {
+    const fg = oklchToSrgb(parseOklch(SHELL_TOKENS[mode]["warn-fg"]));
+    const bg = oklchToSrgb(parseOklch(SHELL_TOKENS[mode]["warn-bg"]));
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5);
   });
 });

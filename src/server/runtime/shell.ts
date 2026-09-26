@@ -22,10 +22,17 @@
 // The toolbar shows the same icon / title / kind as the SPA list view (shared
 // `kind-presentation`), plus — for signed-in viewers only — a back button to the
 // admin UI. Anonymous (public-link) viewers have no admin UI, so it's hidden.
+//
+// S45 — the chrome wears Mint garden in the viewer's theme: the stored SPA
+// choice, else the OS (THEME_BOOT_JS sets `.dark` before first paint; the
+// tokens are shell-theme.ts). The frame never does: its payload is the same
+// whatever the viewer's theme.
 
 import type { ArtefactKind } from "../../domain/artefact/kind";
 import { kindPresentation } from "../../shared/kind-presentation";
+import { THEME_BOOT_JS } from "../../shared/theme-boot";
 import { FRAME_ALLOW, FRAME_SANDBOX_FLAGS } from "./sandbox";
+import { shellThemeCss } from "./shell-theme";
 
 export interface HostShellContext {
   title: string;
@@ -288,28 +295,29 @@ export function renderHostShell(ctx: HostShellContext): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(ctx.title)}</title>
+<script>${THEME_BOOT_JS}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --fg: #09090b; --muted-fg: #71717a; --border: #e9e9ec; --card: #fff;
-    --muted: #f4f4f5; --shadow: 0 1px 2px rgba(16,17,18,0.05);
-  }
+  ${shellThemeCss("class", {
+    light: { kind: meta.color, "kind-tint": meta.tint },
+    dark: { kind: meta.darkColor, "kind-tint": meta.darkTint },
+  })}
   *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
-  body { display: flex; flex-direction: column; font: 14px/1.4 "Geist", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: #fff; -webkit-font-smoothing: antialiased; }
-  .ae-bar { flex: 0 0 auto; display: flex; align-items: center; gap: .7rem; padding: .5rem .75rem; border-bottom: 1px solid var(--border); background: var(--card); }
-  .ae-back { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); text-decoration: none; box-shadow: var(--shadow); }
+  body { display: flex; flex-direction: column; font: 14px/1.4 "Geist", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; color: var(--foreground); background: var(--background); -webkit-font-smoothing: antialiased; }
+  .ae-bar { flex: 0 0 auto; display: flex; align-items: center; gap: .7rem; padding: .5rem .75rem; border-bottom: 1px solid var(--border); background: var(--background); }
+  .ae-back { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-decoration: none; box-shadow: var(--shadow); }
   .ae-back:hover { background: var(--muted); }
   .ae-id { display: flex; align-items: center; gap: .6rem; min-width: 0; margin-right: auto; }
-  .ae-tile { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: 0 0 auto; border-radius: 9px; background: ${meta.tint}; }
+  .ae-tile { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: 0 0 auto; border-radius: 9px; background: var(--kind-tint); }
   .ae-text { min-width: 0; }
   .ae-title { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ae-sub { font-size: 12px; color: var(--muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ae-bar label { color: var(--muted-fg); font-size: 13px; }
-  .ae-bar select { font: inherit; font-size: 13px; padding: .3rem .5rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); max-width: 40vw; color: var(--fg); }
-  .ae-ro { display: none; font-size: 12px; font-weight: 600; color: #9a6700; background: #fff8c5; border: 1px solid #eac54f; border-radius: 999px; padding: .1rem .5rem; }
+  .ae-sub { font-size: 12px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ae-bar label { color: var(--muted-foreground); font-size: 13px; }
+  .ae-bar select { font: inherit; font-size: 13px; padding: .3rem .5rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); max-width: 40vw; color: var(--foreground); }
+  .ae-ro { display: none; font-size: 12px; font-weight: 600; color: var(--warn-fg); background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 999px; padding: .1rem .5rem; }
   .ae-ro.show { display: inline; }
   /* The data-context picker is hidden until there is another author to switch
      to (S20); a non-persisting artefact never reveals it. */
@@ -322,22 +330,22 @@ export function renderHostShell(ctx: HostShellContext): string {
   /* S21 "viewed by" widget — a button beside the data-context switcher that
      opens a pop-over listing who else has viewed the artefact. */
   .ae-viewers { position: relative; }
-  .ae-viewers-btn { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-size: 13px; height: 32px; padding: 0 .6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); cursor: pointer; box-shadow: var(--shadow); }
+  .ae-viewers-btn { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-size: 13px; height: 32px; padding: 0 .6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); cursor: pointer; box-shadow: var(--shadow); }
   .ae-viewers-btn:hover { background: var(--muted); }
-  .ae-viewers-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--fg); color: #fff; font-size: 11px; font-weight: 600; line-height: 1; }
-  .ae-viewers-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; width: 280px; max-width: 80vw; max-height: 60vh; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(16,17,18,0.12); padding: .5rem; }
-  .ae-viewers-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-fg); padding: .25rem .4rem .4rem; }
+  .ae-viewers-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--foreground); color: var(--background); font-size: 11px; font-weight: 600; line-height: 1; }
+  .ae-viewers-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; width: 280px; max-width: 80vw; max-height: 60vh; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-pop); padding: .5rem; }
+  .ae-viewers-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); padding: .25rem .4rem .4rem; }
   .ae-viewers-list { list-style: none; margin: 0; padding: 0; }
   .ae-viewers-list li { display: flex; flex-direction: column; gap: .1rem; padding: .4rem; border-radius: 7px; }
   .ae-viewers-list li:hover { background: var(--muted); }
   .ae-viewers-name { font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ae-viewers-meta { font-size: 12px; color: var(--muted-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ae-viewers-empty { padding: .5rem .4rem; font-size: 13px; color: var(--muted-fg); }
+  .ae-viewers-meta { font-size: 12px; color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ae-viewers-empty { padding: .5rem .4rem; font-size: 13px; color: var(--muted-foreground); }
   .ae-frame { flex: 1 1 auto; width: 100%; border: 0; }
-  .ae-conflict { flex: 0 0 auto; display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem; font-size: 13px; color: #6b4a00; background: #fff8c5; border-bottom: 1px solid #eac54f; }
+  .ae-conflict { flex: 0 0 auto; display: flex; align-items: center; gap: .75rem; padding: .5rem .75rem; font-size: 13px; color: var(--warn-fg); background: var(--warn-bg); border-bottom: 1px solid var(--warn-border); }
   .ae-conflict[hidden] { display: none; }
   .ae-conflict span { margin-right: auto; }
-  .ae-conflict button { font: inherit; font-size: 13px; font-weight: 500; height: 28px; padding: 0 .7rem; border: 1px solid #d4a72c; border-radius: 7px; background: #fff; color: var(--fg); cursor: pointer; }
+  .ae-conflict button { font: inherit; font-size: 13px; font-weight: 500; height: 28px; padding: 0 .7rem; border: 1px solid var(--warn-border); border-radius: 7px; background: var(--card); color: var(--foreground); cursor: pointer; }
   .ae-conflict button:hover { background: var(--muted); }
 </style>
 </head>
@@ -346,7 +354,7 @@ export function renderHostShell(ctx: HostShellContext): string {
     ${backButton}
     <div class="ae-id">
       <div class="ae-tile">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${meta.color}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${kindIcon}</svg>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--kind)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${kindIcon}</svg>
       </div>
       <div class="ae-text">
         <div class="ae-title">${escapeHtml(ctx.title)}</div>

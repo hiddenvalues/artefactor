@@ -225,7 +225,7 @@ no Svelte runtime.
 
 ### S45 — App dark mode with a UI toggle
 
-- **Status:** in progress
+- **Status:** done
 - **Depends on:** S43, S36
 - **Linear:** ALI-410
 

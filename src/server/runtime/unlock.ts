@@ -2,6 +2,11 @@
 // a public link's password gate challenges the viewer. Server-rendered, no SPA
 // and no script. It names nothing about the artefact (not even its title): the
 // viewer has not proved the password yet.
+//
+// S45 — it wears Mint garden (shell-theme.ts) in light and dark. Having no
+// script, it can't read the viewer's stored choice, so it follows the OS.
+
+import { shellThemeCss } from "./shell-theme";
 
 export type UnlockError = "wrong" | "rate-limited";
 
@@ -24,18 +29,18 @@ export function renderUnlockPage(ctx: { slug: string; error?: UnlockError }): st
 <meta name="robots" content="noindex">
 <title>Password required · Artefactor</title>
 <style>
-  :root { color-scheme: light dark; --bg:#fafafa; --card:#fff; --fg:#18181b; --muted:#71717a; --border:#e4e4e7; --primary:#18181b; --primary-fg:#fff; --err:#dc2626; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#09090b; --card:#18181b; --fg:#fafafa; --muted:#a1a1aa; --border:#27272a; --primary:#fafafa; --primary-fg:#18181b; --err:#f87171; } }
+  ${shellThemeCss("media")}
   * { box-sizing: border-box; }
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; background:var(--muted); color:var(--foreground); font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { width:100%; max-width:360px; background:var(--card); border:1px solid var(--border); border-radius:16px; padding:28px 24px; }
   h1 { margin:0 0 4px; font-size:17px; font-weight:600; }
-  p { margin:0 0 18px; color:var(--muted); font-size:13px; }
+  p { margin:0 0 18px; color:var(--muted-foreground); font-size:13px; }
   label { display:block; font-size:12.5px; font-weight:500; margin-bottom:6px; }
-  input { width:100%; height:40px; padding:0 12px; border:1px solid var(--border); border-radius:9px; background:transparent; color:var(--fg); font:inherit; }
-  button { width:100%; height:40px; margin-top:14px; border:none; border-radius:9px; background:var(--primary); color:var(--primary-fg); font:inherit; font-weight:600; cursor:pointer; }
+  input { width:100%; height:40px; padding:0 12px; border:1px solid var(--border); border-radius:9px; background:transparent; color:var(--foreground); font:inherit; }
+  input:focus-visible { outline:2px solid var(--ring); outline-offset:1px; }
+  button { width:100%; height:40px; margin-top:14px; border:none; border-radius:9px; background:var(--primary); color:var(--primary-foreground); font:inherit; font-weight:600; cursor:pointer; }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  .err { margin:12px 0 0; color:var(--err); font-size:12.5px; }
+  .err { margin:12px 0 0; color:var(--destructive); font-size:12.5px; }
 </style>
 </head>
 <body>

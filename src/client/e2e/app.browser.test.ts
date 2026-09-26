@@ -6,6 +6,7 @@ import type { ServerType } from "@hono/node-server";
 import type { Hono } from "hono";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { SHELL_TOKENS } from "../../server/runtime/shell-theme";
 import type { ArtefactSummary } from "../../shared/contracts";
 
 // S43 — React client on stock shadcn/ui: the behaviour suite. It drives the
@@ -137,8 +138,8 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     expect(res.ok).toBe(true);
   }
 
-  async function context(u?: User): Promise<BrowserContext> {
-    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  async function context(u?: User, colorScheme: "light" | "dark" = "light"): Promise<BrowserContext> {
+    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, colorScheme });
     await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: ORIGIN });
     if (u) {
       const eq = u.cookie.indexOf("=");
@@ -621,6 +622,144 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
         expect(names.some((n) => n.startsWith(want)), `Tab reaches ${want} (saw ${names.join(" | ")})`).toBe(true);
       expect(names.some((n) => n.startsWith("Search")), "Tab reaches the search box").toBe(true);
       expect(seen.filter((s) => !s.visibleFocus).map((s) => s.name)).toEqual([]);
+      await page.close();
+    });
+  });
+
+  // S45 — App dark mode with a UI toggle.
+  describe("theme", () => {
+    const DARK_BG = SHELL_TOKENS.dark.background; // = app.css `.dark` --background (tokens.test.ts)
+    const LIGHT_BG = SHELL_TOKENS.light.background;
+
+    // A colour as Chromium computes it, so it compares with a computed style.
+    const computed = (page: Page, colour: string) =>
+      page.evaluate((c) => {
+        const probe = document.createElement("div");
+        probe.style.backgroundColor = c;
+        document.body.appendChild(probe);
+        const out = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return out;
+      }, colour);
+    const isDark = (page: Page) => page.evaluate(() => document.documentElement.classList.contains("dark"));
+    const bgOf = (page: Page, selector: string) =>
+      page.evaluate((s) => getComputedStyle(document.querySelector(s)!).backgroundColor, selector);
+    const storeTheme = (ctx: BrowserContext, theme: string) =>
+      ctx.addInitScript((t) => localStorage.setItem("artefactor:theme", t), theme);
+    const chooseTheme = async (page: Page, label: string) => {
+      await openMenu(page, page.locator("[title='Account']"));
+      await control(page, label).click();
+    };
+
+    async function publicSlug(u: User, title: string): Promise<string> {
+      const a = await createArtefact(u, title);
+      await setVisibility(u, a.id, "public");
+      const got = (await (await app.request(`/api/artefacts/${a.id}`, { headers: { cookie: u.cookie } })).json()) as ArtefactSummary;
+      return got.publicSlug!;
+    }
+
+    it("paints an OS-dark visitor dark before the React bundle runs", async () => {
+      const page = await (await context(undefined, "dark")).newPage();
+      await page.route(/\/assets\/.*\.js$/, (route) => route.abort());
+      await page.goto(ORIGIN, { waitUntil: "domcontentloaded" });
+      expect(await page.locator("#app").innerHTML()).toBe("");
+      expect(await isDark(page)).toBe(true);
+      expect(await bgOf(page, "body")).toBe(await computed(page, DARK_BG));
+      await page.close();
+    });
+
+    it("switches to Dark under an OS in light, stores it, and keeps it across a reload", async () => {
+      const page = await openApp(await newUser());
+      expect(await isDark(page)).toBe(false);
+      await chooseTheme(page, "Dark");
+      await eventually(async () => expect(await isDark(page)).toBe(true));
+      expect(await page.evaluate(() => localStorage.getItem("artefactor:theme"))).toBe("dark");
+      await page.reload({ waitUntil: "domcontentloaded" });
+      expect(await isDark(page)).toBe(true);
+      await page.getByRole("heading", { name: "Your artefacts" }).waitFor();
+      expect(await isDark(page)).toBe(true);
+      await page.close();
+    });
+
+    it("switches to Light under an OS in dark", async () => {
+      const u = await newUser();
+      const page = await (await context(u, "dark")).newPage();
+      await page.goto(ORIGIN);
+      await page.getByRole("heading", { name: "Your artefacts" }).waitFor();
+      expect(await isDark(page)).toBe(true);
+      await chooseTheme(page, "Light");
+      await eventually(async () => expect(await isDark(page)).toBe(false));
+      await page.close();
+    });
+
+    it("follows the OS live under System, without a reload", async () => {
+      const page = await openApp(await newUser());
+      await chooseTheme(page, "Dark");
+      await eventually(async () => expect(await isDark(page)).toBe(true));
+      await chooseTheme(page, "System");
+      await eventually(async () => expect(await isDark(page)).toBe(false));
+      await page.emulateMedia({ colorScheme: "dark" });
+      await eventually(async () => expect(await isDark(page)).toBe(true));
+      await page.emulateMedia({ colorScheme: "light" });
+      await eventually(async () => expect(await isDark(page)).toBe(false));
+      expect(await page.evaluate(() => localStorage.getItem("artefactor:theme"))).toBe("system");
+      await page.close();
+    });
+
+    it("renders a toast fired in dark mode dark", async () => {
+      const u = await newUser();
+      await createArtefact(u, "Toasty");
+      const ctx = await context(u);
+      await storeTheme(ctx, "dark");
+      const page = await ctx.newPage();
+      await page.goto(ORIGIN);
+      await page.getByRole("heading", { name: "Your artefacts" }).waitFor();
+      await cardMenu(page, "Toasty");
+      await control(page, "Archive").click();
+      await visible(control(page, "Undo"));
+      expect(await page.locator("[data-sonner-toaster]").first().getAttribute("data-sonner-theme")).toBe("dark");
+      await page.close();
+    });
+
+    it("themes the /a/:slug shell from the stored choice", async () => {
+      const u = await newUser();
+      const slug = await publicSlug(u, "Shell dark");
+      const ctx = await context(u);
+      await storeTheme(ctx, "dark");
+      const page = await ctx.newPage();
+      await page.goto(`${ORIGIN}/a/${slug}`);
+      expect(await isDark(page)).toBe(true);
+      expect(await bgOf(page, ".ae-bar")).toBe(await computed(page, DARK_BG));
+      await page.close();
+    });
+
+    it("serves the frame the same payload whatever the viewer's theme", async () => {
+      const slug = await publicSlug(await newUser(), "Frame bytes");
+      const frameBody = async (theme: string) => {
+        const ctx = await context(undefined, theme === "dark" ? "dark" : "light");
+        await storeTheme(ctx, theme);
+        const page = await ctx.newPage();
+        const res = page.waitForResponse((r) => new URL(r.url()).pathname === `/a/${slug}/frame`);
+        await page.goto(`${ORIGIN}/a/${slug}`);
+        const body = await (await res).body();
+        expect(await isDark(page)).toBe(theme === "dark");
+        await page.close();
+        return body;
+      };
+      const light = await frameBody("light");
+      const dark = await frameBody("dark");
+      expect(dark.length).toBeGreaterThan(0);
+      expect(dark.equals(light)).toBe(true);
+    });
+
+    it("gives an anonymous OS-dark viewer of a public link a dark shell", async () => {
+      const slug = await publicSlug(await newUser(), "Anon dark");
+      const page = await (await context(undefined, "dark")).newPage();
+      await page.goto(`${ORIGIN}/a/${slug}`);
+      expect(await isDark(page)).toBe(true);
+      expect(await bgOf(page, ".ae-bar")).toBe(await computed(page, DARK_BG));
+      await page.emulateMedia({ colorScheme: "light" });
+      await eventually(async () => expect(await bgOf(page, ".ae-bar")).toBe(await computed(page, LIGHT_BG)));
       await page.close();
     });
   });

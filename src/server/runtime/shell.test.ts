@@ -6,6 +6,9 @@ import {
   type ShellFrameConfig,
 } from "./shell";
 import { FRAME_SANDBOX_FLAGS } from "./sandbox";
+import { SHELL_TOKENS } from "./shell-theme";
+import { KIND_PRESENTATION } from "../../shared/kind-presentation";
+import { THEME_BOOT_JS } from "../../shared/theme-boot";
 
 const ctx: HostShellContext = {
   title: "Tracker",
@@ -45,6 +48,45 @@ describe("host shell — sandboxed frame (S36)", () => {
 
   it("no longer listens for a frame-sent conflict message: the shell detects 412 itself", () => {
     expect(renderHostShell(ctx)).not.toContain("artefactor:data-conflict");
+  });
+});
+
+// S45 — App dark mode with a UI toggle: the chrome follows the viewer's theme.
+describe("host shell — theme (S45)", () => {
+  const html = renderHostShell(ctx);
+  const head = html.slice(0, html.indexOf("</head>"));
+  const withoutScripts = html.replace(/<script>[\s\S]*?<\/script>/g, "");
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  const rule = (selector: string) => head.match(new RegExp(`${esc(selector)}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+
+  it("inlines the theme boot script in its head, before the style", () => {
+    const at = head.indexOf(THEME_BOOT_JS);
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(head.indexOf("<style>"));
+  });
+
+  it("carries no hex or rgb colour literal in its markup and CSS", () => {
+    expect(withoutScripts).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
+  });
+
+  it("declares the Mint garden tokens in :root and in .dark", () => {
+    expect(rule(":root")).toContain(`--background: ${SHELL_TOKENS.light.background};`);
+    expect(rule(".dark")).toContain(`--background: ${SHELL_TOKENS.dark.background};`);
+  });
+
+  it("strokes the kind icon with var(--kind) and emits the kind colour for both modes", () => {
+    const form = KIND_PRESENTATION.form;
+    expect(html).toMatch(/<svg[^>]*stroke="var\(--kind\)"/);
+    expect(html).not.toContain(`stroke="${form.color}"`);
+    expect(rule(":root")).toContain(`--kind: ${form.color};`);
+    expect(rule(":root")).toContain(`--kind-tint: ${form.tint};`);
+    expect(rule(".dark")).toContain(`--kind: ${form.darkColor};`);
+    expect(rule(".dark")).toContain(`--kind-tint: ${form.darkTint};`);
+  });
+
+  it("puts nothing theme-related on the frame", () => {
+    const iframe = html.match(/<iframe[^>]*>/)![0];
+    expect(iframe).not.toMatch(/theme|dark|color-scheme/i);
   });
 });
 

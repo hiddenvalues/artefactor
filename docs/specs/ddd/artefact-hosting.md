@@ -135,7 +135,9 @@ States are the product of `visibility × status`. Allowed transitions:
 - The host shell embeds the payload in a **sandboxed** iframe, and that iframe **is the security
   boundary** (AH28, S36): trusted means "served as-is", not "trusted with the viewer's session".
   The artefact runs in an opaque origin, so its JS can't read the session cookie, read any
-  `/api` response, or make a state change the API accepts (IA6).
+  `/api` response, or make a state change the API accepts (IA6). The host chrome follows the
+  viewer's light/dark theme (S45); the frame never does — its payload response is the same
+  whatever the viewer's theme, so an artefact renders exactly as authored.
 - Forms still persist, with no code change: the served `localStorage` shim posts each change to
   the host shell, which writes it to the backend store under the viewer's session (see
   `artefact-data.md` AD10).
