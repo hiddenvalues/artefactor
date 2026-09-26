@@ -41,11 +41,11 @@ gray, so green appears only on primary actions, focus rings and product colours.
 
 | Token | Light | Dark |
 | -- | -- | -- |
-| `--kind-prototype` | `oklch(0.56 0.09 170)` | `oklch(0.85 0.06 170)` |
-| `--kind-slide-deck` | `oklch(0.64 0.13 55)` | `oklch(0.80 0.11 60)` |
-| `--kind-form` | `oklch(0.56 0.11 240)` | `oklch(0.78 0.08 240)` |
-| `--kind-interactive-doc` | `oklch(0.60 0.14 350)` | `oklch(0.80 0.09 350)` |
-| `--kind-other` | `oklch(0.55 0.02 160)` | `oklch(0.74 0.02 160)` |
+| `--kind-prototype` | `oklch(0.51 0.09 170)` | `oklch(0.85 0.06 170)` |
+| `--kind-slide-deck` | `oklch(0.53 0.13 55)` | `oklch(0.80 0.11 60)` |
+| `--kind-form` | `oklch(0.52 0.11 240)` | `oklch(0.78 0.08 240)` |
+| `--kind-interactive-doc` | `oklch(0.54 0.14 350)` | `oklch(0.80 0.09 350)` |
+| `--kind-other` | `oklch(0.52 0.02 160)` | `oklch(0.74 0.02 160)` |
 | `--kind-*-tint` | same colour at 12% (slide deck 13%) | same colour at 16% |
 | `--collection-1` | `oklch(0.58 0.09 170)` | `oklch(0.85 0.05 170)` |
 | `--collection-2` | `oklch(0.64 0.13 40)` | `oklch(0.80 0.08 40)` |
@@ -53,6 +53,13 @@ gray, so green appears only on primary actions, focus rings and product colours.
 | `--collection-4` | `oklch(0.68 0.13 70)` | `oklch(0.80 0.10 75)` |
 | `--collection-5` | `oklch(0.62 0.14 350)` | `oklch(0.80 0.09 350)` |
 | `--collection-6` | `oklch(0.50 0.10 145)` | `oklch(0.72 0.08 145)` |
+
+The light kind colours are darker than the hand-back's, so that each reads as text at 4.5:1 on its
+own tint over white: the app draws kind colour as text (the card's kind badge). Only the lightness
+moved, and each by the least that reaches 4.5:1; chroma and hue are the designer's. The hand-back
+had `oklch(0.56 0.09 170)`, `oklch(0.64 0.13 55)`, `oklch(0.56 0.11 240)`,
+`oklch(0.60 0.14 350)` and `oklch(0.55 0.02 160)`, in the table's order. `tokens.test.ts` holds
+the 4.5:1 rule.
 
 ## Radius
 

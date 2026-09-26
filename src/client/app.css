@@ -78,17 +78,19 @@
   --sidebar-ring: oklch(0.62 0.1 170);
 
   /* Artefact kinds — mirrors src/shared/kind-presentation.ts, which the
-   * server-rendered host shell reads (a test keeps the two in step). */
-  --kind-prototype: oklch(0.56 0.09 170);
-  --kind-prototype-tint: oklch(0.56 0.09 170 / 12%);
-  --kind-slide-deck: oklch(0.64 0.13 55);
-  --kind-slide-deck-tint: oklch(0.64 0.13 55 / 13%);
-  --kind-form: oklch(0.56 0.11 240);
-  --kind-form-tint: oklch(0.56 0.11 240 / 12%);
-  --kind-interactive-doc: oklch(0.60 0.14 350);
-  --kind-interactive-doc-tint: oklch(0.60 0.14 350 / 12%);
-  --kind-other: oklch(0.55 0.02 160);
-  --kind-other-tint: oklch(0.55 0.02 160 / 12%);
+   * server-rendered host shell reads (a test keeps the two in step). Each
+   * reads as text at 4.5:1 on its own tint (also tested), which is why they
+   * are darker than the hand-back's. */
+  --kind-prototype: oklch(0.51 0.09 170);
+  --kind-prototype-tint: oklch(0.51 0.09 170 / 12%);
+  --kind-slide-deck: oklch(0.53 0.13 55);
+  --kind-slide-deck-tint: oklch(0.53 0.13 55 / 13%);
+  --kind-form: oklch(0.52 0.11 240);
+  --kind-form-tint: oklch(0.52 0.11 240 / 12%);
+  --kind-interactive-doc: oklch(0.54 0.14 350);
+  --kind-interactive-doc-tint: oklch(0.54 0.14 350 / 12%);
+  --kind-other: oklch(0.52 0.02 160);
+  --kind-other-tint: oklch(0.52 0.02 160 / 12%);
 
   /* Collection hues — a collection keeps the one its id hashes to for life. */
   --collection-1: oklch(0.58 0.09 170);
