@@ -1,4 +1,5 @@
 /* The catalog wears the app's tokens. Its Vite root is this folder, so point
    Tailwind at the whole client for the classes the components use. */
 @import "../app.css";
+@import "./safelist.css";
 @source "..";

@@ -61,6 +61,11 @@ line is Claude design's card marker (`<!-- @dsCard group="UI" -->` or `group="Ap
 the preview's main dialog or menu, so the card shows the thing itself. `/design-sync` uploads
 these pages. The catalog is dev-only: nothing of it reaches `pnpm build`'s `dist/client`.
 
+The export's stylesheet also carries a safelist of common Tailwind utilities
+(`src/client/design/safelist.css`), so designs made in Claude design can use them even where the
+app doesn't. The app build doesn't carry it, and a test caps the export's stylesheet at 300,000
+bytes.
+
 To add a component, add its `*.preview.tsx` beside it. Export one `definePreview({ title,
 variants })` (from `src/client/design/preview.ts`), with one variant per visual variant or state.
 Take the data from `src/client/design/fixtures.ts`.
