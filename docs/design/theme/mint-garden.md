@@ -54,13 +54,6 @@ gray, so green appears only on primary actions, focus rings and product colours.
 | `--collection-5` | `oklch(0.62 0.14 350)` | `oklch(0.80 0.09 350)` |
 | `--collection-6` | `oklch(0.50 0.10 145)` | `oklch(0.72 0.08 145)` |
 
-The light kind colours are darker than the hand-back's, so that each reads as text at 4.5:1 on its
-own tint over white: the app draws kind colour as text (the card's kind badge). Only the lightness
-moved, and each by the least that reaches 4.5:1; chroma and hue are the designer's. The hand-back
-had `oklch(0.56 0.09 170)`, `oklch(0.64 0.13 55)`, `oklch(0.56 0.11 240)`,
-`oklch(0.60 0.14 350)` and `oklch(0.55 0.02 160)`, in the table's order. `tokens.test.ts` holds
-the 4.5:1 rule.
-
 ## Radius
 
 Unchanged.

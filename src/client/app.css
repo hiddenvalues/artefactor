@@ -78,9 +78,7 @@
   --sidebar-ring: oklch(0.62 0.1 170);
 
   /* Artefact kinds — mirrors src/shared/kind-presentation.ts, which the
-   * server-rendered host shell reads (a test keeps the two in step). Each
-   * reads as text at 4.5:1 on its own tint (also tested), which is why they
-   * are darker than the hand-back's. */
+   * server-rendered host shell reads (a test keeps the two in step). */
   --kind-prototype: oklch(0.51 0.09 170);
   --kind-prototype-tint: oklch(0.51 0.09 170 / 12%);
   --kind-slide-deck: oklch(0.53 0.13 55);
