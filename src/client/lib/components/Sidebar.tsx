@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Archive, Bookmark, Folder, Home, Plus } from "lucide-react";
+import { Archive, Bookmark, Folder, Home, Plus, Users } from "lucide-react";
 import type { ArtefactSummary, CollectionSummary } from "../../../shared/contracts";
 import { Badge } from "$lib/components/ui/badge";
 import { Button } from "$lib/components/ui/button";
@@ -36,7 +36,7 @@ function RemoveBookmark({ name, onClick }: { name: string; onClick: () => void }
 }
 
 // S25/S27 — the collections + bookmarks sidebar (hamburger-toggled, closed by
-// default). Sections top→bottom: Home, Bookmarks (collections before
+// default). Sections top→bottom: Home + Shared with you, Bookmarks (collections before
 // artefacts), the Collections tree, and an Archive footer with a count.
 export function Sidebar({
   view,
@@ -47,6 +47,7 @@ export function Sidebar({
   bookmarkedCollections,
   archivedCount,
   onHome,
+  onOpenShared,
   onOpenCollection,
   onOpenArchive,
   onNewCollection,
@@ -62,6 +63,7 @@ export function Sidebar({
   bookmarkedCollections: CollectionSummary[];
   archivedCount: number;
   onHome: () => void;
+  onOpenShared: () => void;
   onOpenCollection: (id: string) => void;
   onOpenArchive: () => void;
   onNewCollection: () => void;
@@ -76,10 +78,17 @@ export function Sidebar({
   return (
     <aside className="sticky top-0 flex h-screen w-66 shrink-0 flex-col overflow-y-auto border-r bg-sidebar text-sidebar-foreground">
       <div className="flex flex-1 flex-col gap-5 px-2.5 py-3.5">
-        <button type="button" onClick={onHome} className={navRow(view === "dashboard" || view === "gallery")}>
-          <Home className="size-4" />
-          Home
-        </button>
+        <div>
+          <button type="button" onClick={onHome} className={navRow(view === "dashboard")}>
+            <Home className="size-4" />
+            Home
+          </button>
+          {/* S46 — interim: the top bar's tabs are gone until the landing page re-homes this view. */}
+          <button type="button" onClick={onOpenShared} className={navRow(view === "gallery")}>
+            <Users className="size-4" />
+            Shared with you
+          </button>
+        </div>
 
         {hasBookmarks && (
           <div>

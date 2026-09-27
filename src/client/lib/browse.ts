@@ -14,12 +14,12 @@ export type Density = (typeof DENSITIES)[number];
 export type KindFilter = "all" | ArtefactKind;
 export type AccessFilter = "all" | Visibility;
 
-/** The filters a listing screen applies, all persisted but the query. */
+/** The filters a listing screen applies, all persisted. (S46 — the top bar's
+ *  search is global, so text no longer filters a page.) */
 export interface Filters {
   kind: KindFilter;
   access: AccessFilter;
   sort: Sort;
-  query: string;
 }
 
 export function matchesQuery(title: string, query: string): boolean {
@@ -41,8 +41,7 @@ export function applyFilters<T extends ArtefactSummary>(list: T[], f: Filters, w
   return sortList(
     list
       .filter((a) => f.kind === "all" || a.kind === f.kind)
-      .filter((a) => !withAccess || f.access === "all" || a.effectiveVisibility === f.access)
-      .filter((a) => matchesQuery(a.title, f.query)),
+      .filter((a) => !withAccess || f.access === "all" || a.effectiveVisibility === f.access),
     f.sort,
   );
 }

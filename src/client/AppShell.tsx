@@ -22,6 +22,7 @@ import { UploadDialog } from "$lib/components/UploadDialog";
 import { count, DATA_VIS, KIND_ORDER, VIS, VIS_ORDER, type DataVisibility, type Visibility } from "$lib/format";
 import { persist, restore, usePref } from "$lib/prefs";
 import { notify } from "$lib/toast";
+import { searchLibrary, type Hit } from "$lib/search";
 import { useLibrary } from "$lib/use-library";
 import type { View } from "$lib/view";
 import { Archive, type PendingDelete } from "./screens/Archive";
@@ -465,7 +466,7 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
     onEject,
   });
   const listing: ListingProps = {
-    filters: { kind, access, sort, query },
+    filters: { kind, access, sort },
     onKind: setKind,
     onAccess: setAccess,
     onSort: setSort,
@@ -475,11 +476,18 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
     galleryProps,
   };
 
-  const searchPlaceholder = isColl
-    ? "Search this collection…"
-    : view === "gallery"
-      ? "Search shared artefacts…"
-      : "Search your artefacts…";
+  // S46 — the top bar's search is global: every artefact and collection the
+  // shell already lists, whatever the page.
+  const results = useMemo(
+    () => searchLibrary({ owned, shared, collections, sharedCollections, collectionById }, query),
+    [owned, shared, collections, sharedCollections, collectionById, query],
+  );
+  function openResult(hit: Hit) {
+    if (hit.kind === "collection") openCollection(hit.id);
+    else if (hit.shared) openShared(hit.shared);
+    else openItem(hit.artefact);
+    setQuery("");
+  }
 
   return (
     <div className="flex min-h-screen">
@@ -493,6 +501,7 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
           bookmarkedCollections={lib.bookmarkedCollections}
           archivedCount={archivedCount}
           onHome={goDashboard}
+          onOpenShared={goGallery}
           onOpenCollection={openCollection}
           onOpenArchive={openArchive}
           onNewCollection={() => openEditor(null, null)}
@@ -503,13 +512,11 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
-          view={view}
           query={query}
-          searchPlaceholder={searchPlaceholder}
+          results={results}
           user={user}
           onSearch={setQuery}
-          onGoDashboard={goDashboard}
-          onGoGallery={goGallery}
+          onOpenResult={openResult}
           onOpenUpload={() => openUpload()}
           onSignOut={() => void doSignOut()}
           onToggleSidebar={() => setSidebar(sidebar === "open" ? "closed" : "open")}

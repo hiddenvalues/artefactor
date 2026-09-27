@@ -37,7 +37,7 @@ export function SharedGallery({
   onOpenCollection: (id: string) => void;
 }) {
   const visible = applyFilters(shared, filters);
-  const filtered = filters.query.trim() !== "" || filters.kind !== "all" || filters.access !== "all";
+  const filtered = filters.kind !== "all" || filters.access !== "all";
   const roots = sharedCollections.filter((c) => c.parentId === null).sort((a, b) => a.name.localeCompare(b.name));
   // Both-way listing means own + shared cover every artefact you can see.
   const artefactsIn = (id: string) =>
@@ -86,7 +86,7 @@ export function SharedGallery({
       <KindChips chips={kindChips(shared)} value={filters.kind} onChange={onKind} />
       {visible.length === 0 ? (
         filtered ? (
-          <EmptyState title="No matches" sub="No artefacts match your current filter or search. Try clearing them." />
+          <EmptyState title="No matches" sub="No artefacts match your current filters. Try clearing them." />
         ) : (
           <EmptyState
             title="Nothing shared with you"

@@ -138,8 +138,22 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     expect(res.ok).toBe(true);
   }
 
-  async function context(u?: User, colorScheme: "light" | "dark" = "light"): Promise<BrowserContext> {
-    const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, colorScheme });
+  async function createCollection(u: User, name: string): Promise<{ id: string }> {
+    const res = await app.request("/api/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: u.cookie },
+      body: JSON.stringify({ name }),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()) as { id: string };
+  }
+
+  async function context(
+    u?: User,
+    colorScheme: "light" | "dark" = "light",
+    viewport = { width: 1400, height: 900 },
+  ): Promise<BrowserContext> {
+    const ctx = await browser.newContext({ viewport, colorScheme });
     await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: ORIGIN });
     if (u) {
       const eq = u.cookie.indexOf("=");
@@ -510,7 +524,9 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     await setVisibility(author, a.id, "authenticated");
     const page = await openApp(await newUser());
 
-    await control(page, "Shared with you").click();
+    // S46 — the top bar's tabs are gone; the Sidebar carries the way in.
+    const aside = await openSidebar(page);
+    await control(aside, "Shared with you").click();
     await visible(page.getByRole("heading", { name: "Shared with you" }));
     const open = page.locator("main [aria-label='Open Team handbook']");
     await visible(open);
@@ -572,6 +588,114 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
     await page.close();
   });
 
+  // S46 — Top bar: global search, tabs move out.
+  describe("global search", () => {
+    const search = (page: Page) => page.getByRole("combobox", { name: "Search artefacts and collections" });
+    const expanded = (page: Page) => search(page).getAttribute("aria-expanded");
+
+    it("finds another user's shared artefact from the Dashboard, in a dropdown that leaves the grid alone", async () => {
+      const author = await newUser("Maya Chen");
+      const a = await createArtefact(author, "Quarterly zebra review", "slide-deck");
+      await setVisibility(author, a.id, "authenticated");
+      const viewer = await newUser();
+      await createArtefact(viewer, "My own notes");
+      const page = await openApp(viewer);
+      await eventually(async () => expect(await shownTitles(page)).toEqual(["My own notes"]));
+
+      await search(page).fill("zebra");
+      await eventually(async () => expect(await expanded(page)).toBe("true"));
+      const listbox = page.getByRole("listbox");
+      const hit = listbox.getByRole("option", { name: /Quarterly zebra review/ });
+      await visible(hit);
+      expect(await listbox.getByRole("group", { name: "Artefacts" }).getByRole("option").count()).toBe(1);
+      expect((await hit.locator("strong").innerText()).trim()).toBe("zebra");
+      await visible(hit.getByText("Shared by Maya Chen"));
+      expect(await listbox.locator("[role='option'][aria-selected='true']").count()).toBe(1);
+      expect(await shownTitles(page)).toEqual(["My own notes"]);
+      await page.close();
+    });
+
+    it("finds an own artefact outside the collection page it is typed on", async () => {
+      const u = await newUser();
+      await createCollection(u, "Inbox");
+      await createArtefact(u, "Outside lighthouse");
+      const page = await openApp(u);
+      const aside = await openSidebar(page);
+      await control(aside, /Inbox/).click();
+      await visible(page.getByRole("heading", { level: 1, name: "Inbox" }));
+
+      await search(page).fill("lighthouse");
+      await visible(page.getByRole("listbox").getByRole("option", { name: /Outside lighthouse/ }));
+      await page.close();
+    });
+
+    it("opens a collection hit with ↓ then Enter, and closes the dropdown", async () => {
+      const u = await newUser();
+      await createCollection(u, "Orbit one");
+      await createCollection(u, "Orbit two");
+      const page = await openApp(u);
+
+      await search(page).fill("orbit");
+      const options = page.getByRole("listbox").getByRole("option");
+      const selected = page.locator("[role='option'][aria-selected='true']");
+      await eventually(async () => expect(await options.count()).toBe(2));
+      const second = (await options.nth(1).innerText()).split("\n")[0]!.trim();
+      await eventually(async () => expect(await selected.innerText()).toBe(await options.first().innerText()));
+      await page.keyboard.press("ArrowDown");
+      await eventually(async () => expect(await selected.innerText()).toContain(second));
+      await page.keyboard.press("Enter");
+      await visible(page.getByRole("heading", { level: 1, name: second }));
+      expect(await expanded(page)).toBe("false");
+      await page.close();
+    });
+
+    it("closes on Esc keeping the text, and × empties the field and closes it", async () => {
+      const u = await newUser();
+      await createArtefact(u, "Escapable");
+      const page = await openApp(u);
+
+      await search(page).fill("escap");
+      await eventually(async () => expect(await expanded(page)).toBe("true"));
+      await page.keyboard.press("Escape");
+      await eventually(async () => expect(await expanded(page)).toBe("false"));
+      expect(await search(page).inputValue()).toBe("escap");
+
+      await search(page).fill("escapa");
+      await eventually(async () => expect(await expanded(page)).toBe("true"));
+      await page.getByRole("button", { name: "Clear search" }).click();
+      expect(await search(page).inputValue()).toBe("");
+      await eventually(async () => expect(await expanded(page)).toBe("false"));
+      await page.close();
+    });
+
+    it("says so in a status when nothing matches", async () => {
+      const page = await openApp(await newUser());
+      await search(page).fill("qqxxzz");
+      await visible(page.getByRole("status").filter({ hasText: "No matches for “qqxxzz”" }));
+      await visible(page.getByText("Try another word, or check the spelling."));
+      await page.close();
+    });
+
+    it("keeps the header from overflowing at 480 px, with New artefact and Account at full width", async () => {
+      const u = await newUser();
+      const widths = async (viewport: { width: number; height: number }) => {
+        const page = await (await context(u, "light", viewport)).newPage();
+        await page.goto(ORIGIN);
+        await page.getByRole("heading", { name: "Your artefacts" }).waitFor();
+        const header = await page.locator("header > div").evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+        const upload = (await page.getByRole("button", { name: "New artefact" }).boundingBox())!.width;
+        const account = (await page.getByRole("button", { name: "Account" }).boundingBox())!.width;
+        await page.close();
+        return { header, upload, account };
+      };
+      const wide = await widths({ width: 1280, height: 800 });
+      const narrow = await widths({ width: 480, height: 800 });
+      expect(narrow.header.scroll).toBeLessThanOrEqual(narrow.header.client);
+      expect(narrow.upload).toBe(wide.upload);
+      expect(narrow.account).toBe(wide.account);
+    });
+  });
+
   describe("keyboard", () => {
     it("Esc closes an open menu and an open dialog", async () => {
       const u = await newUser();
@@ -618,9 +742,13 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
         );
       }
       const names = seen.map((s) => s.name);
-      for (const want of ["Toggle sidebar", "Your artefacts", "Shared with you", "New artefact", "Account", "More"])
+      for (const want of ["Toggle sidebar", "New artefact", "Account", "More"])
         expect(names.some((n) => n.startsWith(want)), `Tab reaches ${want} (saw ${names.join(" | ")})`).toBe(true);
       expect(names.some((n) => n.startsWith("Search")), "Tab reaches the search box").toBe(true);
+      // S46 — the top bar runs sidebar toggle → search → New artefact → Account,
+      // with no view tabs between them.
+      expect(names.slice(0, 4)).toEqual(["Toggle sidebar", "Search artefacts and collections", "New artefact", "Account"]);
+      expect(names.some((n) => n === "Your artefacts" || n === "Shared with you")).toBe(false);
       expect(seen.filter((s) => !s.visibleFocus).map((s) => s.name)).toEqual([]);
       await page.close();
     });

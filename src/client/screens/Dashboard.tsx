@@ -17,7 +17,7 @@ export function Dashboard({
   galleryProps,
 }: ListingProps & { owned: ArtefactSummary[]; onUpload: () => void }) {
   const visible = applyFilters(owned, filters);
-  const filtered = filters.query.trim() !== "" || filters.kind !== "all" || filters.access !== "all";
+  const filtered = filters.kind !== "all" || filters.access !== "all";
 
   return (
     <>
@@ -38,7 +38,7 @@ export function Dashboard({
       <KindChips chips={kindChips(owned)} value={filters.kind} onChange={onKind} />
       {visible.length === 0 ? (
         filtered ? (
-          <EmptyState title="No matches" sub="No artefacts match your current filter or search. Try clearing them." />
+          <EmptyState title="No matches" sub="No artefacts match your current filters. Try clearing them." />
         ) : (
           <EmptyState
             title="No artefacts yet"

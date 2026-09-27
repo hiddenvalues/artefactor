@@ -94,7 +94,7 @@ export function CollectionPage({
   const visibleMine = applyFilters(mine, filters, false);
   const visibleTheirs = applyFilters(theirs, filters, false);
   const chips = kindChips([...mine, ...theirs]);
-  const filtered = filters.query.trim() !== "" || filters.kind !== "all";
+  const filtered = filters.kind !== "all";
 
   // The tree root a collection inherits from (CL4) — itself when top-level.
   const root = c.parentId === null ? c : (collectionById.get(c.rootId) ?? c);
@@ -234,7 +234,7 @@ export function CollectionPage({
       {showCollectionKindChips(chips, filters.kind) && <KindChips chips={chips} value={filters.kind} onChange={onKind} />}
       {visibleMine.length === 0 && visibleTheirs.length === 0 ? (
         filtered ? (
-          <EmptyState title="No matches" sub="No artefacts in this collection match your current kind filter or search." />
+          <EmptyState title="No matches" sub="No artefacts in this collection match your current kind filter." />
         ) : (
           <EmptyState
             title="No artefacts here yet"

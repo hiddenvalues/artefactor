@@ -277,3 +277,60 @@ light and dark.
 
 - **Boundary:** **OSS** (core client, shared and serving runtime). Up-sync is held until the design
   system stabilizes (ALI-382).
+
+### S46 — Top bar: global search, tabs move out
+
+- **Status:** done
+- **Depends on:** S43, S14, S28
+- **Linear:** ALI-411
+
+The designer's top-bar hand-back (`docs/design/components/top-bar.md`): the "Your artefacts" /
+"Shared with you" tabs leave the top bar, and its search becomes global — one field that finds any
+artefact or collection the viewer can see, from any page, in a results dropdown. Host UI only; it
+adds no invariant, endpoint or query. Search reads only what the shell already loads: own active
+artefacts and collections, others' effectively shared artefacts (S14 — Shared with you, AH8) and
+shared collection trees (S28 — Shared collections are viewer-facing (read-only), CL10/CL11), so a
+result is never something the viewer couldn't already open, and archived items never match.
+
+- **Model.** `src/client/lib/search.ts` (pure): `searchLibrary({ owned, shared, collections,
+  sharedCollections, collectionById }, query)` → `{ collections, artefacts }` hits, matched by
+  `matchesQuery` (case-insensitive title substring), each group most recently updated first and
+  capped at 3 collections and 5 artefacts; a blank query gives empty groups. A hit's `meta` is
+  where it lives — an own artefact's collection name, else "Your artefacts"; an own collection's
+  parent name, else "Your collections" — or "Shared by" plus the owner's name for another user's.
+  `highlight(title, query)` splits the first match out as `[before, match, after]`.
+- **Top bar.** Sidebar toggle · logo · search · spacer · New artefact · account menu; `view`,
+  `onGoDashboard`, `onGoGallery` and `searchPlaceholder` go, `results` and `onOpenResult` arrive,
+  and the placeholder is fixed: "Search artefacts and collections…". The dropdown is a `Popover`
+  anchored to the field that keeps focus in the input: **Collections** then **Artefacts** rows
+  (hue swatch or kind icon, the match bold, `meta`), the first row highlighted, footer key hints,
+  and "No matches for “…”" in a `role="status"` when nothing matches. ↑/↓ move the highlight
+  across both groups, clamped at the ends; Enter opens it; Esc closes and keeps the text; the ×
+  button empties the field, which closes the dropdown. The search sits in `role="search"`; the
+  input is a `combobox` (`aria-expanded`, `aria-controls`, `aria-activedescendant`) over a
+  `listbox` of `option`s with `aria-selected` on the highlighted one. On narrow screens the search
+  shrinks first; logo, New artefact and the account menu keep their width.
+- **Shell.** `AppShell` passes `searchLibrary(lib, query)` to the top bar. Opening an artefact hit
+  opens it in a new tab — the owner-preview URL for your own, `/a/:slug` for another's — and a
+  collection hit opens its page; the query clears either way, and on any navigation. The query no
+  longer filters page grids: `Filters` has no `query`, and the kind, access and sort filters are
+  unchanged.
+- **Interim Sidebar entry.** Until the landing page re-homes the two views, the Sidebar has a
+  **Shared with you** item under Home, active on the `gallery` view, which stays restorable across
+  reloads.
+
+**Acceptance:** `searchLibrary` returns empty groups for a blank query; matches case-insensitively
+across all four sources, capping 4 + 7 matches at 3 + 5, newest first; and gives each `meta` as
+above. `highlight("Roadmap Q3", "map")` is `["Road", "map", " Q3"]`, and a miss is
+`["Roadmap Q3", "", ""]`. `applyFilters` filters by no text. In Chromium: typing part of another
+user's shared title on the Dashboard opens the dropdown with it under Artefacts, bold and "Shared
+by …", leaving the grid's card count unchanged; on a collection page an own artefact outside it is
+found; ↓ then Enter on a collection hit shows its page and closes the dropdown; Esc closes and
+keeps the text, × empties and closes; a nonsense query shows the `role="status"` message; exactly
+one option is `aria-selected`; the top bar has no tab controls and Tab runs sidebar toggle →
+search → New artefact → Account; the Sidebar's Shared with you opens that view in grid and list;
+at 480 px the header doesn't overflow and New artefact and Account keep their 1280 px widths. The
+catalog preview test passes with the TopBar variants default, results and no results.
+
+- **Boundary:** **OSS** (core client). Up-sync is held until the design system stabilizes
+  (ALI-382).

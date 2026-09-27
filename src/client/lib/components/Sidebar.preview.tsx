@@ -18,6 +18,7 @@ function Example({ view, active = null, empty = false }: { view: View; active?: 
         bookmarkedCollections={empty ? [] : collections.slice(3)}
         archivedCount={empty ? 0 : 4}
         onHome={noop}
+        onOpenShared={noop}
         onOpenCollection={noop}
         onOpenArchive={noop}
         onNewCollection={noop}
@@ -33,6 +34,7 @@ export default definePreview({
   title: "Sidebar",
   variants: [
     { name: "On the dashboard", render: () => <Example view="dashboard" /> },
+    { name: "On Shared with you", render: () => <Example view="gallery" /> },
     { name: "Inside a sub-collection", render: () => <Example view="collection" active="col-tokens" /> },
     { name: "On the archive", render: () => <Example view="archive" /> },
     { name: "Nothing yet", render: () => <Example view="dashboard" empty /> },
