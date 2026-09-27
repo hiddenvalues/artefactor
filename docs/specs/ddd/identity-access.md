@@ -142,7 +142,9 @@ Google credentials are configured. In production the configuration must yield at
 two; the env schema refuses to boot otherwise, naming both ways out. The rules live in one pure
 function (`domain/identity/auth-config.ts`), and the BFF advertises the resolved methods on
 `GET /api/config` so the sign-in screen renders what the server will actually accept — and can
-never render zero.
+never render zero. `capabilities.magicLinkSignIn` on the same response (S33a) is a presentation
+signal like the method flags: it says a superset has registered magic-link sign-in, whose endpoint
+exists only then and whose account creation still passes the IA4 hook below.
 
 **IA4 (amended) — an Account may be created only when sign-up is open *and* the email's domain is
 allowed; this holds for every authentication provider.** The gate (`AUTH_ALLOW_SIGNUP`) sits beside

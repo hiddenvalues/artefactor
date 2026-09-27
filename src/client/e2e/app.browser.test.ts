@@ -240,7 +240,13 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
       const page = await (await context()).newPage();
       await page.route("**/api/config", (route) =>
         route.fulfill({
-          json: { allowedEmailDomains: [], emailPasswordEnabled: false, googleEnabled: true, signupAllowed: true },
+          json: {
+            allowedEmailDomains: [],
+            emailPasswordEnabled: false,
+            googleEnabled: true,
+            signupAllowed: true,
+            capabilities: { magicLinkSignIn: false },
+          },
         }),
       );
       await page.goto(ORIGIN);
@@ -248,6 +254,91 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { time
       expect(await page.getByPlaceholder("Email").count()).toBe(0);
       expect(await page.getByPlaceholder("Password").count()).toBe(0);
       await page.close();
+    });
+
+    // S33a — the magic-link affordance, driven by `capabilities.magicLinkSignIn`.
+    // OSS registers no magic-link endpoint, so the tests stub it.
+    describe("magic-link sign-in (S33a)", () => {
+      const MAGIC = "Email me a sign-in link";
+
+      async function magicLinkPage(): Promise<Page> {
+        const page = await (await context()).newPage();
+        await page.route("**/api/config", (route) =>
+          route.fulfill({
+            json: {
+              allowedEmailDomains: [],
+              emailPasswordEnabled: true,
+              googleEnabled: true,
+              signupAllowed: true,
+              capabilities: { magicLinkSignIn: true },
+            },
+          }),
+        );
+        return page;
+      }
+
+      it("offers no magic-link control under the OSS default", async () => {
+        const page = await (await context()).newPage();
+        await page.goto(ORIGIN);
+        await visible(page.getByPlaceholder("Password"));
+        expect(await control(page, MAGIC).count()).toBe(0);
+        expect(await page.getByLabel("Email for a sign-in link").count()).toBe(0);
+        await page.close();
+      });
+
+      it("sends a link to the typed email with the post-sign-in callback, then says to check the inbox", async () => {
+        const page = await magicLinkPage();
+        const sent: Record<string, unknown>[] = [];
+        await page.route("**/api/auth/sign-in/magic-link", (route) => {
+          sent.push(route.request().postDataJSON() as Record<string, unknown>);
+          return route.fulfill({ json: { status: true } });
+        });
+        await page.goto(ORIGIN);
+        // Offered in both modes.
+        await control(page, "Create account").first().click();
+        await visible(control(page, MAGIC));
+        await control(page, "Sign in").first().click();
+
+        await page.getByLabel("Email for a sign-in link").fill("a@b.co");
+        await control(page, MAGIC).click();
+
+        await visible(page.getByText("Check your inbox — we sent a sign-in link to a@b.co"));
+        expect(sent).toHaveLength(1);
+        expect(sent[0]).toMatchObject({ email: "a@b.co", callbackURL: "/", newUserCallbackURL: "/", errorCallbackURL: "/" });
+        expect(await page.getByPlaceholder("Password").count()).toBe(0);
+
+        await control(page, "Use a different email").click();
+        await visible(page.getByLabel("Email for a sign-in link"));
+        await page.close();
+      });
+
+      it("shows an inline error when the send is rejected, and keeps the form", async () => {
+        const page = await magicLinkPage();
+        await page.route("**/api/auth/sign-in/magic-link", (route) =>
+          route.fulfill({ status: 429, json: { message: "Too many requests. Please try again later." } }),
+        );
+        await page.goto(ORIGIN);
+        await page.getByLabel("Email for a sign-in link").fill("a@b.co");
+        await control(page, MAGIC).click();
+
+        await visible(page.getByText(/couldn't send a sign-in link|too many/i));
+        await visible(page.getByLabel("Email for a sign-in link"));
+        expect(await control(page, MAGIC).isEnabled()).toBe(true);
+        await page.close();
+      });
+
+      it("explains an expired or used link on landing back with ?error", async () => {
+        for (const code of ["EXPIRED_TOKEN", "INVALID_TOKEN"]) {
+          const page = await magicLinkPage();
+          await page.goto(`${ORIGIN}/?error=${code}`);
+          await visible(page.getByText("That sign-in link has expired or was already used — send a new one"));
+          await page.close();
+        }
+        const page = await magicLinkPage();
+        await page.goto(`${ORIGIN}/?error=failed_to_create_user`);
+        await visible(page.getByText("We couldn't sign you in with that link"));
+        await page.close();
+      });
     });
   });
 

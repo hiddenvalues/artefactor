@@ -18,6 +18,7 @@ const FALLBACK: PublicConfigResponse = {
   emailPasswordEnabled: true,
   googleEnabled: true,
   signupAllowed: true,
+  capabilities: { magicLinkSignIn: false },
 };
 
 // A gated artefact link (e.g. a "Members" artefact opened by someone without an
@@ -30,16 +31,39 @@ function readReturnTo(): string | null {
   return raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : null;
 }
 
-// A failed Google sign-in (e.g. an account outside the allowed email domains,
-// blocked by the server-side allowlist) bounces back here via errorCallbackURL.
-// Surface the real reason BetterAuth reports rather than assuming the cause.
-function readAuthError(): string | null {
+// A failed sign-in bounces back here via errorCallbackURL. Google's is marked
+// `auth_error` (e.g. an account outside the allowed email domains, blocked by
+// the server-side allowlist); a failed magic-link verify (S33a) carries only
+// BetterAuth's `error` code.
+interface Landing {
+  google: boolean;
+  detail: string | null;
+}
+
+function readLanding(): Landing | null {
   const params = new URLSearchParams(window.location.search);
   const detail = params.get("error_description") || params.get("error");
   if (!params.has("auth_error") && !detail) return null;
+  return { google: params.has("auth_error"), detail };
+}
+
+// Surface the real reason BetterAuth reports rather than assuming the cause.
+function googleError({ detail }: Landing): string {
   return detail
     ? `Google sign-in failed: ${decodeURIComponent(detail).replace(/[_+]/g, " ")}`
     : "Google sign-in failed. Make sure you're using an authorized account.";
+}
+
+// S33a — BetterAuth's verify reports a spent or expired link as INVALID_TOKEN;
+// EXPIRED_TOKEN reads the same. Without the capability, a bare `?error` keeps
+// reading as a Google failure, exactly as before.
+const SPENT_LINK = new Set(["EXPIRED_TOKEN", "INVALID_TOKEN"]);
+
+function landingError(landing: Landing, magicLinkSignIn: boolean): string {
+  if (landing.google || !magicLinkSignIn) return googleError(landing);
+  return landing.detail && SPENT_LINK.has(landing.detail)
+    ? "That sign-in link has expired or was already used — send a new one"
+    : "We couldn't sign you in with that link";
 }
 
 function GoogleMark() {
@@ -56,15 +80,24 @@ export function AuthScreen() {
   const [configLoaded, setConfigLoaded] = useState(false);
   const cfg = config ?? FALLBACK;
   const [returnTo] = useState(readReturnTo);
+  const [landing] = useState(readLanding);
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(readAuthError);
+  // A Google landing reads at once; any other `?error` waits for the config to
+  // say whether it can be a magic link's (S33a).
+  const [error, setError] = useState<string | null>(() => (landing?.google ? googleError(landing) : null));
   const [busy, setBusy] = useState(false);
+  // S33a — the magic-link form: its own email and send error, and the address
+  // a link went to, which swaps the card for the check-your-inbox state.
+  const [linkEmail, setLinkEmail] = useState("");
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkSentTo, setLinkSentTo] = useState<string | null>(null);
+  const magicLinkSignIn = cfg.capabilities?.magicLinkSignIn === true;
 
   useEffect(() => {
-    if (readAuthError()) window.history.replaceState({}, "", window.location.pathname);
+    if (landing) window.history.replaceState({}, "", window.location.pathname);
     api
       .config()
       .then(setConfig)
@@ -72,7 +105,11 @@ export function AuthScreen() {
         /* leave null → FALLBACK (both methods, sign-up open) */
       })
       .finally(() => setConfigLoaded(true));
-  }, []);
+  }, [landing]);
+
+  useEffect(() => {
+    if (configLoaded && landing && !landing.google) setError(landingError(landing, magicLinkSignIn));
+  }, [configLoaded, landing, magicLinkSignIn]);
 
   // Allowed sign-in domains, read from the server (AUTH_ALLOWED_EMAIL_DOMAINS)
   // so the hint reflects the real config without hardcoding domains here.
@@ -99,6 +136,30 @@ export function AuthScreen() {
     }
   }
 
+  // S33a — BetterAuth's magic link. A sent link never says whether the address
+  // has an account, and neither does a failed send: its message stays generic.
+  async function sendLink(e: FormEvent) {
+    e.preventDefault();
+    setLinkError(null);
+    setBusy(true);
+    const destination = returnTo ?? "/";
+    try {
+      const res = await authClient.signIn.magicLink({
+        email: linkEmail,
+        callbackURL: destination,
+        newUserCallbackURL: destination,
+        errorCallbackURL: returnTo ? `/?returnTo=${encodeURIComponent(returnTo)}` : "/",
+      });
+      if (!res.error) setLinkSentTo(linkEmail);
+      else if (res.error.status === 429) setLinkError("Too many sign-in links requested. Wait a moment and try again.");
+      else setLinkError("We couldn't send a sign-in link. Try again.");
+    } catch {
+      setLinkError("We couldn't send a sign-in link. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -118,85 +179,121 @@ export function AuthScreen() {
         </div>
 
         <Card>
-          <CardContent className="flex flex-col gap-4">
-            {/* S38 — each method renders only when the server says it is enabled. */}
-            {configLoaded && cfg.googleEnabled && (
-              <div>
-                <Button variant="outline" className="w-full" onClick={google} disabled={busy}>
-                  <GoogleMark />
-                  Continue with Google
-                </Button>
-                <p className="mt-2.5 text-center text-xs text-muted-foreground">
-                  {domainsHint ? (
-                    <>
-                      Use your <strong>{domainsHint}</strong> Google account.
-                    </>
-                  ) : (
-                    "Use your organization Google account."
-                  )}
-                </p>
-              </div>
-            )}
-
-            {error && <FieldError>{error}</FieldError>}
-
-            {configLoaded && cfg.emailPasswordEnabled && (
-              <>
-                {/* The divider only separates two methods. */}
-                {cfg.googleEnabled && (
-                  <div className="flex items-center gap-2.5">
-                    <Separator className="flex-1" />
-                    <span className="text-xs text-muted-foreground">or continue with email</span>
-                    <Separator className="flex-1" />
-                  </div>
-                )}
-
-                {/* With sign-up closed there is only one thing to do here, so the
-                    tabs collapse to a plain sign-in form. */}
-                {cfg.signupAllowed && (
-                  <Tabs value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
-                    <TabsList className="w-full">
-                      <TabsTrigger value="sign-in">Sign in</TabsTrigger>
-                      <TabsTrigger value="sign-up">Create account</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                )}
-
-                <form onSubmit={submit} className="flex flex-col gap-3">
-                  {mode === "sign-up" && (
-                    <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" required />
-                  )}
-                  <Input
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    type="email"
-                    placeholder="Email"
-                    aria-label="Email"
-                    required
-                  />
-                  <Input
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    type="password"
-                    placeholder="Password"
-                    aria-label="Password"
-                    required
-                  />
-                  <Button type="submit" disabled={busy} className="mt-0.5">
-                    {mode === "sign-up" ? "Create account" : "Sign in"}
+          {linkSentTo ? (
+            <CardContent className="flex flex-col gap-2 text-center">
+              <p className="text-sm">Check your inbox — we sent a sign-in link to {linkSentTo}</p>
+              <Button variant="link" onClick={() => setLinkSentTo(null)}>
+                Use a different email
+              </Button>
+            </CardContent>
+          ) : (
+            <CardContent className="flex flex-col gap-4">
+              {/* S38 — each method renders only when the server says it is enabled. */}
+              {configLoaded && cfg.googleEnabled && (
+                <div>
+                  <Button variant="outline" className="w-full" onClick={google} disabled={busy}>
+                    <GoogleMark />
+                    Continue with Google
                   </Button>
-                </form>
-
-                {/* The allowlist (IA4) gates email+password sign-up too; with
-                    Google off, this is the only place left to say so. */}
-                {!cfg.googleEnabled && mode === "sign-up" && domainsHint && (
-                  <p className="text-center text-xs text-muted-foreground">
-                    Sign-up is open to <strong>{domainsHint}</strong> addresses.
+                  <p className="mt-2.5 text-center text-xs text-muted-foreground">
+                    {domainsHint ? (
+                      <>
+                        Use your <strong>{domainsHint}</strong> Google account.
+                      </>
+                    ) : (
+                      "Use your organization Google account."
+                    )}
                   </p>
-                )}
-              </>
-            )}
-          </CardContent>
+                </div>
+              )}
+
+              {error && <FieldError>{error}</FieldError>}
+
+              {configLoaded && cfg.emailPasswordEnabled && (
+                <>
+                  {/* The divider only separates two methods. */}
+                  {cfg.googleEnabled && (
+                    <div className="flex items-center gap-2.5">
+                      <Separator className="flex-1" />
+                      <span className="text-xs text-muted-foreground">or continue with email</span>
+                      <Separator className="flex-1" />
+                    </div>
+                  )}
+
+                  {/* With sign-up closed there is only one thing to do here, so the
+                      tabs collapse to a plain sign-in form. */}
+                  {cfg.signupAllowed && (
+                    <Tabs value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
+                      <TabsList className="w-full">
+                        <TabsTrigger value="sign-in">Sign in</TabsTrigger>
+                        <TabsTrigger value="sign-up">Create account</TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  )}
+
+                  <form onSubmit={submit} className="flex flex-col gap-3">
+                    {mode === "sign-up" && (
+                      <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" aria-label="Name" required />
+                    )}
+                    <Input
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      type="email"
+                      placeholder="Email"
+                      aria-label="Email"
+                      required
+                    />
+                    <Input
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      type="password"
+                      placeholder="Password"
+                      aria-label="Password"
+                      required
+                    />
+                    <Button type="submit" disabled={busy} className="mt-0.5">
+                      {mode === "sign-up" ? "Create account" : "Sign in"}
+                    </Button>
+                  </form>
+
+                  {/* The allowlist (IA4) gates email+password sign-up too; with
+                      Google off, this is the only place left to say so. */}
+                  {!cfg.googleEnabled && mode === "sign-up" && domainsHint && (
+                    <p className="text-center text-xs text-muted-foreground">
+                      Sign-up is open to <strong>{domainsHint}</strong> addresses.
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* S33a — offered only where a superset registers magic-link sign-in. */}
+              {configLoaded && magicLinkSignIn && (
+                <>
+                  {(cfg.googleEnabled || cfg.emailPasswordEnabled) && (
+                    <div className="flex items-center gap-2.5">
+                      <Separator className="flex-1" />
+                      <span className="text-xs text-muted-foreground">or get a sign-in link</span>
+                      <Separator className="flex-1" />
+                    </div>
+                  )}
+                  <form onSubmit={sendLink} className="flex flex-col gap-3">
+                    <Input
+                      value={linkEmail}
+                      onChange={(e) => setLinkEmail(e.target.value)}
+                      type="email"
+                      placeholder="Email"
+                      aria-label="Email for a sign-in link"
+                      required
+                    />
+                    <Button type="submit" variant="outline" disabled={busy}>
+                      Email me a sign-in link
+                    </Button>
+                    {linkError && <FieldError>{linkError}</FieldError>}
+                  </form>
+                </>
+              )}
+            </CardContent>
+          )}
         </Card>
       </div>
     </div>

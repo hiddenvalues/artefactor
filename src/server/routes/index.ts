@@ -30,7 +30,9 @@ import { createFrameTokenRoutes } from "./frame-token";
 import { framingFromEnv, type Framing } from "../runtime/framing";
 import { createUserRoutes } from "./users";
 import { createAttachLinkPasses } from "../link-gate/passes";
+import { ossCapabilities } from "../capabilities";
 import type {
+  Capabilities,
   MeResponse,
   PublicConfigResponse,
   SharedCollectionsResponse,
@@ -51,6 +53,8 @@ export function createApiRoutes(
   thumbnails?: ThumbnailQueue,
   // S36 — frame URLs and tokens for the shells and the mint endpoint.
   framing: Framing = framingFromEnv(env),
+  // S33a — the injected capabilities, reported on /api/config unchanged.
+  capabilities: Capabilities = ossCapabilities,
 ) {
   const {
     artefactRepository,
@@ -93,13 +97,15 @@ export function createApiRoutes(
   // aren't secret; they're shown in the UI hint anyway), plus the enabled
   // sign-in methods and the sign-up gate (S38, IA7) so the screen renders only
   // what this deployment will accept. Advertising them changes no enforcement:
-  // the env guard and the user-create hook remain the boundaries.
+  // the env guard and the user-create hook remain the boundaries. The same goes
+  // for the injected capabilities (S33a).
   api.get("/config", (c) =>
     c.json<PublicConfigResponse>({
       allowedEmailDomains: env.AUTH_ALLOWED_EMAIL_DOMAINS,
       emailPasswordEnabled: authConfig.emailPasswordEnabled,
       googleEnabled: authConfig.googleEnabled,
       signupAllowed: authConfig.signupAllowed,
+      capabilities,
     }),
   );
 

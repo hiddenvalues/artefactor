@@ -24,6 +24,14 @@ export interface PublicConfigResponse {
   emailPasswordEnabled: boolean;
   googleEnabled: boolean;
   signupAllowed: boolean;
+  // S33a — what a superset adds to sign-in (e.g. magic link), injected into
+  // `createApp`. A presentation signal like the method flags above.
+  capabilities: Capabilities;
+}
+
+// S33a — the capabilities seam. OSS default: all off (`ossCapabilities`).
+export interface Capabilities {
+  magicLinkSignIn: boolean;
 }
 
 // S1 — Identity. The current authenticated identity, as returned by the

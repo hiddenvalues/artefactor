@@ -21,7 +21,8 @@ import { framingFromEnv } from "./runtime/framing";
 import { createOriginGuard } from "./middleware/origin-guard";
 import { createContentHostGate } from "./middleware/content-host";
 import { createMcpRoutes, type McpScopeResolver } from "./mcp/routes";
-import type { HealthResponse } from "../shared/contracts";
+import { ossCapabilities } from "./capabilities";
+import type { Capabilities, HealthResponse } from "../shared/contracts";
 import type { ThumbnailQueue } from "./thumbnails/thumbnail-service";
 
 // S24 — the composition root. The persistence-port adapters *and* the BetterAuth
@@ -38,6 +39,9 @@ import type { ThumbnailQueue } from "./thumbnails/thumbnail-service";
 // `authenticated` tier) on the slug-addressed read paths (serve, data, views).
 // Default = the OSS matrix (any signed-in user); a superset injects an
 // org-membership policy (ET3) without editing core.
+//
+// S33a — and so are the capabilities `/api/config` advertises (default = OSS,
+// all off); a superset that registers magic-link sign-in turns its flag on.
 export function createApp(
   adapters: Adapters = defaultAdapters,
   auth: AuthInstance = defaultAuth,
@@ -50,6 +54,7 @@ export function createApp(
   // S35 — the thumbnail queue the create/edit commands enqueue into (UI and MCP
   // alike). The entry constructs and starts it; absent = no renders.
   thumbnails?: ThumbnailQueue,
+  capabilities: Capabilities = ossCapabilities,
 ) {
   const app = new Hono();
   // S36 — where frames live, how they are tokened, and which origins are the app's.
@@ -96,7 +101,15 @@ export function createApp(
 
   app.route(
     "/api",
-    createApiRoutes(adapters, auth, resolveScope, accessPolicy, thumbnails, framing),
+    createApiRoutes(
+      adapters,
+      auth,
+      resolveScope,
+      accessPolicy,
+      thumbnails,
+      framing,
+      capabilities,
+    ),
   );
 
   // S6 — public artefact serving by slug (the shared-link render route). Mounted

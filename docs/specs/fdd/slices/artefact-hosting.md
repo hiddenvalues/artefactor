@@ -420,24 +420,69 @@ they follow the root's `(visibility, sharedWith)` (AH20/CL4); an expired root hi
 the gated audience. (DDD amendment: `ddd/artefact-hosting.md` AH22–AH24, AH31.) To be refined in
 ALI-372.
 
-### S33 — Share-invitation seam
+### S33a — Capabilities seam + magic-link sign-in affordance
+
+- **Status:** done
+- **Depends on:** S1, S38
+- **Linear:** ALI-412
+
+*Enabler; behaviour-preserving.*
+
+The core half of magic-link sign-in: the sign-in page learns from the server that a superset
+offers it, and offers it. **OSS sends no mail** and registers no magic-link plugin, so it never
+turns the capability on; the EE **Share invitations** context supplies the plugin and the mail
+(EI1). No DDD invariant changes: the flag is a presentation signal like S38's method flags
+(`ddd/identity-access.md`), the endpoint exists only where a superset registers it, and every
+account it creates still passes the `user.create.before` gate (IA4, S38).
+
+- **Capabilities** — `src/shared/contracts.ts` exports `Capabilities { magicLinkSignIn: boolean }`,
+  and public `GET /api/config` gains `capabilities: Capabilities`, returned unchanged from an
+  injected value: `createApp` takes it as a new trailing dependency (the S22/S24 pattern), defaulting
+  to `ossCapabilities` (`src/server/capabilities.ts`). **OSS default: `{ magicLinkSignIn: false }`.**
+- **Client** — the client auth carries BetterAuth's `magicLinkClient()` plugin (no request until
+  the form is used). When `magicLinkSignIn` is on, the sign-in screen offers **"Email me a sign-in
+  link"** — an email field and a submit button, in sign-in and sign-up mode alike — calling
+  `signIn.magicLink({ email, callbackURL, newUserCallbackURL, errorCallbackURL })` with the
+  post-sign-in destination the other methods use (the captured `returnTo`, else `/`) and the
+  sign-in screen as the error callback. A sent link replaces the form with "Check your inbox — we
+  sent a sign-in link to `<email>`", which never says whether an account exists, and a "Use a
+  different email" way back; a failed send (a 429 included) is an inline error with the form
+  still usable. Landing back with `?error=…` from a failed verify shows "That sign-in link has
+  expired or was already used — send a new one" for `EXPIRED_TOKEN` / `INVALID_TOKEN` and "We
+  couldn't sign you in with that link" for any other code. With the capability off the screen
+  renders exactly as today, the Google `?auth_error` landing included.
+- **Acceptance:** `createApp` with no capabilities → `/api/config` reports
+  `capabilities: { magicLinkSignIn: false }` and its other fields unchanged; with
+  `{ magicLinkSignIn: true }` it reports `true`; under the OSS default
+  `POST /api/auth/sign-in/magic-link` → 404; capability off → the sign-in screen shows no
+  magic-link control; capability on → "Email me a sign-in link" shows, submitting `a@b.co` calls
+  the magic-link endpoint with that email and the post-sign-in callback, then shows the
+  check-your-inbox state naming `a@b.co`; a rejected send (429) → an inline error and the form
+  still there; `?error=EXPIRED_TOKEN` or `?error=INVALID_TOKEN` → the expired/used message, any
+  other `error` → the generic one.
+- **Out of scope:** mail, the server `magicLink` plugin and the `Mailer` (EI1); counting magic
+  link as a method for IA7's "at least one method in production" (it is additive).
+- **Boundary:** **OSS** (the capabilities value, the client affordance). The plugin and mail are
+  **EE** (EI1).
+
+### S33b — Share-invitation seam
 
 - **Status:** specced
-- **Depends on:** S1, S16, S25
+- **Depends on:** S1, S16, S25, S33a
+- **Linear:** ALI-300
 
 *Enabler; behaviour-preserving.*
 
 The core hook a superset uses to let an owner share with an **email that
 has no Account yet** (market analysis gap #1). **OSS does not invite anyone:** it has no
 transactional email, and its sign-up allowlist (IA4) stays the only way in. The invitation
-aggregate, magic-link sign-in, mail delivery and cross-org grants are the EE **Share
-invitations** context (`ee/docs/specs/ddd/share-invitations.md`) — in cloud, where sign-up is
-open (IA5), an invited person becomes an ordinary Account. No DDD invariant changes: an accepted
-invitation is an ordinary AH14 grant.
+aggregate, mail delivery and cross-org grants are the EE **Share invitations** context
+(`ee/docs/specs/ddd/share-invitations.md`) — in cloud, where sign-up is open (IA5), an invited
+person becomes an ordinary Account, signing in through S33a's magic link. No DDD invariant
+changes: an accepted invitation is an ordinary AH14 grant.
 
-- **Capabilities** — public `GET /api/config` gains `capabilities: { shareInvitations: boolean,
-  magicLinkSignIn: boolean }`, supplied by an injected `Capabilities` value through
-  `createApp` (the S22/S24 pattern). **OSS default: both `false`.**
+- **Capabilities** — adds `shareInvitations: boolean` to S33a's `Capabilities`, reported on
+  `GET /api/config`. **OSS default: `false`.**
 - **Endpoint contract (not mounted in OSS)** — the client targets, and a superset mounts:
   `POST|GET /api/artefacts/:id/invitations`, `POST|GET /api/collections/:id/invitations` (owner;
   body `{ email }` → `{ status: "granted" | "pending", invitation? }`; `GET` lists pending
@@ -446,16 +491,13 @@ invitation is an ordinary AH14 grant.
 - **Client** — when `shareInvitations` is on, `ManageAccessModal`'s people picker offers "Invite
   `<email>`" for a well-formed email with no directory match and shows pending invitations as chips
   (resend = re-POST, revoke = DELETE) beside the access list; a `private` target prompts to share
-  as `selected` first. When `magicLinkSignIn` is on, the sign-in page offers "Email me a sign-in
-  link" (BetterAuth's standard `POST /api/auth/sign-in/magic-link`). With both off, the UI renders
-  exactly as today.
-- **Acceptance:** under the OSS defaults `/api/config` reports both capabilities `false`, the
-  modal and sign-in page render unchanged, and no invitation route exists (404); with stub
-  capabilities on and stub endpoints, typing an unknown email shows "Invite", inviting renders a
-  pending chip, `granted` refreshes the access list instead, revoke removes the chip, and the
-  sign-in page shows the magic-link option.
+  as `selected` first. With it off, the UI renders exactly as today.
+- **Acceptance:** under the OSS default `/api/config` reports `shareInvitations: false`, the
+  modal renders unchanged, and no invitation route exists (404); with the stub capability on and
+  stub endpoints, typing an unknown email shows "Invite", inviting renders a pending chip,
+  `granted` refreshes the access list instead, and revoke removes the chip.
 - **Boundary:** **OSS** (the capabilities flag, client affordances and endpoint contract). The
-  invitation domain, persistence, mail and sign-in are **EE** (Share invitations, EI1–EI3).
+  invitation domain, persistence and mail are **EE** (Share invitations, EI1–EI3).
 
 ### S35 — Artefact thumbnails
 
