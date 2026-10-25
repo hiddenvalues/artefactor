@@ -1,5 +1,6 @@
-import { CollectionInvariantViolation } from "./errors";
+import { CollectionInvariantViolation, RestoreUnderArchivedCollection } from "./errors";
 import { normalizeDescription } from "./description";
+import { chainToRoot } from "./tree";
 import { DEFAULT_TENANT } from "../artefact/artefact";
 import { NO_LINK_GATE, clearedGate, type LinkGate } from "../artefact/link-gate";
 import type { Status, Visibility } from "../artefact/visibility";
@@ -51,8 +52,7 @@ export interface CreateCollectionInput {
   description?: string | null;
   // The parent node when nesting; null/omitted for a top-level collection.
   parent?: Collection | null;
-  // Meaningful on roots only (collections.access.root-governs-tree); a nested
-  // collection carries it unconsulted.
+  // Roots only (collections.access.set-on-root-only): refused with a parent.
   visibility?: Visibility;
   tenantId?: string;
   now?: Date;
@@ -74,14 +74,14 @@ export function assertCollectionActive(c: Collection, refusal: string): void {
   if (c.status !== "active") throw new CollectionInvariantViolation(refusal);
 }
 
-// Access is decided at the tree root; a nested collection has none of its own.
-// r[impl collections.access.set-on-root-only]
-function assertRoot(c: Collection): void {
-  if (c.parentId !== null) {
-    throw new CollectionInvariantViolation(
-      "access is set on the tree root — nested collections inherit it",
-    );
-  }
+// Access is decided at the tree root; a nested collection has none of its own,
+// neither set later nor given at create.
+// r[impl collections.access.set-on-root-only+2]
+function assertRoot(
+  parentId: string | null,
+  refusal = "access is set on the tree root — nested collections inherit it",
+): void {
+  if (parentId !== null) throw new CollectionInvariantViolation(refusal);
 }
 
 // Factory enforcing the create-time invariants. A new collection is always
@@ -109,6 +109,12 @@ export function createCollection(input: CreateCollectionInput): Collection {
       );
     }
     assertCollectionActive(parent, "cannot create a collection under an archived collection");
+  }
+  if (input.visibility !== undefined) {
+    assertRoot(
+      parent?.id ?? null,
+      "a nested collection takes its tree root's tier — omit visibility, or set the root's",
+    );
   }
 
   const now = input.now ?? new Date();
@@ -164,7 +170,7 @@ export function setCollectionAccess(
   options?: { now?: Date },
 ): Collection {
   assertCollectionActive(c, "cannot change access of an archived collection");
-  assertRoot(c);
+  assertRoot(c.parentId);
   if (c.visibility === visibility) return c;
   // r[impl collections.link-gate.cleared-leaving-public]
   const linkGate = visibility === "public" ? c.linkGate : clearedGate(c.linkGate);
@@ -194,7 +200,7 @@ export function grantCollectionAccess(
   now?: Date,
 ): Collection {
   assertCollectionActive(c, "cannot change access of an archived collection");
-  assertRoot(c);
+  assertRoot(c.parentId);
   if (userId === c.ownerId) {
     throw new CollectionInvariantViolation("the owner always has access");
   }
@@ -244,6 +250,35 @@ export function restoreCollection(
   }
   const now = options?.now ?? new Date();
   return { ...c, status: "active", archivedAt: null, updatedAt: now };
+}
+
+// What a restore is checked for: a collection (its chain starts at its parent)
+// or an artefact (its chain starts at its own collection), named for the refusal.
+export interface RestoreTarget {
+  kind: "collection" | "artefact";
+  id: string;
+  name: string;
+  parentId: string | null;
+}
+
+// An item under an archived collection is restored only with it: alone it
+// would sit active inside an inert tree. `tree` is the owner's collections,
+// archived ones included; the refusal names the topmost archived collection.
+// r[impl collections.lifecycle.restore-under-active-parent+2]
+export function assertRestorableIn(
+  target: RestoreTarget,
+  tree: readonly Collection[],
+): void {
+  if (target.parentId === null) return;
+  const archived = chainToRoot(tree, target.parentId)
+    .reverse()
+    .find((c) => c.status === "archived");
+  if (archived) {
+    throw new RestoreUnderArchivedCollection(
+      { kind: target.kind, id: target.id, name: target.name },
+      { id: archived.id, name: archived.name },
+    );
+  }
 }
 
 // Permanent-delete guard — archived-only, like hosting.delete.archived-only.

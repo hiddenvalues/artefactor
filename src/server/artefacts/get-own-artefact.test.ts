@@ -27,7 +27,7 @@ describe("loadOwnActiveArtefact (S4)", () => {
     expect(a.id).toBe("a1");
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.authority.owner-only]
   it("rejects a non-owner as not-found", async () => {
     await expect(

@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FRAME_HOLD_MAX_MS,
+  MINT_WAIT_MAX_MS,
+  SAVE_DELAY_MS,
   renderHostShell,
   shellFrameJs,
   type HostShellContext,
@@ -188,8 +190,16 @@ function runShell(
   };
   const window = {
     addEventListener: (ev: string, cb: (e?: unknown) => void) => (listeners[ev] = cb),
+    removeEventListener: (ev: string, cb: (e?: unknown) => void) => {
+      if (listeners[ev] === cb) delete listeners[ev];
+    },
   };
-  const document = { documentElement, getElementById: (id: string) => elements[id] ?? null };
+  const document = {
+    documentElement,
+    getElementById: (id: string) => elements[id] ?? null,
+    addEventListener: (ev: string, cb: (e?: unknown) => void) => (listeners["doc:" + ev] = cb),
+    visibilityState: "visible",
+  };
   let n = 0;
   const fetch = vi.fn((url: string, init: RequestInit) => Promise.resolve(respond(url, init, ++n)));
   const api = new Function(
@@ -205,8 +215,12 @@ function runShell(
     fromFrame({ type: "artefactor:data-changed", blob: JSON.stringify(blob), channel });
   const puts = () => fetch.mock.calls.filter(([, init]) => init.method === "PUT");
   const mints = () => fetch.mock.calls.filter(([url]) => url === cfg.mintEndpoint);
+  const hide = () => {
+    document.visibilityState = "hidden";
+    listeners["doc:visibilitychange"]!();
+  };
   return {
-    api, fetch, frame, conflict, listeners, contentWindow, fromFrame, changed, puts, mints,
+    api, fetch, frame, conflict, listeners, contentWindow, fromFrame, changed, puts, mints, hide,
     clickReload: () => reloadListeners["click"]!(),
     frameLoaded: () => [...(frameListeners["load"] ?? [])].forEach((cb) => cb()),
     held: () => rootClasses.has("ae-hold"),
@@ -221,12 +235,18 @@ const headersOf = (init: RequestInit) => (init.headers ?? {}) as Record<string, 
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 describe("host shell — persistence through the shell (S36)", () => {
+  // S81 — the shell debounces its saves: run on fake timers, and let each
+  // settle pass the save delay.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const settle = () => vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+
   it("loads the frame URL it was rendered with", () => {
     expect(runShell(frameCfg).frame.src).toBe(frameCfg.frameUrl);
     expect(runShell({ ...frameCfg, viewerId: null }).frame.src).toBe(frameCfg.frameUrl);
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   // r[verify data.shell.saves-only-own-frame]
   it("ignores a data-changed message that doesn't come from its frame's window", async () => {
     const s = runShell(frameCfg);
@@ -246,9 +266,9 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
-  // r[verify data.shim.writes-through-shell]
-  // r[verify data.shell.writes-pinned]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  // r[verify data.shim.writes-through-shell+2]
+  // r[verify data.shell.writes-pinned+2]
   it("from its frame in the viewer's own context: one PUT to the fixed endpoint, pinned with If-Match", async () => {
     const s = runShell(frameCfg);
     s.changed({ a: "1" });
@@ -261,8 +281,8 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(headersOf(init)["If-Match"]).toBe('"2026-09-12T09:00:00.000Z"');
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
-  // r[verify data.shell.writes-pinned]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  // r[verify data.shell.writes-pinned+2]
   it("with no seeded entry, pins the write to 'none exists' (If-None-Match: *)", async () => {
     const s = runShell({ ...frameCfg, seedUpdatedAt: null });
     s.changed({ a: "1" });
@@ -275,7 +295,7 @@ describe("host shell — persistence through the shell (S36)", () => {
   // S36 — `event.source` names the browsing context, not the document: the
   // sandboxed frame may navigate itself, and what it navigates to keeps the same
   // window. Only the document the shell's own frame URL loaded knows the channel.
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   // r[verify data.shell.channel-binds-document]
   it("ignores a change that carries no channel, or another document's", async () => {
     const s = runShell(frameCfg);
@@ -286,7 +306,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   // r[verify data.shell.channel-binds-document]
   it("after a re-mint, the previous document's channel no longer saves", async () => {
     const s = runShell(frameCfg, (url) =>
@@ -308,7 +328,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.puts()).toHaveLength(1);
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   // r[verify data.shell.saves-only-own-frame]
   it("a message never chooses the URL: extra fields are ignored", async () => {
     const s = runShell(frameCfg);
@@ -323,7 +343,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.fetch.mock.calls.map(([url]) => url)).toEqual([frameCfg.dataEndpoint]);
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   it("ignores a data-changed message whose blob isn't a string", async () => {
     const s = runShell(frameCfg);
     s.fromFrame({ type: "artefactor:data-changed", blob: { a: 1 } });
@@ -331,8 +351,8 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
-  // r[verify data.shell.writes-pinned]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  // r[verify data.shell.writes-pinned+2]
   it("pins the next write to the updatedAt its own save returned", async () => {
     const s = runShell(frameCfg, () => saved("2026-09-12T10:05:00.000Z"));
     s.changed({ a: "1" });
@@ -343,8 +363,8 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T10:05:00.000Z"');
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
-  // r[verify data.shell.writes-pinned]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  // r[verify data.shell.writes-pinned+2]
   it("never overlaps saves: changes during a save go after it, with the new pin, carrying only the latest blob", async () => {
     let release!: (r: FakeResponse) => void;
     const s = runShell(frameCfg, (_u, _i, n) =>
@@ -380,7 +400,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T09:00:00.000Z"');
   });
 
-  // r[verify data.shim.writes-through-shell]
+  // r[verify data.shim.writes-through-shell+2]
   it("on its own pagehide, flushes an unsent change with keepalive", async () => {
     let release!: (r: FakeResponse) => void;
     const s = runShell(frameCfg, (_u, _i, n) =>
@@ -395,7 +415,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     release(saved("2026-09-12T10:08:00.000Z"));
   });
 
-  // r[verify data.shell.writes-pinned]
+  // r[verify data.shell.writes-pinned+2]
   it("a pagehide with nothing unsent sends nothing", async () => {
     const s = runShell(frameCfg);
     s.listeners["pagehide"]!();
@@ -403,8 +423,8 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
-  // r[verify data.shell.writes-pinned]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  // r[verify data.shell.writes-pinned+2]
   it("412 → shows the conflict banner and sends no further PUTs; Reload re-mints and re-seeds", async () => {
     const s = runShell(frameCfg, (url, _i, n) =>
       url === frameCfg.mintEndpoint
@@ -437,7 +457,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T11:00:00.000Z"');
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   // r[verify data.shell.saves-only-own-frame]
   it("selecting another author mints for that author, and then ignores the frame's changes", async () => {
     const s = runShell(frameCfg, (url) =>
@@ -454,7 +474,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.puts()).toHaveLength(0);
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   it("switching back to the viewer's own data re-seeds the pin and saves again", async () => {
     const s = runShell(frameCfg, (url, init) =>
       url === frameCfg.mintEndpoint
@@ -507,7 +527,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.puts()[0]![1].keepalive).toBe(false);
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   it("frame-token-expired from its frame → one mint for the current context, and the frame reloads with it", async () => {
     const s = runShell(frameCfg, () => minted("/a/slug1/frame?t=fresh", "2026-09-12T09:00:00.000Z"));
     s.fromFrame({ type: "artefactor:frame-token-expired" });
@@ -518,7 +538,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     expect(s.frame.src).toBe("/a/slug1/frame?t=fresh");
   });
 
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   it("ignores frame-token-expired from any other source", async () => {
     const s = runShell(frameCfg, () => minted("/a/slug1/frame?t=fresh", null));
     s.listeners["message"]!({ source: {}, origin: "null", data: { type: "artefactor:frame-token-expired" } });
@@ -530,6 +550,387 @@ describe("host shell — persistence through the shell (S36)", () => {
   // r[verify data.shell.saves-only-own-frame]
   it("the shell never posts anything to the frame", () => {
     expect(shellFrameJs(frameCfg)).not.toContain("postMessage");
+  });
+});
+
+// S81 — A change made just before a reload is saved: the shell debounces, the
+// frame posts at once. The frame hands over each change as it happens, so the
+// latest one is always on the side that survives the unload.
+describe("host shell — debounces and flushes (S81)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  // r[verify data.shell.debounces-and-flushes]
+  // r[verify data.shim.writes-through-shell+2]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  it("sends one PUT the save delay after a change, not before", async () => {
+    const s = runShell(frameCfg);
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS - 1);
+    expect(s.puts()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].body).toBe('{"a":"1"}');
+    expect(s.puts()[0]![1].keepalive).toBe(false);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  it("a burst of changes is one PUT, the save delay after the last, carrying the last blob", async () => {
+    const s = runShell(frameCfg);
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(200);
+    s.changed({ a: "2" });
+    await vi.advanceTimersByTimeAsync(200);
+    s.changed({ a: "3" });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS - 1);
+    expect(s.puts()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].body).toBe('{"a":"3"}');
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS * 2);
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("on its own pagehide, flushes a held change at once with keepalive, and not again when the delay ends", async () => {
+    const s = runShell(frameCfg);
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(100);
+    s.listeners["pagehide"]!();
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].keepalive).toBe(true);
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS * 2);
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("when it goes hidden, flushes a held change at once with keepalive", async () => {
+    const s = runShell(frameCfg);
+    s.changed({ a: "1" });
+    s.hide();
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].keepalive).toBe(true);
+    expect(headersOf(s.puts()[0]![1])["If-Match"]).toBe('"2026-09-12T09:00:00.000Z"');
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS * 2);
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  // r[verify data.shell.writes-pinned+2]
+  it("an idle tab hidden or closed sends nothing", async () => {
+    const s = runShell(frameCfg);
+    s.hide();
+    s.listeners["pagehide"]!();
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS * 2);
+    expect(s.fetch).not.toHaveBeenCalled();
+  });
+
+  // Going hidden (or a beforeunload) doesn't mean the page is gone: a save in
+  // flight still settles, so the held change waits for it rather than racing it
+  // under the same pin into a spurious 412. Only pagehide forces an overlap.
+  // r[verify data.shell.debounces-and-flushes]
+  // r[verify data.shell.writes-pinned+2]
+  it.each(["hidden", "beforeunload"])("%s during a save in flight doesn't overlap it: the held change goes after, with the new pin", async (ev) => {
+    let release!: (r: FakeResponse) => void;
+    const s = runShell(frameCfg, (_u, _i, n) =>
+      n === 1 ? new Promise<FakeResponse>((res) => (release = res)) : saved("2026-09-12T10:09:00.000Z"),
+    );
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(s.puts()).toHaveLength(1);
+    s.changed({ a: "2" });
+    if (ev === "hidden") s.hide();
+    else s.listeners["beforeunload"]!();
+    expect(s.puts()).toHaveLength(1);
+
+    release(saved("2026-09-12T10:08:00.000Z"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.puts()).toHaveLength(2);
+    const [, second] = s.puts()[1]!;
+    expect(second.body).toBe('{"a":"2"}');
+    expect(headersOf(second)["If-Match"]).toBe('"2026-09-12T10:08:00.000Z"');
+    // The page may be going: the change that waited still leaves with keepalive.
+    expect(second.keepalive).toBe(true);
+    expect(s.conflict.hidden).toBe(true);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("an expired frame token re-mints only once the held change has saved, so the re-seeded frame sees it", async () => {
+    let release!: (r: FakeResponse) => void;
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint
+        ? minted("/a/slug1/frame?t=fresh", "2026-09-12T12:00:00.000Z")
+        : new Promise<FakeResponse>((res) => (release = res)),
+    );
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(100);
+    s.fromFrame({ type: "artefactor:frame-token-expired" });
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].body).toBe('{"a":"1"}');
+    expect(s.mints()).toHaveLength(0);
+
+    release(saved("2026-09-12T12:00:00.000Z"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.fetch.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      [frameCfg.dataEndpoint, "PUT"],
+      [frameCfg.mintEndpoint, "POST"],
+    ]);
+    expect(s.frame.src).toBe("/a/slug1/frame?t=fresh");
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS * 2);
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("a context switch during a save in flight sends the held change after it, then mints, and drops nothing", async () => {
+    let release!: (r: FakeResponse) => void;
+    const s = runShell(frameCfg, (url, _i, n) =>
+      url === frameCfg.mintEndpoint
+        ? minted("/a/slug1/frame?t=author", null)
+        : n === 1
+          ? new Promise<FakeResponse>((res) => (release = res))
+          : saved("2026-09-12T10:09:00.000Z"),
+    );
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    s.changed({ a: "2" });
+    s.api.select("author-2");
+    expect(s.puts()).toHaveLength(1);
+    expect(s.mints()).toHaveLength(0);
+
+    release(saved("2026-09-12T10:08:00.000Z"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.fetch.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      [frameCfg.dataEndpoint, "PUT"],
+      [frameCfg.dataEndpoint, "PUT"],
+      [frameCfg.mintEndpoint, "POST"],
+    ]);
+    expect(s.puts()[1]![1].body).toBe('{"a":"2"}');
+    expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T10:08:00.000Z"');
+  });
+
+  // A change posted while the page is hidden isn't held for the delay: a
+  // hidden page may be frozen or discarded at any time.
+  // r[verify data.shell.debounces-and-flushes]
+  it("a change arriving while hidden goes out at once", async () => {
+    const s = runShell(frameCfg);
+    s.hide();
+    s.changed({ a: "1" });
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].keepalive).toBe(true);
+  });
+
+  // Browsers cap the keepalive bytes in flight across requests.
+  // r[verify data.shell.debounces-and-flushes]
+  it("keeps the keepalive bytes in flight under the cap: an overlapping flush that would pass it goes plain", async () => {
+    const s = runShell(frameCfg, () => new Promise<FakeResponse>(() => {}));
+    const big = "x".repeat(40 * 1024);
+    s.changed({ a: big });
+    s.hide();
+    expect(s.puts()[0]![1].keepalive).toBe(true);
+    s.changed({ a: big + "y" });
+    s.listeners["pagehide"]!();
+    expect(s.puts()).toHaveLength(2);
+    expect(s.puts()[1]![1].keepalive).toBe(false);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("after a 412 it no longer listens for beforeunload, whatever the frame posts", async () => {
+    const s = runShell(frameCfg, () => PRECONDITION_FAILED);
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(s.conflict.hidden).toBe(false);
+    expect(s.listeners["beforeunload"]).toBeUndefined();
+    s.changed({ a: "2" });
+    s.hide();
+    expect(s.listeners["beforeunload"]).toBeUndefined();
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  // An artefact that writes faster than a save round trip can't starve a
+  // switch: the mint waits for the saves outstanding when it was asked for.
+  // r[verify data.shell.debounces-and-flushes]
+  it("a context switch waits for the saves outstanding then, not for later ones", async () => {
+    const releases: Array<(r: FakeResponse) => void> = [];
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint
+        ? minted("/a/slug1/frame?t=author", null)
+        : new Promise<FakeResponse>((res) => releases.push(res)),
+    );
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS); // PUT 1 in flight
+    s.changed({ a: "2" }); // held behind it
+    s.api.select("author-2");
+    s.changed({ a: "3" }); // the own frame is still live until the mint lands
+    releases[0]!(saved("2026-09-12T10:01:00.000Z"));
+    await vi.advanceTimersByTimeAsync(0); // PUT 2 ({"a":"3"}, the latest) goes
+    expect(s.mints()).toHaveLength(0);
+    releases[1]!(saved("2026-09-12T10:02:00.000Z"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.mints()).toHaveLength(1);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("a stalled save holds a context switch back at most MINT_WAIT_MAX_MS", async () => {
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint ? minted("/a/slug1/frame?t=author", null) : new Promise<FakeResponse>(() => {}),
+    );
+    s.changed({ a: "1" });
+    s.api.select("author-2");
+    expect(s.puts()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(MINT_WAIT_MAX_MS - 1);
+    expect(s.mints()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.mints()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.frame.src).toBe("/a/slug1/frame?t=author");
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("an expired frame token while a switch waits keeps the switch's target", async () => {
+    let release!: (r: FakeResponse) => void;
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint
+        ? minted("/a/slug1/frame?t=author", null)
+        : new Promise<FakeResponse>((res) => (release = res)),
+    );
+    s.changed({ a: "1" });
+    s.api.select("author-2");
+    s.fromFrame({ type: "artefactor:frame-token-expired" });
+    release(saved("2026-09-12T10:01:00.000Z"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.mints()).toHaveLength(1);
+    expect(s.mints()[0]![1].body).toBe(JSON.stringify({ author: "author-2" }));
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("back to the viewer's own data before a switch took effect cancels it and keeps the live frame", async () => {
+    let release!: (r: FakeResponse) => void;
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint
+        ? minted("/a/slug1/frame?t=author", null)
+        : new Promise<FakeResponse>((res) => (release = res)),
+    );
+    s.changed({ a: "1" });
+    s.api.select("author-2");
+    s.api.select("");
+    release(saved("2026-09-12T10:01:00.000Z"));
+    await vi.advanceTimersByTimeAsync(MINT_WAIT_MAX_MS);
+    expect(s.mints()).toHaveLength(0);
+    expect(s.frame.src).toBe(frameCfg.frameUrl);
+    s.changed({ a: "2" });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(s.puts()).toHaveLength(2);
+    expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T10:01:00.000Z"');
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("releases the keepalive budget once a keepalive save settles", async () => {
+    const s = runShell(frameCfg);
+    const big = "x".repeat(40 * 1024);
+    s.changed({ a: big });
+    s.hide();
+    expect(s.puts()[0]![1].keepalive).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    s.changed({ a: big + "y" });
+    expect(s.puts()).toHaveLength(2);
+    expect(s.puts()[1]![1].keepalive).toBe(true);
+  });
+
+  // An unconditional beforeunload listener costs the page Firefox's
+  // back/forward cache: it is attached only while a change is held or in flight.
+  // r[verify data.shell.debounces-and-flushes]
+  it("listens for beforeunload only while it holds a change or a save is in flight", async () => {
+    const s = runShell(frameCfg);
+    expect(s.listeners["beforeunload"]).toBeUndefined();
+    s.changed({ a: "1" });
+    expect(s.listeners["beforeunload"]).toBeDefined();
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(s.puts()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.listeners["beforeunload"]).toBeUndefined();
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("a context switch saves a held change, under the viewer's pin, before it mints", async () => {
+    const s = runShell(frameCfg, (url) =>
+      url === frameCfg.mintEndpoint ? minted("/a/slug1/frame?t=author", null) : saved("x"),
+    );
+    s.changed({ a: "1" });
+    await vi.advanceTimersByTimeAsync(100);
+    s.api.select("author-2");
+    expect(s.mints()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s.fetch.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      [frameCfg.dataEndpoint, "PUT"],
+      [frameCfg.mintEndpoint, "POST"],
+    ]);
+    expect(s.puts()[0]![1].body).toBe('{"a":"1"}');
+    expect(headersOf(s.puts()[0]![1])["If-Match"]).toBe('"2026-09-12T09:00:00.000Z"');
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS * 2);
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("on beforeunload, flushes a held change at once with keepalive, before the reload's own request", async () => {
+    const s = runShell(frameCfg);
+    s.changed({ a: "1" });
+    s.listeners["beforeunload"]!();
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].keepalive).toBe(true);
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS * 2);
+    expect(s.puts()).toHaveLength(1);
+  });
+
+  // A reload's shell can render its pin before the previous page's flush
+  // lands, and its frame be seeded after: the frame's seed is what its blob
+  // was built on.
+  // r[verify data.shell.writes-pinned+2]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
+  it("pins to the seed its frame document reports, then advances it by its own saves", async () => {
+    const s = runShell({ ...frameCfg, seedUpdatedAt: null });
+    const seeded = (blob: string, seed: string | null) =>
+      s.fromFrame({ type: "artefactor:data-changed", blob, channel: frameCfg.channel, seed });
+    seeded('{"a":"1"}', "2026-09-12T10:00:00.000Z");
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(headersOf(s.puts()[0]![1])["If-Match"]).toBe('"2026-09-12T10:00:00.000Z"');
+    expect(headersOf(s.puts()[0]![1])["If-None-Match"]).toBeUndefined();
+
+    // The same document keeps reporting its seed: its own save's pin wins.
+    seeded('{"a":"2"}', "2026-09-12T10:00:00.000Z");
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T12:00:00.000Z"');
+
+    // The frame reloaded itself and was seeded anew.
+    seeded('{"a":"3"}', "2026-09-12T13:00:00.000Z");
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(headersOf(s.puts()[2]![1])["If-Match"]).toBe('"2026-09-12T13:00:00.000Z"');
+  });
+
+  // r[verify data.shell.writes-pinned+2]
+  it("a frame seeded with no entry pins 'none exists', whatever was rendered", async () => {
+    const s = runShell(frameCfg);
+    s.fromFrame({ type: "artefactor:data-changed", blob: "{}", channel: frameCfg.channel, seed: null });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(headersOf(s.puts()[0]![1])["If-None-Match"]).toBe("*");
+    expect(headersOf(s.puts()[0]![1])["If-Match"]).toBeUndefined();
+  });
+
+  // r[verify data.shell.writes-pinned+2]
+  it("a seed that isn't a string or null is ignored: the rendered pin stays", async () => {
+    const s = runShell(frameCfg);
+    s.fromFrame({ type: "artefactor:data-changed", blob: "{}", channel: frameCfg.channel, seed: 42 });
+    await vi.advanceTimersByTimeAsync(SAVE_DELAY_MS);
+    expect(headersOf(s.puts()[0]![1])["If-Match"]).toBe('"2026-09-12T09:00:00.000Z"');
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  it("a change arriving after its own pagehide goes out at once", async () => {
+    const s = runShell(frameCfg);
+    s.listeners["pagehide"]!();
+    s.changed({ a: "late" });
+    expect(s.puts()).toHaveLength(1);
+    expect(s.puts()[0]![1].keepalive).toBe(true);
   });
 });
 

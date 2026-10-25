@@ -267,32 +267,40 @@ r[data.shim.seeded-server-side]
 viewer's `DataEntry` while serving and inlines it into the bootstrap, so the in-memory map
 is populated before the artefact runs. No client round-trip on first read.
 
-r[data.shim.writes-through-shell]
+r[data.shim.writes-through-shell+2]
 **Writes are write-through + debounced, through the host shell (`data.shim.posts-never-fetches`,
 S36)**: `setItem`/`removeItem`/`clear` update the in-memory map synchronously, then the shim posts
-the whole blob to the host shell (`{ type: "artefactor:data-changed", blob }`, debounced, and
-again on `pagehide`/`visibilitychange: hidden` when a change is still unposted). The shim
-never calls the API: the sandboxed frame has no session (`hosting.frame.no-cookies`). The
-**shell** sends the `PUT …/data/me`, under the viewer's session, with a `keepalive` flush on its
-own `pagehide`.
+the whole blob to the host shell (`{ type: "artefactor:data-changed", blob }`) after the task that
+changed it. The shim never calls the API: the sandboxed frame has no session
+(`hosting.frame.no-cookies`). The **shell** debounces and sends the `PUT …/data/me`, under the
+viewer's session, and flushes with `keepalive` on its own `pagehide` / `visibilitychange: hidden`
+(`data.shell.debounces-and-flushes`).
 
-r[data.shell.writes-pinned]
+r[data.shell.writes-pinned+2]
 **Only changes are written, and every write is pinned (S31).** Because the saved data can
 also be replaced from outside the tab (the connector's `set_artefact_data`), a tab must not
-act on a stale copy. The shell owns this discipline, and the pin never lives in the frame
-(`data.shim.posts-never-fetches`): a flush sends **only when the artefact changed something** since
-the last save — an open, idle tab never writes (hiding or closing it sends nothing); each `PUT` is
-conditioned on the `updatedAt` the tab last knew — `If-Match: "<updatedAt>"`, or
-`If-None-Match: *` when it was seeded with no entry — seeded server-side with the blob and advanced
-by each successful save's response; saves never overlap (an edit made while one is in flight goes
-out after it, with the new pin), except the forced `pagehide` flush; and a **412** means the data
+act on a stale copy. The shell owns this discipline (`data.shim.posts-never-fetches`): a flush
+sends **only when the artefact changed something** since the last save — an open, idle tab never
+writes (hiding or closing it sends nothing); each `PUT` is conditioned on the `updatedAt` of the
+data the frame's blob was built on — `If-Match: "<updatedAt>"`, or `If-None-Match: *` when it was
+seeded with no entry. The frame document is seeded server-side with the blob and its `updatedAt`
+and reports that `updatedAt` with each change; the shell adopts it whenever a newly loaded document
+reports a new one (a reloaded page's frame can be seeded after the shell's own pin was rendered),
+and advances it by each successful save's response. The frame only says what it was seeded with:
+it never chooses a write. Saves never overlap (an edit made while one is in flight goes
+out after it, with the new pin), except the forced unload flush; and a **412** means the data
 was replaced since the tab loaded: the shell **stops writing** (the artefact keeps running on its
 in-memory copy, so it doesn't break) and shows a banner offering a reload, which mints a fresh
-frame URL and re-seeds the latest data. A tab can therefore never silently revert a newer write.
-The residual losses: a change still inside the shim's debounce window when the tab closes or the
-viewer switches data context (the shell is gone, or no longer in the viewer's own context, when it
-arrives), and unsaved edits when the tab is closed right after a conflicting write (the shell's
-keepalive response can't be acted on).
+frame URL and re-seeds the latest data. A tab can therefore never silently revert a write made
+outside it (the connector, another tab or device). The residual losses: a change the artefact
+makes while the page is already unloading (in its own `pagehide` or `beforeunload`), an unload
+flush over the keepalive cap that the browser drops, a change still held behind a save in flight
+when the page unloads (the forced flush is pinned before that save lands, so it is refused),
+unsaved edits when the tab is closed right after a conflicting write (the shell's keepalive
+response can't be acted on), and a tab whose artefact reloads its own frame before a save lands:
+the reloaded document can come back seeded with the older data, and its next save goes out under
+the shell's advanced pin (the tab saves what it shows), or meets a 412 when its seed differs from
+the one the shell last adopted.
 
 r[data.shim.quota-over-cap]
 **Quota maps to the cap**: a write that would push the blob over `MAX_BLOB_BYTES` (5 MB)
@@ -428,12 +436,29 @@ anyway.
 
 ### Invariants — persistence through the host shell
 
-r[data.shim.posts-never-fetches]
+r[data.shim.posts-never-fetches+2]
 **Frame → shell.** The shim keeps the synchronous seeded map, `QuotaExceededError` over
-`MAX_BLOB_BYTES` and throw-on-write in a read-only context. On a change (debounced) and on
-`pagehide` / `visibilitychange: hidden` with a change still unposted, it posts
-`{ type: "artefactor:data-changed", blob }` to `window.parent` with `targetOrigin` = the app
+`MAX_BLOB_BYTES` and throw-on-write in a read-only context. Once per task that changed the map
+(coalesced to a microtask) and on `pagehide` / `visibilitychange: hidden` with a change still
+unposted, it posts
+`{ type: "artefactor:data-changed", blob, channel, seed }` (`seed`: the `updatedAt` it was seeded
+with, or null) to `window.parent` with `targetOrigin` = the app
 origin. An idle tab posts nothing. It never calls `fetch`.
+
+r[data.shell.debounces-and-flushes]
+**The shell, not the shim, debounces.** It holds the latest blob its frame posted and sends it
+600 ms after the last change, or at once (with `keepalive`) on its own `beforeunload` and
+`pagehide`, when it goes hidden or a change arrives while it is hidden, and before it points the
+frame anywhere (a data-context switch, or a re-mint after an expired frame token), which it does
+only once that save, and any save already in flight, has settled (not later ones), or after 3 s;
+a switch back to the viewer's own data before a switch took effect cancels it. Only the `pagehide` flush
+overlaps a save already in flight (`data.shell.writes-pinned`); otherwise the held change goes out
+right after that save settles, with its pin, and still with `keepalive` once the page may be going.
+`keepalive` is used only while the keepalive bodies in flight stay within the cap; past it a flush
+goes plain. It listens for `beforeunload` only while it holds a change or a save is in flight, and
+never after a 412. So a change the artefact made at least one task before the top page unloads is
+already in the shell, whatever order the two documents unload in, and, unless a save is already in
+flight, a reload's flush leaves before the reload's own request.
 
 r[data.shell.saves-only-own-frame]
 **The shell decides.** It accepts a message only when `event.source === frame.contentWindow`

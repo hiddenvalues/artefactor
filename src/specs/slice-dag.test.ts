@@ -740,11 +740,13 @@ describe("the real specs", () => {
   // S74 — Collection description, S75 — Agent places an artefact in a collection, S76 — Agent
   // manages collections over MCP, S77 — Logo: the gem jar mark, S78 — Agent keeps an artefact
   // private and verifies it before calling it done, S79 — Database refuses a payload ref shared
-  // by two artefacts, and S80 — Account menu as its own component.
-  it("loads exactly the core slices S0–S48, S49a, S49b, S50, S51, S52, S53, S54, S55, S56, S57, S58, S59, S60, S61, S62, S63, S64, S65, S66, S67, S68, S69, S70, S71, S72, S73, S74, S75, S76, S77, S78, S79, S80 plus S34b (S19, S32 and S33 each split into a + b)", () => {
+  // by two artefacts, S80 — Account menu as its own component, S81 — A change made just before a
+  // reload is saved: the shell debounces, the frame posts at once, and S82 — One sort menu for
+  // Home and collection pages.
+  it("loads exactly the core slices S0–S48, S49a, S49b, S50, S51, S52, S53, S54, S55, S56, S57, S58, S59, S60, S61, S62, S63, S64, S65, S66, S67, S68, S69, S70, S71, S72, S73, S74, S75, S76, S77, S78, S79, S80, S81, S82 plus S34b (S19, S32 and S33 each split into a + b)", () => {
     const expected = Array.from({ length: 49 }, (_, n) => `S${n}`)
       .flatMap((id) => (id === "S19" || id === "S32" || id === "S33" ? [`${id}a`, `${id}b`] : [id]))
-      .concat("S34b", "S49a", "S49b", "S50", "S51", "S52", "S53", "S54", "S55", "S56", "S57", "S58", "S59", "S60", "S61", "S62", "S63", "S64", "S65", "S66", "S67", "S68", "S69", "S70", "S71", "S72", "S73", "S74", "S75", "S76", "S77", "S78", "S79", "S80");
+      .concat("S34b", "S49a", "S49b", "S50", "S51", "S52", "S53", "S54", "S55", "S56", "S57", "S58", "S59", "S60", "S61", "S62", "S63", "S64", "S65", "S66", "S67", "S68", "S69", "S70", "S71", "S72", "S73", "S74", "S75", "S76", "S77", "S78", "S79", "S80", "S81", "S82");
     expect(coreDag.map((s) => s.id).sort()).toEqual(expected.sort());
   });
 

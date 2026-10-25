@@ -105,7 +105,7 @@ describe("views commands (S21)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify views.viewers.follows-artefact-access]
   it("is not-found when a non-owner targets a private artefact", async () => {
     const shared = await seed("public");

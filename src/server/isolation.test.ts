@@ -89,6 +89,7 @@ describe("isolated artefact serving (S36)", () => {
       writable: boolean;
       targetOrigin: string;
       channel: string | null;
+      seedUpdatedAt: string | null;
     };
   const iframeTag = (body: string) => body.match(/<iframe[^>]*>/)![0];
   const shellCfg = (body: string) =>
@@ -185,6 +186,19 @@ describe("isolated artefact serving (S36)", () => {
       await putData(a.publicSlug!, otherCookie, '{"k":"other-own"}');
       const body = await (await app.request((await mint(a.publicSlug!, otherCookie)).frameUrl)).text();
       expect(shimCfg(body)).toMatchObject({ seed: '{"k":"other-own"}', writable: true });
+    });
+
+    // S81 — the frame reports what it was seeded with, so the shell pins to it.
+    // r[verify data.shell.writes-pinned+2]
+    it("an own-context frame is seeded with its entry's updatedAt, or null with no entry", async () => {
+      const a = await makeArtefact("authenticated");
+      const empty = await (await app.request((await mint(a.publicSlug!, otherCookie)).frameUrl)).text();
+      expect(shimCfg(empty).seedUpdatedAt).toBeNull();
+      await putData(a.publicSlug!, otherCookie, '{"k":"v"}');
+      const minted = await mint(a.publicSlug!, otherCookie);
+      const body = await (await app.request(minted.frameUrl)).text();
+      expect(shimCfg(body).seedUpdatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(shimCfg(body).seedUpdatedAt).toBe(minted.seedUpdatedAt);
     });
 
     // r[verify hosting.frame.redeem-seeds-by-token]
@@ -421,8 +435,8 @@ describe("isolated artefact serving (S36)", () => {
       expect(cfg.channel).toBe(frameChannel(tokenOf(cfg.frameUrl), SECRET));
     });
 
-    // r[verify hosting.frame.shim-posts-to-shell]
-    // r[verify data.shim.posts-never-fetches]
+    // r[verify hosting.frame.shim-posts-to-shell+2]
+    // r[verify data.shim.posts-never-fetches+2]
     it("the shim posts to the app origin", async () => {
       const a = await makeArtefact("public");
       const body = await (await openFrame(app, a.publicSlug!, ownerCookie)).text();

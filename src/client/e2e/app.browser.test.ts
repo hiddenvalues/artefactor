@@ -280,6 +280,15 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
     const put = await app.request(`/api/artefacts/${id}/bookmark`, { method: "PUT", headers: { cookie: u.cookie } });
     expect(put.ok).toBe(true);
   }
+  async function createSubCollection(u: User, name: string, parentId: string): Promise<{ id: string }> {
+    const res = await app.request("/api/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie: u.cookie },
+      body: JSON.stringify({ name, parentId }),
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()) as { id: string };
+  }
   // The grid card of `title` in Home's listing.
   const cardOf = (page: Page, title: string) =>
     listing(page).locator("[data-slot='card']", { has: page.locator(`[aria-label='Open ${title}']`) });
@@ -1264,16 +1273,6 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
     const path = (page: Page) => new URL(page.url()).pathname;
     const heading = (page: Page, name: string) => page.getByRole("heading", { level: 1, name, exact: true });
     const search = (page: Page) => page.getByRole("combobox", { name: "Search artefacts and collections" });
-
-    async function createSubCollection(u: User, name: string, parentId: string): Promise<{ id: string }> {
-      const res = await app.request("/api/collections", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", cookie: u.cookie },
-        body: JSON.stringify({ name, parentId }),
-      });
-      expect(res.status).toBe(201);
-      return (await res.json()) as { id: string };
-    }
 
     async function openAccountFromMenu(page: Page): Promise<void> {
       await openMenu(page, page.locator("header [title^='Account']:visible"));
@@ -2773,6 +2772,110 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
       await page.context().close();
     });
 
+    const LONG_TITLE = "Vinga Ambassadors: Walkthrough of the onboarding flow for new ambassadors and their mentors";
+    // The title's rendered lines, and whether it clips its text (its
+    // `line-clamp` "…" is painted, never in the DOM, so a clip is the check).
+    const titleLines = (title: Locator) =>
+      title.locator("span").evaluate((el) => {
+        const s = getComputedStyle(el);
+        return {
+          lines: Math.round(el.clientHeight / parseFloat(s.lineHeight)),
+          clipped: el.scrollHeight > el.clientHeight + 1,
+          clamp: s.webkitLineClamp,
+        };
+      });
+
+    // r[verify hosting.card.long-title]
+    it("wraps a long title to two lines, then truncates it, with the full title as its tooltip", async () => {
+      const u = await newUser();
+      await createArtefact(u, LONG_TITLE);
+      const page = await openApp(u);
+      await mineOnly(page);
+      const card = cardOf(page, LONG_TITLE);
+      await visible(card);
+      await narrowest(card);
+      const title = card.locator("button", { hasText: LONG_TITLE });
+      expect(await titleLines(title)).toEqual({ lines: 2, clipped: true, clamp: "2" });
+      expect(await title.getAttribute("title")).toBe(LONG_TITLE);
+      // The kind icon and "More actions" are centred on the first line, not the middle.
+      const [t, icon, menu, lineHeight] = await Promise.all([
+        box(title),
+        box(card.getByRole("img", { name: "Prototype", exact: true })),
+        box(card.locator("[title^='More']")),
+        title.evaluate((el) => parseFloat(getComputedStyle(el).lineHeight)),
+      ]);
+      const firstLine = t.y + lineHeight / 2;
+      expect(Math.abs(icon.y + icon.height / 2 - firstLine)).toBeLessThan(2);
+      expect(Math.abs(menu.y + menu.height / 2 - firstLine)).toBeLessThan(2);
+      await page.context().close();
+    });
+
+    // r[verify hosting.card.long-title]
+    it("keeps a short title on one line, its access row level with a long-titled card's in the same row", async () => {
+      const u = await newUser();
+      await createArtefact(u, LONG_TITLE);
+      await createArtefact(u, "Short");
+      const page = await openApp(u);
+      await mineOnly(page);
+      const cards = [cardOf(page, LONG_TITLE), cardOf(page, "Short")];
+      await visible(cards[1]!);
+      await narrowest(cards[0]!);
+      const short = cards[1]!.locator("button", { hasText: "Short" });
+      expect(await titleLines(short)).toEqual({ lines: 1, clipped: false, clamp: "2" });
+      const boxes = await Promise.all(cards.map(box));
+      expect(Math.abs(boxes[0]!.y - boxes[1]!.y)).toBeLessThan(1);
+      const access = await Promise.all(cards.map((c) => box(c.locator("[title^='Access: ']"))));
+      expect(Math.abs(access[0]!.y + access[0]!.height - (access[1]!.y + access[1]!.height))).toBeLessThan(1);
+      await page.context().close();
+    });
+
+    it("names a long artefact or collection in full as the tooltip in the sidebar, and a long collection on its tile and its page", async () => {
+      const u = await newUser();
+      const name = "Vinga Ambassadors programme: every workstream, review and onboarding artefact";
+      const c = await createCollection(u, name);
+      const a = await createArtefact(u, LONG_TITLE);
+      await bookmark(u, a.id);
+      const put = await app.request(`/api/collections/${c.id}/bookmark`, { method: "PUT", headers: { cookie: u.cookie } });
+      expect(put.ok).toBe(true);
+      const page = await openApp(u);
+      const aside = await openSidebar(page);
+      // The bookmarked artefact, the bookmarked collection and the collection's tree row.
+      await visible(aside.locator(`[title='${LONG_TITLE}']`));
+      await eventually(async () => expect(await aside.locator(`[title='${name}']`).count()).toBe(2));
+      // Its page's heading; then a long-named sub-collection's tile on its parent's page.
+      await page.goto(`${ORIGIN}/c/${c.id}`);
+      const h1 = page.getByRole("heading", { level: 1, name, exact: true });
+      await visible(h1);
+      expect(await h1.getAttribute("title")).toBe(name);
+      const parent = await createCollection(u, "Parent tree");
+      await createSubCollection(u, `${name} (nested)`, parent.id);
+      await page.goto(`${ORIGIN}/c/${parent.id}`);
+      await visible(page.locator(`main button[title='${name} (nested)']`));
+      await page.context().close();
+    });
+
+    it("names a long artefact in full as the tooltip in the Add to collection dialog, and a long artefact and collection on the Archive", async () => {
+      const u = await newUser();
+      const name = "Vinga Ambassadors archive: every retired workstream, review and onboarding artefact";
+      await createCollection(u, "Dialog target");
+      await createArtefact(u, LONG_TITLE);
+      const page = await openApp(u);
+      await mineOnly(page);
+      await cardMenu(page, LONG_TITLE);
+      await control(page, "Add to collection…").click();
+      await visible(page.getByRole("dialog").locator(`[title='${LONG_TITLE}']`));
+      await page.keyboard.press("Escape");
+      const archived = await createArtefact(u, `${LONG_TITLE} (archived)`);
+      await archive(u, archived.id);
+      const c = await createCollection(u, name);
+      const res = await app.request(`/api/collections/${c.id}/archive`, { method: "POST", headers: { cookie: u.cookie } });
+      expect(res.ok).toBe(true);
+      await page.goto(`${ORIGIN}/archive`);
+      await visible(page.locator(`main [title='${LONG_TITLE} (archived)']`));
+      await visible(page.locator(`main [title='${name}']`));
+      await page.context().close();
+    });
+
     it("tabs from the thumbnail through bookmark, title, More actions, collection and Share", async () => {
       const u = await newUser();
       const c = await createCollection(u, "Card tab tree");
@@ -3139,22 +3242,80 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
       await page.locator("main h1").first().waitFor();
       return page;
     }
-    // S65 — no card or row shows a size, so a collection page sorts by update or title only; a
-    // remembered "size" sort falls back to the default.
-    it("offers a collection page's Sort without Largest first, and drops a remembered size sort", async () => {
+    // S82 — Home and collection pages share one Sort menu and one remembered choice.
+    const SORT_OPTIONS = ["Last updated", "Last viewed", "Title A–Z"];
+    async function sortOptions(page: Page): Promise<string[]> {
+      await openMenu(page, page.locator("main [aria-label^='Sort:']"));
+      const options = page.getByRole("menuitemradio");
+      await visible(options.first());
+      const texts = (await options.allInnerTexts()).map((t) => t.trim());
+      await page.keyboard.press("Escape");
+      return texts;
+    }
+
+    // r[verify hosting.browse.one-sort]
+    // r[verify hosting.browse.one-sort-pref]
+    it("offers the same Sort menu on Home and on a collection page, Last updated by default", async () => {
       const u = await newUser();
       const c = await createCollection(u, "Sorted tree");
       const a = await createArtefact(u, "Sorted inside");
       await fileIn(u, a.id, c.id);
+
+      const home = await openApp(u);
+      await visible(home.locator("main [aria-label='Sort: Last updated']"));
+      expect(await sortOptions(home)).toEqual(SORT_OPTIONS);
+      await home.context().close();
+
+      // S65's retired size sort falls back to the default.
       const page = await (await context(u)).newPage();
       await page.addInitScript(() => localStorage.setItem("artefactor:sort", "size"));
       await page.goto(`${ORIGIN}/c/${c.id}`);
-      const sort = page.locator("main").getByRole("button", { name: "Recently updated" });
-      await visible(sort);
-      await openMenu(page, sort);
-      const options = page.getByRole("menuitemradio");
-      await visible(options.first());
-      expect((await options.allInnerTexts()).map((t) => t.trim())).toEqual(["Recently updated", "Title A–Z"]);
+      await visible(page.locator("main [aria-label='Sort: Last updated']"));
+      expect(await sortOptions(page)).toEqual(SORT_OPTIONS);
+      await page.context().close();
+    });
+
+    // r[verify hosting.browse.one-sort-pref]
+    it("carries a Sort picked on a collection page over to Home", async () => {
+      const u = await newUser();
+      const c = await createCollection(u, "Carried sort");
+      const a = await createArtefact(u, "Bravo carried");
+      await fileIn(u, a.id, c.id);
+      await createArtefact(u, "Charlie carried");
+      await createArtefact(u, "Alpha carried");
+      const page = await collectionPage(u, c.id);
+      await openMenu(page, page.locator("main [aria-label^='Sort:']"));
+      await control(page, "Title A–Z").click();
+      await visible(page.locator("main [aria-label='Sort: Title A–Z']"));
+
+      await page.goto(ORIGIN);
+      await page.getByRole("heading", { name: "Home" }).waitFor();
+      await mineOnly(page);
+      await visible(page.locator("main [aria-label='Sort: Title A–Z']"));
+      await eventually(async () => expect(await shownTitles(page)).toEqual(["Alpha carried", "Bravo carried", "Charlie carried"]));
+      expect(
+        await page.evaluate(() => [localStorage.getItem("artefactor:sort"), localStorage.getItem("artefactor:home-sort")]),
+      ).toEqual(["title", null]);
+      await page.context().close();
+    });
+
+    // r[verify hosting.browse.one-sort]
+    it("puts the artefact just opened from a collection page first under Last viewed", async () => {
+      const u = await newUser();
+      const c = await createCollection(u, "Viewed tree");
+      const older = await createArtefact(u, "Older viewed");
+      const newer = await createArtefact(u, "Newer viewed");
+      await fileIn(u, older.id, c.id);
+      await fileIn(u, newer.id, c.id);
+      const page = await collectionPage(u, c.id);
+      await openMenu(page, page.locator("main [aria-label^='Sort:']"));
+      await control(page, "Last viewed").click();
+      await eventually(async () => expect(await shownTitles(page)).toEqual(["Newer viewed", "Older viewed"]));
+
+      const popup = page.context().waitForEvent("page");
+      await page.locator("main [aria-label='Open Older viewed']").first().click();
+      await (await popup).close();
+      await eventually(async () => expect(await shownTitles(page)).toEqual(["Older viewed", "Newer viewed"]));
       await page.context().close();
     });
 
@@ -3484,7 +3645,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
     await openMenu(page, accessFilter);
     await control(page, /^\s*All access\s*\d/).click();
 
-    // Last edited or uploaded is the owner's list order, most recent first.
+    // Last updated is the owner's list order, most recent first.
     const byUpdated = (
       (await (await app.request("/api/artefacts", { headers: { cookie: u.cookie } })).json()) as { artefacts: ArtefactSummary[] }
     ).artefacts.map((a) => a.title);
@@ -3510,7 +3671,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
     expect((await open.boundingBox())!.width).toBeLessThan(80);
     expect(
       await page.evaluate(() =>
-        ["density", "kind", "access", "home-sort", "scope", "sidebar"].map((k) => localStorage.getItem(`artefactor:${k}`)),
+        ["density", "kind", "access", "sort", "scope", "sidebar"].map((k) => localStorage.getItem(`artefactor:${k}`)),
       ),
     ).toEqual(["list", "slide-deck", "private", "viewed", "mine", "closed"]);
     await page.context().close();

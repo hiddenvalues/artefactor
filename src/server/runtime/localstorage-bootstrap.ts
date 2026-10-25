@@ -11,10 +11,12 @@
 //
 // S36 (data.shim.posts-never-fetches) — the artefact runs in a sandboxed, opaque-origin frame with no
 // session (`hosting.frame.no-cookies`), so the shim never calls the API. It posts each change — the
-// whole blob, debounced, and again on pagehide / visibilitychange when a change
-// is still unposted — to the host shell (`window.parent`, at the app origin).
-// The shell owns the S31 write discipline: the pin, no overlapping saves, and
-// the 412 conflict banner (see `shell.ts`).
+// whole blob, once per task that changed it, and again on pagehide /
+// visibilitychange when a change is still unposted — to the host shell
+// (`window.parent`, at the app origin). The shell owns the debounce and the S31
+// write discipline: the pin, no overlapping saves, and the 412 conflict banner
+// (see `shell.ts`). S81 — no debounce here: a change held in the frame is lost
+// when a top-level reload tears both documents down.
 //
 // See docs/specs/ddd/artefact-data.md §"Artefact runtime contract".
 
@@ -33,17 +35,19 @@ export interface BootstrapContext {
   // document from one the frame navigated itself to. Null when there is no
   // token (an anonymous, read-only frame, which never posts).
   channel: string | null;
+  // S81 — the seeded entry's `updatedAt` (null with no entry). Sent with every
+  // change, so the shell pins its save to what this document's blob was built
+  // on; the shell owns the pin from there.
+  seedUpdatedAt: string | null;
   // The blob byte cap; an over-cap write throws QuotaExceededError.
   maxBytes: number;
-  // Debounce window before a change is posted, in ms.
-  debounceMs?: number;
 }
 
 // The shim as inline JS (an IIFE). Kept free of server-only references so it can
 // be unit-tested by evaluating it with injected globals. References only
-// `window`, `document`, `setTimeout`, `clearTimeout`, `TextEncoder`.
-// r[impl hosting.frame.shim-posts-to-shell]
-// r[impl data.shim.posts-never-fetches]
+// `window`, `document`, `queueMicrotask`, `TextEncoder`.
+// r[impl hosting.frame.shim-posts-to-shell+2]
+// r[impl data.shim.posts-never-fetches+2]
 // r[impl data.shim.full-sync-api]
 // r[impl data.shim.keyspace-is-blob]
 // r[impl data.shim.quota-over-cap]
@@ -55,8 +59,8 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
     writable: ctx.writable,
     targetOrigin: ctx.targetOrigin,
     channel: ctx.channel,
+    seedUpdatedAt: ctx.seedUpdatedAt,
     maxBytes: ctx.maxBytes,
-    debounceMs: ctx.debounceMs ?? 600,
   };
   // Escape `<` so a value containing "</script>" cannot break out of the tag.
   const cfgJson = JSON.stringify(cfg).replace(/</g, "\\u003c");
@@ -67,26 +71,31 @@ export function bootstrapInnerJs(ctx: BootstrapContext): string {
   try { map = JSON.parse(cfg.seed); } catch (e) { map = {}; }
   if (typeof map !== "object" || map === null || Array.isArray(map)) map = {};
   var enc = new TextEncoder();
-  var timer = null;
   // Whether the map holds a change the shell hasn't been handed yet.
   var dirty = false;
+  // Whether a post is already queued for the end of this task.
+  var queued = false;
 
   function serialize(){ return JSON.stringify(map); }
   function quota(){ var e = new Error("localStorage quota exceeded"); e.name = "QuotaExceededError"; return e; }
   function denyIfReadOnly(){ if (!cfg.writable) throw quota(); }
 
   function post(){
-    if (timer) { clearTimeout(timer); timer = null; }
     if (!cfg.writable || !dirty) return;
     dirty = false;
     try {
-      window.parent.postMessage({ type: "artefactor:data-changed", blob: serialize(), channel: cfg.channel }, cfg.targetOrigin);
+      window.parent.postMessage({ type: "artefactor:data-changed", blob: serialize(), channel: cfg.channel, seed: cfg.seedUpdatedAt }, cfg.targetOrigin);
     } catch (e) {}
   }
+  // However many changes one task makes, they go out as one post once it ends —
+  // before a navigation the same task starts.
   function schedule(){
     dirty = true;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(post, cfg.debounceMs);
+    if (queued) return;
+    queued = true;
+    var run = function(){ queued = false; post(); };
+    if (typeof queueMicrotask === "function") queueMicrotask(run);
+    else Promise.resolve().then(run);
   }
 
   var shim = {

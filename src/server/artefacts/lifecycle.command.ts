@@ -5,6 +5,8 @@ import {
   type Artefact,
 } from "../../domain/artefact/artefact";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
+import type { CollectionRepository } from "../../domain/collection/collection-repository";
+import { assertRestorableIn } from "../../domain/collection/collection";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
@@ -61,12 +63,20 @@ export async function archiveArtefactCommand(
   });
 }
 
+// Restore needs the owner's collection tree: an artefact under an archived
+// collection is restored only with it (collections.lifecycle.restore-under-active-parent).
+export interface RestoreArtefactDeps extends LifecycleDeps {
+  collectionRepo: CollectionRepository;
+}
+
 // Restore an archived artefact the caller owns (hosting.authority.owner-only).
 // Loads regardless of status (non-owner / unknown → not-found); `restoreArtefact`
-// rejects a non-archived one.
+// rejects a non-archived one, then an archived collection in its chain refuses
+// it, before any save. The owner's tree is enough: a foreign artefact never
+// sits in an archived tree (collections.lifecycle.cascades-evict-foreign).
 export async function restoreArtefactCommand(
   input: LifecycleInput,
-  deps: LifecycleDeps,
+  deps: RestoreArtefactDeps,
 ): Promise<Artefact> {
   const now = deps.now?.();
   return mutateArtefact(deps.repo, {
@@ -76,7 +86,24 @@ export async function restoreArtefactCommand(
         ownerId: input.requesterId,
         scope: input.scope,
       }),
-    apply: (existing) => restoreArtefact(existing, { now }),
+    apply: async (existing) => {
+      const restored = restoreArtefact(existing, { now });
+      if (existing.collectionId !== null) {
+        const tree = await deps.collectionRepo.listByOwner(existing.ownerId, input.scope, {
+          includeArchived: true,
+        });
+        assertRestorableIn(
+          {
+            kind: "artefact",
+            id: existing.id,
+            name: existing.title,
+            parentId: existing.collectionId,
+          },
+          tree,
+        );
+      }
+      return restored;
+    },
   });
 }
 

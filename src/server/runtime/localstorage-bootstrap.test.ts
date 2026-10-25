@@ -11,6 +11,7 @@ const baseCtx: BootstrapContext = {
   writable: true,
   targetOrigin: "https://artefactor.test",
   channel: "chan-abc",
+  seedUpdatedAt: "2026-09-12T09:00:00.000Z",
   maxBytes: 5 * 1024 * 1024,
 };
 
@@ -41,7 +42,8 @@ describe("injectBootstrap", () => {
 
 // Evaluate the shim IIFE with mocked browser globals to prove its behaviour. The
 // frame has no session (`hosting.frame.no-cookies`), so `fetch` is injected only
-// to prove it is never called.
+// to prove it is never called; `setTimeout` likewise, to prove the shim keeps no
+// timer (S81 — the shell debounces).
 function runShim(ctx: BootstrapContext) {
   const listeners: Record<string, (e?: unknown) => void> = {};
   const parent = { postMessage: vi.fn() };
@@ -54,6 +56,7 @@ function runShim(ctx: BootstrapContext) {
     visibilityState: "visible",
   };
   const fetch = vi.fn();
+  const setTimeout = vi.fn();
   const fn = new Function(
     "window",
     "document",
@@ -64,11 +67,19 @@ function runShim(ctx: BootstrapContext) {
     bootstrapInnerJs(ctx),
   );
   fn(window, document, fetch, setTimeout, clearTimeout, TextEncoder);
-  return { ls: window.localStorage as Storage, fetch, listeners, window, parent, document };
+  return { ls: window.localStorage as Storage, fetch, setTimeout, listeners, window, parent, document };
 }
 
+// Lets the current task end: the shim posts from a microtask.
+const endOfTask = () => Promise.resolve();
+
 const changed = (blob: Record<string, string>) => [
-  { type: "artefactor:data-changed", blob: JSON.stringify(blob), channel: "chan-abc" },
+  {
+    type: "artefactor:data-changed",
+    blob: JSON.stringify(blob),
+    channel: "chan-abc",
+    seed: "2026-09-12T09:00:00.000Z",
+  },
   "https://artefactor.test",
 ];
 
@@ -94,10 +105,9 @@ describe("localStorage shim (S13)", () => {
     expect(window.ARTEFACTOR).toBeUndefined();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify hosting.frame.shim-posts-to-shell+2]
   // r[verify data.shim.quota-over-cap]
-  it("throws QuotaExceededError over the cap and reverts the write", () => {
-    vi.useFakeTimers();
+  it("throws QuotaExceededError over the cap and reverts the write", async () => {
     const { ls, parent } = runShim({ ...baseCtx, maxBytes: 40 });
     expect(() => ls.setItem("big", "x".repeat(100))).toThrowError(
       expect.objectContaining({ name: "QuotaExceededError" }),
@@ -105,76 +115,73 @@ describe("localStorage shim (S13)", () => {
     // Reverted: the failed key is not present, and nothing was posted.
     expect(ls.getItem("big")).toBeNull();
     expect(ls.getItem("greeting")).toBe("hi");
-    vi.runAllTimers();
+    await endOfTask();
     expect(parent.postMessage).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 });
 
 // S36 — the sandboxed frame has no session: the shim hands each change to
 // the host shell, which owns the S31 write discipline.
 describe("localStorage shim — persists through the host shell (S36)", () => {
-  // r[verify hosting.frame.shim-posts-to-shell]
-  // r[verify data.shim.posts-never-fetches]
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  // r[verify data.shim.posts-never-fetches+2]
   // r[verify data.shim.keyspace-is-blob]
-  it("posts the whole blob to the parent, at the app origin, once after the debounce", () => {
-    vi.useFakeTimers();
-    const { ls, parent, fetch } = runShim(baseCtx);
+  it("posts the whole blob to the parent, at the app origin, once per task that changed it", async () => {
+    const { ls, parent, fetch, setTimeout } = runShim(baseCtx);
     ls.setItem("greeting", "bye");
     ls.setItem("n", "2");
     expect(ls.getItem("greeting")).toBe("bye");
     expect(parent.postMessage).not.toHaveBeenCalled();
-    vi.runAllTimers();
+    await endOfTask();
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
     expect(parent.postMessage).toHaveBeenCalledWith(...changed({ greeting: "bye", n: "2" }));
+    // A change in a later task is a second post.
+    ls.setItem("n", "3");
+    await endOfTask();
+    expect(parent.postMessage).toHaveBeenCalledTimes(2);
+    expect(parent.postMessage).toHaveBeenLastCalledWith(...changed({ greeting: "bye", n: "3" }));
+    expect(setTimeout).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
-  it("posts removeItem and clear like any other change", () => {
-    vi.useFakeTimers();
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  it("posts removeItem and clear like any other change", async () => {
     const { ls, parent } = runShim(baseCtx);
     ls.removeItem("greeting");
-    vi.runAllTimers();
+    await endOfTask();
     expect(parent.postMessage).toHaveBeenLastCalledWith(...changed({}));
     ls.setItem("a", "1");
     ls.clear();
-    vi.runAllTimers();
+    await endOfTask();
     expect(parent.postMessage).toHaveBeenCalledTimes(2);
     expect(parent.postMessage).toHaveBeenLastCalledWith(...changed({}));
-    vi.useRealTimers();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
-  // r[verify data.shim.posts-never-fetches]
-  it("an idle tab posts nothing, even when hidden or closed", () => {
-    vi.useFakeTimers();
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  // r[verify data.shim.posts-never-fetches+2]
+  it("an idle tab posts nothing, even when hidden or closed", async () => {
     const { parent, listeners, document, fetch } = runShim(baseCtx);
     document.visibilityState = "hidden";
     listeners["doc:visibilitychange"]!();
     listeners["pagehide"]!();
-    vi.runAllTimers();
+    await endOfTask();
     expect(parent.postMessage).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
-  // r[verify data.shim.writes-through-shell]
-  it("posts an unposted change at once on pagehide, and not again after", () => {
-    vi.useFakeTimers();
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  // r[verify data.shim.writes-through-shell+2]
+  it("posts an unposted change at once on pagehide, and not again after", async () => {
     const { ls, parent, listeners } = runShim(baseCtx);
     ls.setItem("greeting", "bye");
     listeners["pagehide"]!();
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
-    vi.runAllTimers();
+    await endOfTask();
     listeners["pagehide"]!();
     expect(parent.postMessage).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify hosting.frame.shim-posts-to-shell+2]
   it("posts an unposted change when the page is hidden", () => {
     const { ls, parent, listeners, document } = runShim(baseCtx);
     ls.setItem("greeting", "bye");
@@ -183,10 +190,9 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     expect(parent.postMessage).toHaveBeenCalledWith(...changed({ greeting: "bye" }));
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify hosting.frame.shim-posts-to-shell+2]
   // r[verify data.shim.read-only-throws]
-  it("read-only context throws on write, still serves reads, and posts nothing", () => {
-    vi.useFakeTimers();
+  it("read-only context throws on write, still serves reads, and posts nothing", async () => {
     const { ls, parent, listeners } = runShim({ ...baseCtx, writable: false });
     expect(ls.getItem("greeting")).toBe("hi");
     for (const write of [
@@ -196,27 +202,37 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     ]) {
       expect(write).toThrowError(expect.objectContaining({ name: "QuotaExceededError" }));
     }
-    vi.runAllTimers();
+    await endOfTask();
     listeners["pagehide"]!();
     expect(parent.postMessage).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
-  it("carries the channel of the token that seeded it, so a navigated-to page can't forge a change", () => {
-    vi.useFakeTimers();
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  it("carries the channel of the token that seeded it, so a navigated-to page can't forge a change", async () => {
     const { ls, parent } = runShim({ ...baseCtx, channel: "chan-xyz" });
     ls.setItem("a", "1");
-    vi.runAllTimers();
+    await endOfTask();
     expect(parent.postMessage).toHaveBeenCalledWith(
       expect.objectContaining({ channel: "chan-xyz" }),
       baseCtx.targetOrigin,
     );
-    vi.useRealTimers();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
-  // r[verify data.shim.posts-never-fetches]
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  // r[verify data.shim.posts-never-fetches+2]
+  // r[verify data.shell.writes-pinned+2]
+  it("reports the updatedAt it was seeded with, or null with no entry", async () => {
+    const { ls, parent } = runShim({ ...baseCtx, seedUpdatedAt: null });
+    ls.setItem("a", "1");
+    await endOfTask();
+    expect(parent.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ seed: null }),
+      baseCtx.targetOrigin,
+    );
+  });
+
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  // r[verify data.shim.posts-never-fetches+2]
   it("names no endpoint and no pin: the shell decides where and how a change is saved", () => {
     expect(bootstrapInnerJs(baseCtx)).not.toMatch(/fetch\(|\/api\/|If-Match/);
   });

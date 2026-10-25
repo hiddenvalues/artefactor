@@ -32,7 +32,8 @@ export interface CreateCollectionInput {
   name: string;
   description?: string | null;
   parentId?: string | null;
-  // Meaningful on roots only (collections.access.set-on-root-only); validated against the enum by the route.
+  // Roots only (collections.access.set-on-root-only): the factory refuses it with a parentId.
+  // Validated against the enum by the route.
   visibility?: Visibility;
   scope: TenantScope;
 }

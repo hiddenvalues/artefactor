@@ -850,7 +850,7 @@ describe("MCP artefact tools (S18)", () => {
   });
 
   // r[verify mcp.read.owner-scoped+2]
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   it("both read-back tools are owner-scoped: unknown, another user's, and archived all -> not found", async () => {
     const u1 = await clientFor("u1");
     const a = json(
@@ -1059,7 +1059,7 @@ describe("MCP artefact tools (S18)", () => {
     });
 
     // r[verify mcp.data-write.owner-scoped+2]
-    // r[verify hosting.access.no-existence-leak]
+    // r[verify hosting.access.no-existence-leak+3]
     // r[verify hosting.lifecycle.archived-data-inert]
     // r[verify data.lifecycle.archived-inert]
     it("is owner-scoped: another user's (even when shared), unknown, archived, and out-of-scope → not found", async () => {
@@ -1643,6 +1643,7 @@ describe("MCP artefact tools (S18)", () => {
     });
 
     // r[verify mcp.collections.writes-run-commands]
+    // r[verify collections.access.set-on-root-only+2]
     it("create_collection with both parent_id and visibility is refused: a nested collection takes its root's tier", async () => {
       await collection("Root", "u1");
       const r = await call(await clientFor("u1"), "create_collection", {
@@ -1651,7 +1652,7 @@ describe("MCP artefact tools (S18)", () => {
         visibility: "public",
       });
       expect(r.isError).toBe(true);
-      expect(r.content[0]!.text).toMatch(/root's tier/);
+      expect(r.content[0]!.text).toMatch(/a nested collection takes its tree root's tier/);
       expect(await ownCollectionIds("u1")).toEqual(["Root"]);
     });
 
@@ -1766,6 +1767,7 @@ describe("MCP artefact tools (S18)", () => {
     });
 
     // r[verify mcp.collections.writes-run-commands]
+    // r[verify collections.lifecycle.restore-under-active-parent+2]
     it("restore_collection under an archived ancestor is refused, naming the topmost archived ancestor, and restores nothing", async () => {
       const root = await collection("Root", "u1");
       const mid = await collection("Mid", "u1", { parent: root });
@@ -1776,9 +1778,27 @@ describe("MCP artefact tools (S18)", () => {
 
       const r = await call(u1, "restore_collection", { id: "Kid" });
       expect(r.isError).toBe(true);
-      expect(r.content[0]!.text).toMatch(/restore 'Root'/);
+      expect(r.content[0]!.text).toMatch(
+        /restore 'Root' \(Root\) instead, which restores this one with it — nothing was restored/,
+      );
       expect((await stored("Kid")).status).toBe("archived");
       expect((await stored("Mid")).status).toBe("archived");
+      expect((await deps.repo.findById(own, SINGLETON_SCOPE))!.status).toBe("archived");
+    });
+
+    // r[verify collections.lifecycle.restore-under-active-parent+2]
+    it("restore_artefact inside an archived collection is refused, naming the topmost archived collection by id, and restores nothing", async () => {
+      const root = await collection("Root", "u1");
+      await collection("Kid", "u1", { parent: root });
+      const u1 = await clientFor("u1");
+      const own = await publishInto(u1, "Kid");
+      expect((await call(u1, "archive_collection", { id: "Root" })).isError).toBeFalsy();
+
+      const r = await call(u1, "restore_artefact", { id: own });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toBe(
+        `artefact '${own}' sits under an archived collection: restore 'Root' (Root) instead, which restores this one with it — nothing was restored`,
+      );
       expect((await deps.repo.findById(own, SINGLETON_SCOPE))!.status).toBe("archived");
     });
 

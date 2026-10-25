@@ -10,3 +10,9 @@ allowBuilds:
 onlyBuiltDependencies:
   - better-sqlite3
   - esbuild
+# Security floors for transitive dependencies. /sync-oss regenerates OSS's
+# lockfile with `pnpm install --lockfile-only`, which keeps every locked
+# transitive version, so a lockfile-only security bump never reaches OSS. Each
+# entry lifts only the vulnerable range and does nothing once none is left.
+overrides:
+  'zod@<4.6.6': ^4.6.7

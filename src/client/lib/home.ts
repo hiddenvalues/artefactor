@@ -1,9 +1,10 @@
 import type { ArtefactSummary, SharedArtefactSummary } from "../../shared/contracts";
-import type { AccessFilter, KindFilter } from "./browse";
+import { sortList, time, type AccessFilter, type KindFilter, type Sort, type Views } from "./browse";
 
 // S47 — Home: the pure model behind its Recent row, the All / My artefacts /
-// Shared with me switch, the two sorts and the pager.
-// r[impl hosting.home.model]
+// Shared with me switch and the pager. It sorts with the shared Sort menu's
+// `sortList` (S82, `browse.ts`).
+// r[impl hosting.home.model+2]
 
 export const HOME_SCOPES = ["all", "mine", "shared"] as const;
 export type HomeScope = (typeof HOME_SCOPES)[number];
@@ -13,24 +14,13 @@ export const HOME_SCOPE_LABELS: Record<HomeScope, string> = {
   shared: "Shared with me",
 };
 
-export const HOME_SORTS = ["updated", "viewed"] as const;
-export type HomeSort = (typeof HOME_SORTS)[number];
-export const HOME_SORT_LABELS: Record<HomeSort, string> = {
-  updated: "Last edited or uploaded",
-  viewed: "Last viewed",
-};
-
 export const PAGE_SIZE = 24;
 export const RECENT_CAP = 12;
 
 /** An artefact on Home: one you own, or another user's shared with you. */
 export type HomeItem = ArtefactSummary | SharedArtefactSummary;
-/** The caller's own views: artefact id → ISO `viewedAt` (views.mine.own-visible-only). */
-export type Views = ReadonlyMap<string, string>;
 
 export const isShared = (a: HomeItem): a is SharedArtefactSummary => "owner" in a;
-
-const time = (iso: string | undefined) => (iso ? Date.parse(iso) : Number.NEGATIVE_INFINITY);
 
 export function scopeList(owned: ArtefactSummary[], shared: SharedArtefactSummary[], scope: HomeScope): HomeItem[] {
   if (scope === "mine") return owned;
@@ -61,29 +51,14 @@ export function recentList(
     .map(([a]) => a);
 }
 
-/** `viewed`: your views newest first, then never-viewed by `updatedAt`.
- *  `updated`: by `updatedAt`, newest first. */
-export function sortHome<T extends HomeItem>(list: T[], sort: HomeSort, views: Views): T[] {
-  const byUpdated = (x: T, y: T) => time(y.updatedAt) - time(x.updatedAt);
-  const a = [...list];
-  if (sort === "updated") return a.sort(byUpdated);
-  return a.sort((x, y) => {
-    const vx = views.get(x.id);
-    const vy = views.get(y.id);
-    if (vx && vy) return time(vy) - time(vx);
-    if (vx || vy) return vx ? -1 : 1;
-    return byUpdated(x, y);
-  });
-}
-
 export interface HomeFilters {
   kind: KindFilter;
   access: AccessFilter;
-  sort: HomeSort;
+  sort: Sort;
 }
 
 export function applyHomeFilters<T extends HomeItem>(list: T[], f: HomeFilters, views: Views): T[] {
-  return sortHome(
+  return sortList(
     list
       .filter((a) => f.kind === "all" || a.kind === f.kind)
       .filter((a) => f.access === "all" || a.effectiveVisibility === f.access),

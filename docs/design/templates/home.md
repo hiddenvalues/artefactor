@@ -16,7 +16,7 @@ artefact without digging through menus.
   * **Filter and sort bar:**
     * An **All / My artefacts / Shared with me** switch, with All as the default.
     * A **Label** dropdown and an **Access** dropdown.
-    * On the right, a **Sort** dropdown (Last edited or uploaded / Last viewed) and a
+    * On the right, a **Sort** dropdown (Last updated / Last viewed / Title A–Z) and a
       **card/list** toggle.
   * **All artefacts:** paginated, shown as cards or a list. Only the ArtefactCard component is
     used.
@@ -36,7 +36,8 @@ artefact without digging through menus.
   Owner-only items are hidden for shared artefacts.
 * **Filter:** by the All / My artefacts / Shared with me switch, by label and by access. Changing
   any of these goes back to page 1.
-* **Sort:** by Last edited or uploaded, or by Last viewed.
+* **Sort:** by Last updated, Last viewed or Title A–Z, the same menu and remembered choice as a
+  collection page.
 * **Switch** between card and list view.
 * **Change page** in All artefacts.
 

@@ -42,6 +42,7 @@ import { effectiveVisibility } from "../../domain/collection/effective-access";
 import {
   CollectionInvariantViolation,
   CollectionNotFound,
+  RestoreUnderArchivedCollection,
 } from "../../domain/collection/errors";
 import { renderHostShell } from "../runtime/shell";
 import { mintFrame, type Framing } from "../runtime/framing";
@@ -521,7 +522,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           requesterId: ownerId(c),
           scope: await deps.resolveScope(c),
         },
-        { repo: deps.repo },
+        { repo: deps.repo, collectionRepo: deps.collectionRepo },
       );
       return c.json<ArtefactSummary>(
         toArtefactSummary(updated, await effectiveVisOf(updated), ownerId(c)),
@@ -529,6 +530,10 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
+      // The web app's copy names, never ids (collections.lifecycle.restore-under-active-parent).
+      if (err instanceof RestoreUnderArchivedCollection) {
+        return c.json({ error: err.namesOnly }, 400);
+      }
       throw err;
     }
   });

@@ -19,6 +19,7 @@ const page = (c: CollectionSummary) =>
       ownedProps: (a) => ownedProps(a),
       sharedProps: (g, onRemoveFromCollection) => sharedProps(g, { onRemoveFromCollection }),
       collection: c,
+      views: new Map(),
       isOwn: true,
       shared: null,
       owned: ownedLibrary,

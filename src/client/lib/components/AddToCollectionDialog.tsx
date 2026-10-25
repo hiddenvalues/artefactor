@@ -98,7 +98,7 @@ export function AddToCollectionDialog({
       <DialogContent className="flex max-h-[calc(100vh-3rem)] flex-col sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{artefact.collectionId ? "Move to collection" : "Add to collection"}</DialogTitle>
-          <DialogDescription className="truncate">“{artefact.title}”</DialogDescription>
+          <DialogDescription title={artefact.title} className="truncate">“{artefact.title}”</DialogDescription>
         </DialogHeader>
 
         <div className="-mx-2 overflow-y-auto px-2">
@@ -120,7 +120,7 @@ export function AddToCollectionDialog({
                   expanded={!!expanded[node.c.id]}
                   onToggle={() => setExpanded((e) => ({ ...e, [node.c.id]: !e[node.c.id] }))}
                 />
-                <NavRow tone="dialog" active={active} onClick={() => setTarget(node.c.id)} className="flex-1">
+                <NavRow tone="dialog" active={active} onClick={() => setTarget(node.c.id)} title={node.c.name} className="flex-1">
                   <Folder style={hueVars(node.c.id)} className="size-3.5 shrink-0 text-(--hue)" />
                   <span className="min-w-0 flex-1 truncate">{node.c.name}</span>
                   {node.c.ownerId !== viewerId && (

@@ -349,3 +349,58 @@ anonymous, foreign author) (`data.visibility.narrows-reads`); a legacy row reads
 (`data.visibility.listing-filtered`, `data.visibility.author-read-refused`,
 `data.visibility.mint-refused`); a foreign-context token minted under `shared` 404s once the owner
 flips to `own` (`data.visibility.redeem-refused`); the viewer's own context is unchanged.
+
+### S81 — A change made just before a reload is saved: the shell debounces, the frame posts at once
+
+- **Status:** done
+- **Depends on:** S36, S31
+- **Linear:** ALI-599
+- **Delivers:** data.shell.debounces-and-flushes, data.shim.posts-never-fetches,
+  data.shim.writes-through-shell, data.shell.writes-pinned
+
+Move the save debounce from the frame to the shell, so the latest change is always on the side
+that survives the unload. The shim debounced its post by 600 ms, so a change made in the last
+600 ms before the top page reloaded or closed was still in the frame when both documents were torn
+down: its `pagehide` post is a task queued on a shell that is already going away, and the shell's
+own `pagehide` flush could only send what it already held. (DDD: `ddd/artefact-data.md`
+`data.shell.debounces-and-flushes`, `data.shim.posts-never-fetches`,
+`data.shim.writes-through-shell`, `data.shell.writes-pinned`.)
+
+- **Shim** (`localstorage-bootstrap.ts`) — `setItem` / `removeItem` / `clear` mark the map dirty
+  and schedule one post in a microtask: however many changes one task makes, they produce one
+  post, and no timer. `pagehide` / `visibilitychange: hidden` still post a change somehow left
+  unposted (normally a no-op). Each post carries the `updatedAt` the frame was seeded with
+  (`seed`, null with no entry), which `render.ts` seeds beside the blob.
+- **Shell** (`shell.ts`, `shellFrameJs`) — an accepted `data-changed` holds the blob and
+  (re)starts a `SAVE_DELAY_MS` (600 ms) timer that saves it; one arriving while the shell unloads
+  or is hidden saves at once. `beforeunload`, `pagehide` and `visibilitychange: hidden` clear the
+  timer and flush with `keepalive`; only the `pagehide` flush overlaps a save in flight, the others
+  let the held change follow it (still with `keepalive`). `keepalive` is used only while the
+  keepalive bodies in flight stay within the cap. Every re-point of the frame (`select(authorId)`,
+  the re-mint after an expired frame token) saves a held change first and mints once the saves
+  outstanding then have settled, or after `MINT_WAIT_MAX_MS` (3 s); a switch back to the viewer's
+  own data before a switch took effect cancels it. `beforeunload` is listened for only while a
+  change is held or a save is in flight. The S31 discipline is unchanged: only changes are
+  written, every `PUT` is pinned, saves never overlap except the forced flush, and a 412 stops
+  writing.
+- **Pin from the frame's seed** — on a reload, the browser sends the new page's request before
+  the old page's `pagehide` flush, so the new shell can render the older pin while its frame is
+  seeded after the flush lands; its first save would then 412. The shell adopts the `seed` a
+  frame document reports whenever it differs from the last one adopted, and its own saves advance
+  the pin from there. With no save in flight, the `beforeunload` flush sends the change before the
+  reload's request, so the reloaded frame is seeded with it.
+- **Boundary:** **OSS** core.
+
+**Acceptance** — in Chromium, a `setItem` followed at once by a top-level reload comes back
+seeded and saved, five times running (`data.shell.debounces-and-flushes`,
+`data.shim.writes-through-shell`); the shim posts once per task that changed the map, after the
+microtask queue drains, and an idle tab posts nothing (`data.shim.posts-never-fetches`); the shell
+sends one `PUT` 600 ms after the last change carrying the latest blob, at once with `keepalive` on
+`pagehide` or hidden (nothing when idle, and never over a save in flight except on `pagehide`),
+before the mint on a context switch or token re-mint (which waits for those saves, at most 3 s),
+and at once for a message arriving while unloading or hidden (`data.shell.debounces-and-flushes`,
+`hosting.frame.shell-saves-for-frame`); the shell pins to a newly reported frame seed and advances
+it by its own saves, and the pin, overlap and 412 rules hold (`data.shell.writes-pinned`). In
+Chromium, a change made just before the artefact reloads its own frame (`setItem` or `clear`, then
+`location.reload()`) is saved. The reloaded document's request reaches the server before that save
+does, so it may be seeded with the older data: a residual loss of `data.shell.writes-pinned`.

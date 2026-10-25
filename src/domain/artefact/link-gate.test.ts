@@ -171,7 +171,7 @@ describe("setArtefactLinkGate", () => {
     expect(a.linkGate.expiresAt).toBeNull();
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.authority.owner-only]
   it("refuses a non-owner as not found", async () => {
     await expect(

@@ -125,7 +125,7 @@ describe("editArtefactCommand (S3)", () => {
     expect(store.live.size).toBe(1);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.authority.owner-only]
   it("rejects a non-owner as not-found", async () => {
     await expect(

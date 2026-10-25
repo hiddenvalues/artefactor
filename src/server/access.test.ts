@@ -94,7 +94,7 @@ describe("share with specific people (S16)", () => {
   });
 
   // r[verify hosting.access.matrix]
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   it("serves the artefact to the owner and granted members, 404 to everyone else", async () => {
     const a = await createSelected();
     const slug = a.publicSlug!;

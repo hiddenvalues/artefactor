@@ -54,8 +54,7 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
     server = serve({
       port,
       fetch: (req: Request) => {
-        if (new URL(req.url).pathname === "/api/me") meCookies.push(req.headers.get("cookie"));
-        return app.fetch(req);
+        if (new URL(req.url).pathname === "/api/me") meCookies.push(req.headers.get("cookie"));        return app.fetch(req);
       },
     });
 
@@ -170,8 +169,8 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
     await page.context().close();
   });
 
-  // r[verify hosting.frame.shim-posts-to-shell]
-  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify hosting.frame.shim-posts-to-shell+2]
+  // r[verify hosting.frame.shell-saves-for-frame+2]
   it("localStorage persists through the shell, and an in-frame reload after the token expired comes back seeded", async () => {
     const first = await openShell();
     await (await first.frame()).evaluate(`localStorage.setItem("k", "persisted")`);
@@ -206,6 +205,73 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
     } finally {
       vi.useRealTimers();
       await first.page.context().close();
+    }
+  });
+
+  // The artefact reloads its own frame (the top page stays): none of the
+  // shell's own unload events fire. The change made in the same task still
+  // reaches the shell and is saved. The reloaded document is requested before
+  // that save lands (measured: the PUT reaches the server ~1 ms after the
+  // frame's GET, on main as here, and a frame-sent "unloading" hint doesn't
+  // change that), so it may come back seeded with the older data: a named
+  // residual loss of data.shell.writes-pinned, not asserted either way.
+  // r[verify data.shell.debounces-and-flushes]
+  // r[verify data.shim.writes-through-shell+2]
+  // r[verify data.shell.writes-pinned+2]
+  it("a change made just before the artefact reloads its own frame is saved", async () => {
+    const { page } = await openShell();
+    // What the frame's current document shows, or null while it is still the
+    // document that asked for the reload.
+    const shown = async () => {
+      try {
+        const f = (await (await page.$("#ae-frame"))!.contentFrame())!;
+        return (await f.evaluate(
+          `window.__reloading ? null : (document.getElementById("seeded") || {}).textContent || null`,
+        )) as string | null;
+      } catch {
+        return null;
+      }
+    };
+    const reloadWith = async (script: string) => {
+      const f = (await (await page.$("#ae-frame"))!.contentFrame())!;
+      await f.evaluate(`window.__reloading = true; ${script}; location.reload();`).catch(() => {});
+    };
+    try {
+      for (let i = 0; i < 5; i++) {
+        const value = `in-frame-${i}`;
+        await reloadWith(`localStorage.setItem("k", ${JSON.stringify(value)})`);
+        expect(await until(savedBlob, (b) => b === JSON.stringify({ k: value }))).toBe(JSON.stringify({ k: value }));
+        // The reloaded document is up (whichever data it was seeded with).
+        expect(await until(shown, (v) => v !== null)).not.toBeNull();
+        // A reloaded document seeded before the save landed would save under
+        // a pin it wasn't built on (the residual loss): start each round from
+        // a freshly seeded page.
+        await page.reload();
+        expect(await until(shown, (v) => v === value)).toBe(value);
+      }
+      // The reset pattern: clear, then reload.
+      await reloadWith(`localStorage.clear()`);
+      expect(await until(savedBlob, (b) => b === "{}")).toBe("{}");
+      expect(await until(shown, (v) => v !== null)).not.toBeNull();
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  // r[verify data.shell.debounces-and-flushes]
+  // r[verify data.shim.writes-through-shell+2]
+  it("a change made just before the top page reloads is saved", async () => {
+    const { page, frame } = await openShell();
+    try {
+      for (let i = 0; i < 5; i++) {
+        const value = `late-${i}`;
+        await (await frame()).evaluate(`localStorage.setItem("k", ${JSON.stringify(value)})`);
+        await page.reload();
+        expect(await (await frame()).textContent("#seeded")).toBe(value);
+        expect(await savedBlob()).toBe(JSON.stringify({ k: value }));
+      }
+    } finally {
+      await page.context().close();
     }
   });
 });

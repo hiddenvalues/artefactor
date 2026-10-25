@@ -93,11 +93,20 @@ const KEEPALIVE_MAX_BYTES = 60 * 1024;
 // so an artefact with slow subresources still appears into a visible chrome.
 export const FRAME_HOLD_MAX_MS = 3000;
 
+// S81 — how long the shell holds the frame's latest change before it saves it.
+// The frame posts each change at once; the debounce lives here, on the side that
+// survives a top-level unload long enough to flush it.
+export const SAVE_DELAY_MS = 600;
+
+// S81 — the longest the shell waits for the saves a re-point flushed before it
+// mints anyway, so a stalled PUT can't hold a context switch back.
+export const MINT_WAIT_MAX_MS = 3000;
+
 // S36 (data.shell.saves-only-own-frame) and S31 (data.shell.writes-pinned) — the
 // shell's frame controller, as a JS expression evaluating to
 // `{ select(authorId) }`. Kept free of server-only references so it can be
 // unit-tested by evaluating it with injected globals: references only `window`,
-// `document`, `fetch`, `TextEncoder` and `setTimeout`.
+// `document`, `fetch`, `TextEncoder`, `setTimeout` and `clearTimeout`.
 //
 // It releases the shell's hold (S66) on the frame's first load or at
 // FRAME_HOLD_MAX_MS, whichever comes first; loads the frame; mints fresh frame
@@ -110,17 +119,25 @@ export const FRAME_HOLD_MAX_MS = 3000;
 // channel, can't forge a change — and only in the viewer's own context; the endpoint is fixed here, never taken from a
 // message; each PUT is pinned (`If-Match`, or `If-None-Match: *` with no entry);
 // saves never overlap (the latest blob waits); a 412 stops all writing and shows
-// the conflict banner. It posts nothing to the frame.
+// the conflict banner. It posts nothing to the frame. S81 — it debounces: a change
+// goes out SAVE_DELAY_MS after the last, or at once on its own beforeunload and
+// pagehide, when it goes hidden (or a change arrives while hidden) and before it
+// points the frame anywhere (a context switch, a re-mint); it mints only once the
+// saves outstanding then have settled, or after MINT_WAIT_MAX_MS. Keepalive is
+// used while the keepalive bodies in flight stay within KEEPALIVE_MAX_BYTES.
 // r[impl hosting.shell.hold-until-frame]
-// r[impl hosting.frame.shell-saves-for-frame]
-// r[impl data.shim.writes-through-shell]
-// r[impl data.shell.writes-pinned]
+// r[impl hosting.frame.shell-saves-for-frame+2]
+// r[impl data.shim.writes-through-shell+2]
+// r[impl data.shell.writes-pinned+2]
 // r[impl data.shell.saves-only-own-frame]
+// r[impl data.shell.debounces-and-flushes]
 export function shellFrameJs(cfg: ShellFrameConfig): string {
   const cfgJson = JSON.stringify({
     ...cfg,
     keepaliveMax: KEEPALIVE_MAX_BYTES,
     holdMax: FRAME_HOLD_MAX_MS,
+    saveDelay: SAVE_DELAY_MS,
+    mintWaitMax: MINT_WAIT_MAX_MS,
   }).replace(/</g, "\\u003c");
   return `(function(){
   var cfg = ${cfgJson};
@@ -145,16 +162,45 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
   var channel = cfg.channel;  // the loaded frame document's message channel
   var author = null;          // null = the viewer's own data
   var pin = cfg.seedUpdatedAt;
+  // S81 — the seed the loaded frame document last reported. A reload's shell can
+  // render its pin before the previous page's flush lands while its frame is
+  // seeded after it: a newly reported seed is what the frame's blob is built on.
+  var seen;
   var pending = null;         // the latest blob not yet sent
+  var timer = null;           // the debounced save of \`pending\`
   var inflight = false;
   var stale = false;          // a 412 was seen: never write again until re-seeded
   var gen = 0;                // bumped on every re-seed; older saves are ignored
   var loads = 0;              // only the newest mint may point the frame
 
+  var settled = 0;             // saves settled so far
+  var next = null;            // the mint waiting for those saves: { seq, target, reseed, at }
+
   function load(authorId, reseed){
     var seq = ++loads;
     var target = authorId || null;
-    return fetch(cfg.mintEndpoint, {
+    // A change held for the viewer's own data goes out, under its pin, and the
+    // shell mints once the saves outstanding now (one in flight, the held
+    // change) have settled — not later ones — so the frame it points next is
+    // seeded after them; or after mintWaitMax, so a stalled PUT can't hold it.
+    var need = (inflight ? 1 : 0) + (pending !== null && !stale ? 1 : 0);
+    flush(false);
+    next = { seq: seq, target: target, reseed: reseed, at: settled + need };
+    setTimeout(function(){ if (next && next.seq === seq) mintNext(true); }, cfg.mintWaitMax);
+    mintNext(false);
+  }
+
+  function mintNext(now){
+    var m = next;
+    if (!m) return;
+    if (m.seq !== loads) { next = null; return; }
+    if (!now && inflight && settled < m.at) return;
+    next = null;
+    mint(m.seq, m.target, m.reseed);
+  }
+
+  function mint(seq, target, reseed){
+    fetch(cfg.mintEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
@@ -172,6 +218,7 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
         inflight = false;
         stale = false;
         if (conflict) conflict.hidden = true;
+        idle();
       }
       frame.src = d.frameUrl;
     }).catch(function(){});
@@ -179,8 +226,30 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
 
   function bytes(s){ try { return new TextEncoder().encode(s).length; } catch (e) { return s.length * 3; } }
 
-  // \`force\` is for pagehide: the page may be gone before an in-flight save
-  // settles, so send now rather than wait.
+  // Send a held change now, with keepalive while the budget allows. Only
+  // \`pagehide\` (\`force\`) may overlap a save in flight: the page is going and
+  // won't see it settle. Going hidden, a beforeunload or a re-point may not
+  // unload, so the change waits for the in-flight save rather than race it
+  // under the same pin into a spurious 412.
+  function flush(force){
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!inflight || force === true) save(true);
+    idle();
+  }
+
+  // Set once the page may be going (beforeunload, hidden): a held change that
+  // had to wait for an in-flight save still leaves with keepalive.
+  var leaving = false;
+  var keepaliveBytes = 0;     // keepalive request bodies still in flight
+  // The beforeunload listener is attached only while there is something to
+  // flush: an unconditional one costs the page its back/forward cache in
+  // Firefox.
+  function onBeforeUnload(){ leaving = true; flush(false); }
+  function armed(){ window.addEventListener("beforeunload", onBeforeUnload); }
+  function idle(){
+    if ((stale || pending === null) && !inflight && !timer) window.removeEventListener("beforeunload", onBeforeUnload);
+  }
+
   function save(force){
     if (stale || pending === null) return;
     if (inflight && force !== true) return;
@@ -191,6 +260,11 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
     else headers["If-None-Match"] = "*";
     var mine = gen;
     var failed = false;
+    // Browsers cap the keepalive bytes in flight across requests, not per
+    // request: one that would go over it is sent plain.
+    var n = (force === true || leaving) ? bytes(body) : 0;
+    var ka = n > 0 && keepaliveBytes + n <= cfg.keepaliveMax;
+    if (ka) keepaliveBytes += n;
     inflight = true;
     var req;
     try {
@@ -199,20 +273,24 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
         headers: headers,
         body: body,
         credentials: "same-origin",
-        keepalive: force === true && bytes(body) <= cfg.keepaliveMax
+        keepalive: ka
       });
-    } catch (e) { inflight = false; if (pending === null) pending = body; return; }
+    } catch (e) { if (ka) keepaliveBytes -= n; inflight = false; if (pending === null) pending = body; return; }
     Promise.resolve(req).then(function(r){
       if (mine !== gen) return;
       if (r && r.status === 412) { stale = true; pending = null; if (conflict) conflict.hidden = false; return; }
       if (!r || !r.ok) { failed = true; return; }
       return r.json().then(function(d){ if (mine === gen && d && d.updatedAt) pin = d.updatedAt; });
     }).catch(function(){ failed = true; }).then(function(){
+      if (ka) keepaliveBytes -= n;
       if (mine !== gen) return;
       inflight = false;
+      settled++;
       // A failed save waits for the next change, without a retry loop.
-      if (failed) { if (pending === null) pending = body; return; }
-      save(false);
+      if (failed) { if (pending === null) pending = body; }
+      else save(false);
+      idle();
+      mintNext(false);
     });
   }
 
@@ -224,23 +302,45 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
       if (author !== null || typeof d.blob !== "string") return;
       // Only the document the current frame URL loaded knows this.
       if (!channel || d.channel !== channel) return;
+      // After a 412 nothing is written until a re-seed: hold nothing.
+      if (stale) return;
+      if ((typeof d.seed === "string" || d.seed === null) && d.seed !== seen) {
+        seen = d.seed;
+        pin = d.seed;
+      }
       pending = d.blob;
+      armed();
       // A change that arrives while the shell itself is unloading goes out now,
-      // with keepalive — there is no later.
-      save(unloading);
+      // with keepalive — there is no later. One that arrives while it is hidden
+      // goes now too: a hidden page may be frozen or discarded at any time.
+      if (unloading) { flush(true); return; }
+      if (document.visibilityState === "hidden") { leaving = true; flush(false); return; }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(function(){ timer = null; save(false); idle(); }, cfg.saveDelay);
     } else if (d.type === "artefactor:frame-token-expired") {
-      load(author, false);
+      // A switch still waiting to mint keeps its target: the re-mint is it.
+      if (next && next.seq === loads) load(next.target, next.reseed);
+      else load(author, false);
     }
   });
 
   var unloading = false;
-  window.addEventListener("pagehide", function(){ unloading = true; save(true); });
-  window.addEventListener("pageshow", function(){ unloading = false; });
+  window.addEventListener("pagehide", function(){ unloading = true; flush(true); });
+  window.addEventListener("pageshow", function(){ unloading = false; leaving = false; });
+  document.addEventListener("visibilitychange", function(){
+    if (document.visibilityState === "hidden") { leaving = true; flush(false); }
+    else leaving = false;
+  });
 
   var reload = document.getElementById("ae-conflict-reload");
   if (reload) reload.addEventListener("click", function(){ load(author, true); });
 
-  return { select: function(authorId){ load(authorId, true); } };
+  return { select: function(authorId){
+    // Back to the viewer's own data while its frame is still the live one (a
+    // switch away hasn't taken effect): cancel that switch, keep the frame.
+    if (!authorId && author === null && !stale) { ++loads; next = null; return; }
+    load(authorId, true);
+  } };
 })()`;
 }
 

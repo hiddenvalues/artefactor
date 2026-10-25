@@ -25,7 +25,10 @@ const CASES: [string, ArtefactItemProps][] = [
     "Bookmarked, saves data, rendered thumbnail",
     ownedProps(artefact({ thumbnailUrl: thumbnail, usesStorage: true }), { bookmarked: true }),
   ],
-  ["Long title (truncated, kind icon kept)", ownedProps(artefact({ id: "art-long", kind: "other", title: "A very long artefact title that has to truncate somewhere sensible in the card" }))],
+  [
+    "Long title (two lines, then truncated)",
+    ownedProps(artefact({ id: "art-long", kind: "other", title: "Vinga Ambassadors: Walkthrough of the onboarding flow for new ambassadors, their mentors and every programme review" })),
+  ],
 ];
 
 // S47/S62 — another user's artefact, on Home and on a collection page: a

@@ -28,7 +28,7 @@ function ArchivedRow({
     <Card className="flex-row items-center gap-3 px-3.5 py-2.5 shadow-none">
       <div className="flex size-7.5 shrink-0 items-center justify-center rounded-md bg-muted">{icon}</div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-muted-foreground">{title}</div>
+        <div title={title} className="truncate text-sm font-medium text-muted-foreground">{title}</div>
         <div className="text-xs text-muted-foreground/80">{meta}</div>
       </div>
       <Button variant="outline" size="sm" onClick={onRestore}>

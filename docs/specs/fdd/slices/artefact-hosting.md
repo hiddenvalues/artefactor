@@ -867,16 +867,19 @@ with `author` honoured; the channel is the one inlined in the frame that URL loa
 render embeds a tokened frame URL for a signed-in viewer and a token-less one for an anonymous
 viewer.
 
-r[hosting.frame.shim-posts-to-shell]
-**Shim.** A `setItem` posts one `data-changed` with the whole blob and its channel to the app
-origin after the debounce and never fetches; idle posts nothing; read-only throws
+r[hosting.frame.shim-posts-to-shell+2]
+**Shim.** A `setItem` posts one `data-changed` with the whole blob, its channel and the
+`updatedAt` it was seeded with to the app origin once the task that made it ends (one post however
+many changes the task made) and never fetches; idle posts nothing; read-only throws
 `QuotaExceededError` and posts nothing; over-cap still throws.
 
-r[hosting.frame.shell-saves-for-frame]
+r[hosting.frame.shell-saves-for-frame+2]
 **Shell.** A message from another source, from the frame in an author context, or without the
 channel of the frame URL the shell loaded → no request. From the frame in own context → one `PUT`
-to the fixed endpoint with `If-None-Match: *` (unseeded) or `If-Match: "<seedUpdatedAt>"`, and the
-next pins the returned `updatedAt`. A change during an in-flight save goes after it, with the new
+600 ms after the last change, or at once on `beforeunload` / `pagehide` / hidden, to the fixed
+endpoint with `If-None-Match: *` (unseeded) or `If-Match: "<seedUpdatedAt>"` — the seed the frame
+document reports when it differs from the last one adopted, else the rendered one — and the next
+pins the returned `updatedAt`. A change during an in-flight save goes after it, with the new
 pin, carrying only the latest blob. 412 → banner and no further `PUT`s; Reload re-mints and
 re-seeds. `frame-token-expired` from the frame → one mint and the frame's `src` set to the result;
 from another source → ignored.
@@ -1081,13 +1084,12 @@ first (in-memory, Drizzle and the EE Postgres mirror; no migration). The owner's
 the artefacts effectively shared with them; `GET /api/views/mine` (signed-in) returns
 `MyViewsResponse { views: { artefactId, viewedAt }[] }` (`views.mine.own-visible-only`).
 
-r[hosting.home.model]
+r[hosting.home.model+2]
 **Model.** `src/client/lib/home.ts` (pure): `HomeScope` (`all` / `mine` / `shared`),
 `scopeList`, `scopeCounts` (library totals, whatever the filters), `recentList` (ranked by the
 latest of my view and, for an own artefact, its `updatedAt`; a shared artefact I never opened is
-left out; capped at 12), `HOME_SORTS` (`updated` "Last edited or uploaded", `viewed` "Last
-viewed" — viewed newest first, then never-viewed by `updatedAt`) and `paginate(list, page, 24)`
-with the page clamped.
+left out; capped at 12), the Sort menu's order (`hosting.browse.one-sort`) and
+`paginate(list, page, 24)` with the page clamped.
 
 r[hosting.home.screen]
 **Screen.** `Home` replaces `Dashboard` and `SharedGallery` (`View` loses `gallery`). Top to
@@ -1348,20 +1350,24 @@ HTML on a collection page adds no authority, since the route already admits ever
 
 - **Anatomy**, top to bottom: the **thumbnail** (no kind badge; the saved-data icon and bookmark
   button top-right); the **title row** (the kind icon, `role="img"` named after the kind, in the
-  `--kind` colour · the title, one line, truncated · "More actions"); the **collection row** ("In
-  \<name>"); the **activity** ("Updated …", hidden when public — no size); the **access row**,
-  pinned to the bottom edge (owner: the access badge · an inherited icon named "Access inherited
-  from “\<root>”" after the tree root, S65 · a right-aligned **Share**; viewer: the badge ·
-  "Shared by …" · a right-aligned **Share**, labelled "Copy link", that copies the share link and
-  opens no dialog). No share-link footer. Every card fills its grid cell, so a grid row's access
-  rows line up along the bottom. Tab order: thumbnail → bookmark → title → "More actions" →
-  collection → Share.
+  `--kind` colour · the title, up to two lines, then truncated · "More actions"); the **collection
+  row** ("In \<name>"); the **activity** ("Updated …", hidden when public — no size); the
+  **access row**, pinned to the bottom edge (owner: the access badge · an inherited icon named
+  "Access inherited from “\<root>”" after the tree root, S65 · a right-aligned **Share**; viewer:
+  the badge · "Shared by …" · a right-aligned **Share**, labelled "Copy link", that copies the
+  share link and opens no dialog). No share-link footer. Every card fills its grid cell, so a grid
+  row's access rows line up along the bottom. Tab order: thumbnail → bookmark → title → "More
+  actions" → collection → Share.
 - **One card.** Collection pages render other users' artefacts as the viewer's `ArtefactCard` /
   `ArtefactRow`, with no collection row, exactly as Home's "Shared with you" does. On their own
   collection page, the collection's owner gets **Remove from collection** in a foreign artefact's
   "…" menu, after a separator, over the existing eject command (S29, `collections.containment.co-owned`).
 - **Copy.** One handler serves the card's and the row's copy: it toasts "Link copied ·
   \<host>/a/\<slug>" once the clipboard write resolves.
+
+r[hosting.card.long-title]
+On the grid card a long title wraps to at most two lines, then truncates with "…"; the full title
+is the title's tooltip.
 
 r[hosting.card.copy-failure-says-so]
 Copying an artefact's share link from a card or list row toasts "Link copied" only when the
@@ -1449,9 +1455,8 @@ no part applies, the row has no meta line.
   artefact (the Manage access dialog), "Access inherited" inside a collection (the popover). The
   viewer's Share is titled "Copy link". The buttons are the card's, so the card gets the tooltips
   too.
-- **No Size sort.** No card or row shows a payload size, so a collection page's Sort offers
-  "Recently updated" and "Title A–Z" only (`SORTS`, `src/client/lib/browse.ts`). A remembered
-  `size` sort fails `restore`'s check against `SORTS` and falls back to "Recently updated".
+- **No Size sort.** No card or row shows a payload size, so there is no Size sort. A remembered
+  `size` sort falls back to the default (`hosting.browse.one-sort-pref`).
 - **Out of scope:** several collections per artefact; rewording the failure toasts (ALI-481); the
   generating-preview state (ALI-477); the card's layout beyond the two tooltips and the inherited
   icon's name (S62); the "Access
@@ -1566,3 +1571,39 @@ artefact's ref fails at its save.
   compare indexes; uniqueness of `payload_hash` (identical content under separate refs stays
   allowed); EE artefact-history version rows, which key payloads in their own table.
 - **Boundary:** **OSS** (the Postgres index rides along under `ee/`).
+
+### S82 — One sort menu for Home and collection pages
+
+- **Status:** done
+- **Depends on:** S47, S65
+- **Linear:** ALI-532
+
+Home and collection pages sort from one menu, over one option set, under one remembered choice.
+Sorting stays a client-side presentation of lists the caller already sees: Home's list comes from
+`hosting.home.model`, a collection page's from `collections.read.follows-root`, and "Last viewed"
+reads only the caller's own views (`views.mine.own-visible-only`), which the shell loads once and
+stamps locally on every open.
+
+r[hosting.browse.one-sort]
+Home and every collection page offer one Sort menu with the same options, in this order and under
+these labels: "Last updated" (by last edit or upload, newest first; the default), "Last viewed"
+(the caller's own views, newest first, then never-viewed by last update) and "Title A–Z".
+
+r[hosting.browse.one-sort-pref]
+The Sort choice is one remembered preference shared by Home and collection pages. A remembered
+value outside the menu's options falls back to "Last updated".
+
+- **Model.** `src/client/lib/browse.ts`: `SORTS` (`updated`, `viewed`, `title`), `SORT_LABELS`,
+  and `sortList(list, sort, views)`; `applyFilters` passes the views through. `home.ts` keeps no
+  sort set of its own: `applyHomeFilters` sorts with `sortList`.
+- **Menu.** A module-private `SortMenu` in `src/client/lib/components/Browse.tsx` (the outline
+  `Button` trigger, named "Sort:" and the current label, over a `DropdownMenuRadioGroup`),
+  rendered by both `ViewControls` and `HomeControls`.
+- **Choice.** One `usePref("sort", …)` in `src/client/AppShell.tsx` feeds Home and the collection
+  page; changing it on Home returns to page 1. A stored `artefactor:home-sort` is neither read,
+  moved over nor cleared.
+- **Out of scope:** server changes (`GET /api/views/mine` and `listMyViews` are unchanged; an
+  artefact with no view in that response sorts as never-viewed); moving the old
+  `artefactor:home-sort` value over; a sort direction toggle or any further sort; the stock
+  `dropdown-menu.preview.tsx` example items; the Archive screen's ordering.
+- **Boundary:** **OSS**.

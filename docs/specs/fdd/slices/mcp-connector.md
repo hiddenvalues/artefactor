@@ -416,16 +416,19 @@ it build and manage the tree, each a thin adapter over the app's existing comman
 Account (`registerCollectionWriteTools` in `src/server/mcp/tools.ts`).
 
 - **`create_collection`** — `{ name, parent_id?, visibility?, description? }`; runs
-  `createCollectionCommand`. `parent_id` must be the caller's own collection; `visibility` with a
-  `parent_id` is refused, since a nested collection takes its root's tier.
+  `createCollectionCommand`. `parent_id` must be the caller's own collection; the domain refuses
+  `visibility` with a `parent_id`, since a nested collection takes its root's tier
+  (`collections.access.set-on-root-only`).
 - **`update_collection`** — `{ id, name?, description? }` (a string sets the description, `null`
   clears it); runs `editCollectionCommand` with name and description only. Neither given is
   refused ("nothing to update").
 - **`set_collection_visibility`** — `{ id, visibility }`; runs `editCollectionCommand` with the
   tier only, never a link gate. On a non-root the domain refuses: the root governs the tree.
 - **`archive_collection`**, **`restore_collection`** — `{ id }`; run `archiveCollectionCommand` /
-  `restoreCollectionCommand` and return `{ collection, cascade }`. A restore under an archived
-  ancestor is refused, naming the topmost archived ancestor to restore instead.
+  `restoreCollectionCommand` and return `{ collection, cascade }`. The domain refuses a restore
+  under an archived ancestor, naming the topmost archived ancestor to restore instead
+  (`collections.lifecycle.restore-under-active-parent`); `restore_artefact` refuses an artefact
+  inside an archived collection the same way.
 - **Results** — every collection is the owner's `toCollectionSummary` (with `publicSlug` and
   `linkGate`) plus its `path`, with `visibility` the tier it is served under: its tree root's, so
   a nested collection under a public root reports `public`. *(`mcp.collections.writes-run-commands`,

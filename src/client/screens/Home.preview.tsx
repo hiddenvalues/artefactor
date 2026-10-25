@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { AccessFilter, Density, KindFilter } from "$lib/browse";
-import { isShared, type HomeItem, type HomeScope, type HomeSort } from "$lib/home";
+import type { AccessFilter, Density, KindFilter, Sort } from "$lib/browse";
+import { isShared, type HomeItem, type HomeScope } from "$lib/home";
 import { noop, ownedLibrary, ownedProps, sharedLibrary, sharedProps, views } from "../design/fixtures";
 import { definePreview } from "../design/preview";
 import { ScreenFrame } from "../design/ScreenFrame";
@@ -21,7 +21,7 @@ function Example({
   const [scope, setScope] = useState<HomeScope>(initial.scope ?? "all");
   const [kind, setKind] = useState<KindFilter>(initial.kind ?? "all");
   const [access, setAccess] = useState<AccessFilter>(initial.access ?? "all");
-  const [sort, setSort] = useState<HomeSort>("updated");
+  const [sort, setSort] = useState<Sort>("updated");
   const [density, setDensity] = useState<Density>(initialDensity);
   return (
     <ScreenFrame view="dashboard" empty={empty}>

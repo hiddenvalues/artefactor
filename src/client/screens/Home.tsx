@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode, type Ref } from "react";
 import type { ArtefactSummary, SharedArtefactSummary } from "../../shared/contracts";
-import { accessChips, kindChips, type AccessFilter, type Density, type KindFilter } from "$lib/browse";
+import { accessChips, kindChips, type AccessFilter, type Density, type KindFilter, type Sort, type Views } from "$lib/browse";
 import { ArtefactCard, type ArtefactItemProps } from "$lib/components/ArtefactCard";
 import { ArtefactRow } from "$lib/components/ArtefactRow";
 import { EmptyState, HomeControls } from "$lib/components/Browse";
@@ -22,8 +22,6 @@ import {
   scopeList,
   type HomeItem,
   type HomeScope,
-  type HomeSort,
-  type Views,
 } from "$lib/home";
 import { cn } from "$lib/utils";
 
@@ -69,8 +67,8 @@ export function Home({
   onKind: (k: KindFilter) => void;
   access: AccessFilter;
   onAccess: (a: AccessFilter) => void;
-  sort: HomeSort;
-  onSort: (s: HomeSort) => void;
+  sort: Sort;
+  onSort: (s: Sort) => void;
   density: Density;
   onDensity: (d: Density) => void;
   itemProps: (a: HomeItem) => ArtefactItemProps;

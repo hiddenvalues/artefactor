@@ -87,7 +87,7 @@ export function Sidebar({
         tone="sidebar"
         active={view === "collection" && activeCollectionId === node.c.id}
         onClick={() => onOpenCollection(node.c.id)}
-        title={owner ? `${node.c.name} · shared by ${owner}` : undefined}
+        title={owner ? `${node.c.name} · shared by ${owner}` : node.c.name}
       >
         <Folder style={hueVars(node.c.id)} className="size-3.5 shrink-0 text-(--hue)" />
         <span className="min-w-0 flex-1 truncate">{node.c.name}</span>
@@ -118,6 +118,7 @@ export function Sidebar({
                   tone="sidebar"
                   active={view === "collection" && activeCollectionId === c.id}
                   onClick={() => onOpenCollection(c.id)}
+                  title={c.name}
                 >
                   <Folder style={hueVars(c.id)} className="size-3.5 shrink-0 text-(--hue)" />
                   <span className="min-w-0 flex-1 truncate">{c.name}</span>
@@ -130,7 +131,7 @@ export function Sidebar({
               const Icon = m.icon;
               return (
                 <div key={a.id} className="flex items-center">
-                  <NavRow tone="sidebar" onClick={() => onOpenArtefact(a)}>
+                  <NavRow tone="sidebar" onClick={() => onOpenArtefact(a)} title={a.title}>
                     <Icon style={kindVars(a.kind)} className="size-3.5 shrink-0 text-(--kind)" />
                     <span className="min-w-0 flex-1 truncate">{a.title}</span>
                   </NavRow>

@@ -25,8 +25,8 @@ Acceptance criteria are the seed for each slice's unit tests. Invariant numbers 
 | --- | --- | --- |
 | Platform & enabler seams | [platform.md](slices/platform.md) | S0, S22, S23, S24, S39, S43, S45, S46, S49a, S49b, S52, S53, S57, S58, S59, S61, S68, S69, S70, S71, S77, S80 |
 | Identity & Access | [identity-access.md](slices/identity-access.md) | S1, S8, S9, S38, S42, S48, S50, S51, S67 |
-| Artefact Hosting | [artefact-hosting.md](slices/artefact-hosting.md) | S2, S3, S4, S5, S6, S7, S10, S14, S15, S16, S19b, S32a, S32b, S33a, S33b, S35, S36, S37, S47, S54, S55, S56, S60, S62, S64, S65, S66, S72, S79 |
-| Artefact Data | [artefact-data.md](slices/artefact-data.md) | S11, S12, S13, S17, S19a, S20, S41 |
+| Artefact Hosting | [artefact-hosting.md](slices/artefact-hosting.md) | S2, S3, S4, S5, S6, S7, S10, S14, S15, S16, S19b, S32a, S32b, S33a, S33b, S35, S36, S37, S47, S54, S55, S56, S60, S62, S64, S65, S66, S72, S79, S82 |
+| Artefact Data | [artefact-data.md](slices/artefact-data.md) | S11, S12, S13, S17, S19a, S20, S41, S81 |
 | Artefact Views | [artefact-views.md](slices/artefact-views.md) | S21 |
 | MCP connector | [mcp-connector.md](slices/mcp-connector.md) | S18, S30, S31, S40, S63, S75, S76, S78 |
 | Artefact Collections | [artefact-collections.md](slices/artefact-collections.md) | S25, S26, S27, S28, S29, S44, S73, S74 |
@@ -56,4 +56,4 @@ namespace's files.
 The highest number ever allocated per id prefix; a sub-lettered id (`S34b`) counts by its number.
 A number is never reused, so a mark may sit above the highest slice but never below it.
 
-- **S:** S80
+- **S:** S82

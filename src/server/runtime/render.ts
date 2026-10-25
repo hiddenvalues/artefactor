@@ -56,6 +56,7 @@ export async function renderServedArtefact(
     writable,
     targetOrigin: options.targetOrigin,
     channel: options.channel,
+    seedUpdatedAt: entry?.updatedAt.toISOString() ?? null,
     maxBytes: MAX_BLOB_BYTES,
   });
 }

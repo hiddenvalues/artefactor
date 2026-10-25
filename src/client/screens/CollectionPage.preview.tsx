@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { SharedCollectionSummary } from "../../shared/contracts";
 import type { AccessFilter, Density, Filters, KindFilter } from "$lib/browse";
-import { collectionById, collections, noop, ownedLibrary, ownedProps, sharedCollections, sharedLibrary, sharedProps } from "../design/fixtures";
+import { collectionById, collections, noop, ownedLibrary, ownedProps, sharedCollections, sharedLibrary, sharedProps, views } from "../design/fixtures";
 import { definePreview } from "../design/preview";
 import { ScreenFrame } from "../design/ScreenFrame";
 import { CollectionPage } from "./CollectionPage";
@@ -29,6 +29,7 @@ function Example({ id, empty = false, description }: { id: string; empty?: boole
         ownedProps={(a) => ownedProps(a)}
         sharedProps={(g, onRemoveFromCollection) => sharedProps(g, { onRemoveFromCollection })}
         collection={c}
+        views={views}
         isOwn={isOwn}
         shared={sharedNode}
         owned={empty ? ownedLibrary.filter((a) => a.collectionId !== id) : ownedLibrary}

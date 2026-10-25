@@ -23,7 +23,7 @@ import {
   type Sort,
 } from "../browse";
 import { count, KINDS, VIS } from "../format";
-import { HOME_SCOPE_LABELS, HOME_SCOPES, HOME_SORT_LABELS, HOME_SORTS, type HomeScope, type HomeSort } from "../home";
+import { HOME_SCOPE_LABELS, HOME_SCOPES, type HomeScope } from "../home";
 import { hueVars } from "../style";
 import { ArtefactCard, type OwnedItemProps, type SharedItemProps } from "./ArtefactCard";
 import { ArtefactRow } from "./ArtefactRow";
@@ -98,28 +98,33 @@ export function ViewControls({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      {sort && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline">
-              <ArrowUpDown />
-              {SORT_LABELS[sort]}
-              <ChevronDown className="text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-44">
-            <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as Sort)}>
-              {SORTS.map((s) => (
-                <DropdownMenuRadioItem key={s} value={s}>
-                  {SORT_LABELS[s]}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      {sort && <SortMenu sort={sort} onSort={onSort} />}
       <DensityToggle density={density} onDensity={onDensity} />
     </>
+  );
+}
+
+// S82 — the one Sort menu Home and collection pages share (hosting.browse.one-sort).
+function SortMenu({ sort, onSort }: { sort: Sort; onSort: (s: Sort) => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" aria-label={`Sort: ${SORT_LABELS[sort]}`}>
+          <ArrowUpDown />
+          {SORT_LABELS[sort]}
+          <ChevronDown className="text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-44">
+        <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as Sort)}>
+          {SORTS.map((s) => (
+            <DropdownMenuRadioItem key={s} value={s}>
+              {SORT_LABELS[s]}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -263,8 +268,8 @@ export function HomeControls({
   onKind: (k: KindFilter) => void;
   access: { chips: Chip<AccessFilter>[]; value: AccessFilter };
   onAccess: (a: AccessFilter) => void;
-  sort: HomeSort;
-  onSort: (s: HomeSort) => void;
+  sort: Sort;
+  onSort: (s: Sort) => void;
   density: Density;
   onDensity: (d: Density) => void;
 }) {
@@ -302,24 +307,7 @@ export function HomeControls({
             />
           </div>
           <div data-view className="flex items-center gap-2.5 @2xl:ml-auto">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" aria-label={`Sort: ${HOME_SORT_LABELS[sort]}`}>
-                  <ArrowUpDown />
-                  {HOME_SORT_LABELS[sort]}
-                  <ChevronDown className="text-muted-foreground" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-52">
-                <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as HomeSort)}>
-                  {HOME_SORTS.map((s) => (
-                    <DropdownMenuRadioItem key={s} value={s}>
-                      {HOME_SORT_LABELS[s]}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <SortMenu sort={sort} onSort={onSort} />
             <DensityToggle density={density} onDensity={onDensity} />
           </div>
         </div>
@@ -363,6 +351,7 @@ export function CollectionTile({
     <button
       type="button"
       onClick={onOpen}
+      title={c.name}
       style={hueVars(c.id)}
       className="flex cursor-pointer items-center gap-3 rounded-xl border bg-card px-3.5 py-3 text-left text-card-foreground shadow-xs outline-none hover:bg-accent/50 focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >

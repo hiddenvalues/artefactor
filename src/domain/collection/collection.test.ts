@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   archiveCollection,
+  assertRestorableIn,
   assignCollectionSlug,
   assertCollectionDeletable,
   createCollection,
@@ -12,7 +13,7 @@ import {
   setCollectionAccess,
   type Collection,
 } from "./collection";
-import { CollectionInvariantViolation } from "./errors";
+import { CollectionInvariantViolation, RestoreUnderArchivedCollection } from "./errors";
 import { DEFAULT_TENANT } from "../artefact/artefact";
 
 const OWNER = "owner-1";
@@ -79,6 +80,23 @@ describe("createCollection", () => {
         parent: crossTenant,
       }),
     ).toThrow(CollectionInvariantViolation);
+  });
+
+  // r[verify collections.access.set-on-root-only+2]
+  it("refuses a tier given with a parent — a nested collection takes its root's", () => {
+    const root = makeRoot();
+    expect(() =>
+      createCollection({ id: "c2", ownerId: OWNER, name: "Q4", parent: root, visibility: "public" }),
+    ).toThrow(/a nested collection takes its tree root's tier/);
+    const child = createCollection({ id: "c2", ownerId: OWNER, name: "Q4", parent: root });
+    expect(child.parentId).toBe("c1");
+    const publicRoot = createCollection({
+      id: "c3",
+      ownerId: OWNER,
+      name: "Launch",
+      visibility: "public",
+    });
+    expect(publicRoot.visibility).toBe("public");
   });
 
   // r[verify collections.tree.shape-fixed]
@@ -187,7 +205,7 @@ describe("setCollectionAccess", () => {
     expect(setCollectionAccess(c, "private")).toBe(c);
   });
 
-  // r[verify collections.access.set-on-root-only]
+  // r[verify collections.access.set-on-root-only+2]
   it("rejects a non-root — nested collections inherit", () => {
     const child = createCollection({
       id: "c2",
@@ -221,7 +239,7 @@ describe("collection access list", () => {
     expect(revokeCollectionAccess(revoked, "ghost")).toBe(revoked); // no-op
   });
 
-  // r[verify collections.access.set-on-root-only]
+  // r[verify collections.access.set-on-root-only+2]
   // r[verify collections.lifecycle.archived-inert+3]
   it("rejects granting the owner, on non-roots, and while archived", () => {
     expect(() => grantCollectionAccess(makeRoot(), OWNER)).toThrow(
@@ -252,6 +270,54 @@ describe("collection lifecycle", () => {
     expect(restored.status).toBe("active");
     expect(restored.archivedAt).toBeNull();
     expect(restored.visibility).toBe("public"); // tier retained through archival
+  });
+
+  // r[verify collections.lifecycle.restore-under-active-parent+2]
+  it("refuses a restore under an archived collection, naming the topmost one", () => {
+    const root = makeRoot({ name: "Root" });
+    const child = createCollection({ id: "c2", ownerId: OWNER, name: "Child", parent: root });
+    const grandchild = createCollection({ id: "c3", ownerId: OWNER, name: "Grand", parent: child });
+    const archivedTree = [root, child, grandchild].map((c) => archiveCollection(c));
+    const asTarget = (c: Collection) => ({
+      kind: "collection" as const,
+      id: c.id,
+      name: c.name,
+      parentId: c.parentId,
+    });
+    expect(() => assertRestorableIn(asTarget(archivedTree[2]!), archivedTree)).toThrow(
+      /restore 'c1' \(Root\) instead, which restores this one with it — nothing was restored/,
+    );
+    // A child archived on its own under an active parent restores.
+    const alone = [root, archiveCollection(child), archiveCollection(grandchild)];
+    expect(() => assertRestorableIn(asTarget(alone[1]!), alone)).not.toThrow();
+    expect(() => assertRestorableIn(asTarget(alone[0]!), alone)).not.toThrow();
+  });
+
+  // r[verify collections.lifecycle.restore-under-active-parent+2]
+  it("refuses an artefact whose chain, starting at its own collection, holds an archived one", () => {
+    const root = makeRoot({ name: "Root" });
+    const child = createCollection({ id: "c2", ownerId: OWNER, name: "Child", parent: root });
+    const archivedTree = [root, child].map((c) => archiveCollection(c));
+    const artefact = { kind: "artefact" as const, id: "a1", name: "Deck", parentId: "c2" };
+    let refusal: unknown;
+    try {
+      assertRestorableIn(artefact, archivedTree);
+    } catch (err) {
+      refusal = err;
+    }
+    expect(refusal).toBeInstanceOf(RestoreUnderArchivedCollection);
+    expect((refusal as Error).message).toMatch(/^artefact 'a1' sits under an archived collection: restore 'c1' \(Root\)/);
+    // The web app's copy names, never ids.
+    expect((refusal as RestoreUnderArchivedCollection).namesOnly).toBe(
+      "“Deck” is inside the archived collection “Root”: restore “Root” to bring it back.",
+    );
+    // Its own collection archived alone, under an active root: still refused, naming it.
+    expect(() => assertRestorableIn(artefact, [root, archiveCollection(child)])).toThrow(
+      /restore 'c2' \(Child\)/,
+    );
+    // An active tree, or no collection at all, restores.
+    expect(() => assertRestorableIn(artefact, [root, child])).not.toThrow();
+    expect(() => assertRestorableIn({ ...artefact, parentId: null }, archivedTree)).not.toThrow();
   });
 
   // r[verify collections.lifecycle.delete-archived-only]

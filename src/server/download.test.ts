@@ -204,7 +204,7 @@ describe("artefact export — GET /api/artefacts/:ref/download (S30)", () => {
   });
 
   // r[verify mcp.download.not-found]
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   it("404s an unknown ref", async () => {
     expect((await download("no-such-artefact", owner)).status).toBe(404);
   });

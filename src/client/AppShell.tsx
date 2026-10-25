@@ -23,7 +23,7 @@ import { TopBar, type TopBarAccount } from "$lib/components/TopBar";
 import { UploadDialog } from "$lib/components/UploadDialog";
 import { count, DATA_VIS, KIND_ORDER, VIS, VIS_ORDER, type DataVisibility, type Visibility } from "$lib/format";
 import { accessRootOf, collectionRowOf } from "$lib/artefact-card";
-import { HOME_SCOPES, HOME_SORTS, isShared, type HomeItem, type HomeScope } from "$lib/home";
+import { HOME_SCOPES, isShared, type HomeItem, type HomeScope } from "$lib/home";
 import { usePref } from "$lib/prefs";
 import { copyText, inheritedLinkGate } from "$lib/link-protection";
 import { notify } from "$lib/toast";
@@ -73,10 +73,11 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   const [density, setDensity] = usePref("density", DENSITIES, "grid");
   const [kind, setKind] = usePref<KindFilter>("kind", ["all", ...KIND_ORDER], "all");
   const [access, setAccess] = usePref<AccessFilter>("access", ["all", ...VIS_ORDER], "all");
+  // S82 — one Sort choice for Home and collection pages.
+  // r[impl hosting.browse.one-sort-pref]
   const [sort, setSort] = usePref("sort", SORTS, "updated");
-  // S47 — Home's switch and its own sorts (collection pages keep theirs).
+  // S47 — Home's switch.
   const [scope, setScope] = usePref<HomeScope>("scope", HOME_SCOPES, "all");
-  const [homeSort, setHomeSort] = usePref("home-sort", HOME_SORTS, "updated");
   // S25 — the collections/bookmarks sidebar. Closed by default; remembered.
   const [sidebar, setSidebar] = usePref("sidebar", ["open", "closed"] as const, "closed");
   const [query, setQuery] = useState("");
@@ -681,6 +682,7 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
           <CollectionPage
             {...listing}
             collection={currentCollection}
+            views={lib.views}
             isOwn={isOwnCollection}
             shared={currentShared}
             owned={owned}
@@ -715,8 +717,8 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
             onKind={setKind}
             access={access}
             onAccess={setAccess}
-            sort={homeSort}
-            onSort={setHomeSort}
+            sort={sort}
+            onSort={setSort}
             density={density}
             onDensity={setDensity}
             itemProps={homeItemProps}

@@ -24,8 +24,8 @@ Replaces the current `docs/design/components/artefact-card.md`
 1. **Thumbnail** (16:10, opens the artefact): preview image, kind-tinted striped pattern + kind
    icon when there's no preview, or the generating state. Saved-data icon and bookmark button
    top-right. No kind badge.
-2. **Title row:** kind icon (16px, `--kind` colour) · title (one line, truncated with "…", opens
-   the artefact) · "…" menu button.
+2. **Title row:** kind icon (16px, `--kind` colour) · title (up to two lines, then truncated
+   with "…"; full title in the tooltip; opens the artefact) · "…" menu button.
 3. **Collection** (when in one): folder icon tinted with the collection hue · "In X".
 4. **Activity:** last activity, hidden when public.
 5. **Access row** (on the bottom edge):
@@ -46,8 +46,8 @@ Replaces the current `docs/design/components/artefact-card.md`
 * **Private:** no Share button for viewers.
 * **Inherited:** inherited icon on the access row, with the tooltip "Access inherited from
   “\<collection>”".
-* **Long title:** one line, truncated with "…"; full title in the tooltip. The kind icon stays
-  visible.
+* **Long title:** up to two lines, then truncated with "…"; full title in the tooltip. The kind
+  icon and the "More actions" menu button stay level with the first line.
 * **Uneven content:** cards in a row share the same height, with the access rows lined up along
   the bottom.
 * **Hover:** the card lifts and its border picks up the primary colour.

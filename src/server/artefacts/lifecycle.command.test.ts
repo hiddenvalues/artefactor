@@ -13,6 +13,9 @@ import { InMemoryBookmarkRepository } from "../../domain/bookmark/in-memory-book
 import type { PayloadStore, StoredPayload } from "../../domain/artefact/ports";
 import { SINGLETON_SCOPE as SCOPE } from "../../domain/artefact/tenant-scope";
 import { ArtefactNotFound, InvariantViolation } from "../../domain/artefact/errors";
+import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
+import { archiveCollection, createCollection } from "../../domain/collection/collection";
+import { RestoreUnderArchivedCollection } from "../../domain/collection/errors";
 
 const OWNER = "owner-1";
 
@@ -28,8 +31,10 @@ function base(id = "a1") {
 
 describe("archive / restore commands (S7)", () => {
   let repo: InMemoryArtefactRepository;
+  let collectionRepo: InMemoryCollectionRepository;
   beforeEach(() => {
     repo = new InMemoryArtefactRepository();
+    collectionRepo = new InMemoryCollectionRepository();
   });
 
   it("archives an owned active artefact", async () => {
@@ -49,14 +54,14 @@ describe("archive / restore commands (S7)", () => {
     await archiveArtefactCommand({ artefactId: "a1", requesterId: OWNER, scope: SCOPE }, { repo });
     const restored = await restoreArtefactCommand(
       { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
-      { repo },
+      { repo, collectionRepo },
     );
     expect(restored.status).toBe("active");
     expect(restored.archivedAt).toBeNull();
     expect(restored.visibility).toBe("authenticated");
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.authority.owner-only]
   it("treats a non-owner archive as not-found", async () => {
     await repo.save(base());
@@ -75,7 +80,52 @@ describe("archive / restore commands (S7)", () => {
   it("rejects restoring an artefact that is not archived", async () => {
     await repo.save(base());
     await expect(
-      restoreArtefactCommand({ artefactId: "a1", requesterId: OWNER, scope: SCOPE }, { repo }),
+      restoreArtefactCommand(
+        { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+        { repo, collectionRepo },
+      ),
+    ).rejects.toBeInstanceOf(InvariantViolation);
+  });
+
+  // A root R holding a child C, both saved; `archived` archives both.
+  async function seedTree(archived: boolean) {
+    const root = createCollection({ id: "R", ownerId: OWNER, name: "Root" });
+    const child = createCollection({ id: "C", ownerId: OWNER, name: "Child", parent: root });
+    for (const c of [root, child]) await collectionRepo.save(archived ? archiveCollection(c) : c);
+  }
+
+  // r[verify collections.lifecycle.restore-under-active-parent+2]
+  it("refuses an artefact in archived collection C under archived R, naming R, and leaves it archived", async () => {
+    await seedTree(true);
+    await repo.save({ ...base(), collectionId: "C", status: "archived", archivedAt: new Date() });
+    const restore = restoreArtefactCommand(
+      { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+      { repo, collectionRepo },
+    );
+    await expect(restore).rejects.toBeInstanceOf(RestoreUnderArchivedCollection);
+    await expect(restore).rejects.toThrow(/^artefact 'a1' sits under an archived collection: restore 'R' \(Root\)/);
+    expect((await repo.findById("a1", SCOPE))?.status).toBe("archived");
+  });
+
+  // r[verify collections.lifecycle.restore-under-active-parent+2]
+  it("restores an artefact archived on its own in an active collection", async () => {
+    await seedTree(false);
+    await repo.save({ ...base(), collectionId: "C", status: "archived", archivedAt: new Date() });
+    const restored = await restoreArtefactCommand(
+      { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+      { repo, collectionRepo },
+    );
+    expect(restored.status).toBe("active");
+  });
+
+  it("an active artefact in an archived tree is refused as not archived, not pointed at the tree", async () => {
+    await seedTree(true);
+    await repo.save({ ...base(), collectionId: "C" });
+    await expect(
+      restoreArtefactCommand(
+        { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+        { repo, collectionRepo },
+      ),
     ).rejects.toBeInstanceOf(InvariantViolation);
   });
 });
@@ -167,7 +217,7 @@ describe("delete command (S15)", () => {
     expect(payloadStore.deleted).toEqual([]);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.delete.archived-only]
   it("treats a non-owner delete as not-found", async () => {
     await repo.save({ ...base(), status: "archived", archivedAt: new Date() });

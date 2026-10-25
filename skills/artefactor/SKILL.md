@@ -59,7 +59,9 @@ the user** (OAuth), so everything you create is owned by them. Tools:
   manage sharing and lifecycle. Share **only on the user's request**, at the tier they asked
   for, and say who will be able to open it first. An artefact the user has filed in a collection
   takes its visibility from that collection, so `set_visibility` refuses it — say so rather than
-  retrying.
+  retrying. An artefact inside an archived collection can't be restored on its own: the refusal
+  names the archived collection to restore instead (`restore_collection`), which brings it back
+  too.
   Moving a `public` artefact to any other tier clears its link protection (password and expiry);
   passwords and expiry are set only in the Artefactor web app, never over the connector.
 - **`set_data_visibility`** `{ id, dataVisibility }` — whether viewers can load each other's

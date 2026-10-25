@@ -125,7 +125,7 @@ describe("artefact data store — /data/me (S11)", () => {
     expect((await dataMe(slug, { method: "PUT", body: "{}", cookie: owner })).status).toBe(404);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   it("hides a private artefact's data from a non-owner", async () => {
     const { id, slug } = await makeShared(owner);
     // Unshare → private, slug retained.

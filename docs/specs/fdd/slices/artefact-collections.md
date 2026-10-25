@@ -86,7 +86,8 @@ Artefact summaries (owner list, detail) additionally expose `collectionId` and t
   `hosting.shared.lists-effectively-shared`).
 - Changing a root to `selected` + granting a member makes subtree artefacts viewable by that member
   only (`collections.access.root-governs-tree`).
-- `setCollectionAccess` on a non-root is rejected (`collections.access.set-on-root-only`).
+- `setCollectionAccess` on a non-root, and a tier given at create together with a parent, are
+  rejected (`collections.access.set-on-root-only`).
 - A child created under another owner's or an archived collection is rejected
   (`collections.tree.single-owner`, `collections.lifecycle.archived-inert`).
 - Non-owner collection reads/mutations → uniform 404 (`collections.access.no-existence-leak`).
@@ -100,7 +101,8 @@ In a collection's people-only access dialog, directory results of an older query
 - **Status:** done
 - **Depends on:** S15, S25
 - **Delivers:** collections.lifecycle.archive-cascades, collections.lifecycle.restore-cascades,
-  collections.lifecycle.delete-archived-only, collections.lifecycle.delete-cascades
+  collections.lifecycle.restore-under-active-parent, collections.lifecycle.delete-archived-only,
+  collections.lifecycle.delete-cascades
 
 - **Commands** — `archiveCollectionCommand` (archive every descendant collection + active
   artefact in the subtree; returns cascade counts for the toast), `restoreCollectionCommand`
@@ -129,6 +131,10 @@ In a collection's people-only access dialog, directory results of an older query
   serving, `hosting.lifecycle.archived-not-served`) (`collections.lifecycle.archive-cascades`).
 - Restore brings the subtree back at prior tiers; an artefact archived individually then caught in
   a collection archive restores with the collection (`collections.lifecycle.restore-cascades`).
+- Restoring a collection, or an artefact, under an archived collection is refused, naming the
+  topmost archived collection in its chain, and restores nothing: `POST /api/collections/:id/restore`
+  and `POST /api/artefacts/:id/restore` answer `400` naming them by name only, the connector by id
+  and name (`collections.lifecycle.restore-under-active-parent`).
 - Delete of an active collection is rejected (`collections.lifecycle.delete-archived-only`).
 - Delete removes descendant rows, payload files, data entries, view entries, bookmarks
   (`collections.lifecycle.delete-cascades`).

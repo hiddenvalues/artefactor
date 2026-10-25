@@ -93,7 +93,7 @@ describe("injected access policy gates the authenticated tier (S22)", () => {
     expect((await openFrame(app, a.publicSlug!, member)).status).toBe(200);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   it("denies a signed-in non-member with a flat 404, like an unknown slug", async () => {
     const a = await makeArtefact("authenticated");
     const denied = await get(`/a/${a.publicSlug}`, outsider);

@@ -171,11 +171,14 @@ r[hosting.access.matrix]
 user in `sharedWith`; `authenticated` → any signed-in user; `public` → anyone, no auth. The
 table above spells it out per viewer.
 
-r[hosting.access.no-existence-leak]
-**No existence leak:** the sign-in redirect is **uniform across every unauthenticated miss** —
-unknown slug, `private`, `selected`, `authenticated`, and archived all redirect identically — so
-an anonymous probe still cannot tell an existing artefact from a missing one. Authenticated
-denials are a flat `404` for the same reason.
+r[hosting.access.no-existence-leak+3]
+**No existence leak:** on the serving route (`/a/:slug`) the sign-in redirect is **uniform across
+every unauthenticated miss**: unknown slug, `private`, `selected`, `authenticated` and archived all
+redirect identically. An anonymous probe therefore cannot tell an existing artefact from a missing
+one. A route open to anonymous callers that does not redirect (the download,
+`mcp.download.not-found`) answers an anonymous miss with a flat `404`; routes behind sign-in answer
+every anonymous call with a uniform `401`, before any lookup. Authenticated denials are a flat `404`
+for the same reason.
 
 ## State / transitions
 

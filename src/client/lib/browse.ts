@@ -2,18 +2,22 @@ import type { ArtefactSummary } from "../../shared/contracts";
 import type { ArtefactKind } from "../../domain/artefact/kind";
 import { KIND_ORDER, KINDS, VIS, VIS_ORDER, type Visibility } from "./format";
 
-// S65 — no card or row shows a size, so there is no Size sort; a remembered
-// "size" falls back to the default on restore (`prefs.ts`).
-export const SORTS = ["updated", "title"] as const;
+// S82 — Home and collection pages share one Sort menu. A remembered value
+// outside it (S65's retired "size") falls back to the default on restore
+// (`prefs.ts`).
+export const SORTS = ["updated", "viewed", "title"] as const;
 export type Sort = (typeof SORTS)[number];
 export const SORT_LABELS: Record<Sort, string> = {
-  updated: "Recently updated",
+  updated: "Last updated",
+  viewed: "Last viewed",
   title: "Title A–Z",
 };
 export const DENSITIES = ["grid", "list"] as const;
 export type Density = (typeof DENSITIES)[number];
 export type KindFilter = "all" | ArtefactKind;
 export type AccessFilter = "all" | Visibility;
+/** The caller's own views: artefact id → ISO `viewedAt` (views.mine.own-visible-only). */
+export type Views = ReadonlyMap<string, string>;
 
 /** The filters a listing screen applies, all persisted. (S46 — the top bar's
  *  search is global, so text no longer filters a page.) */
@@ -28,22 +32,36 @@ export function matchesQuery(title: string, query: string): boolean {
   return !q || title.toLowerCase().includes(q);
 }
 
-export function sortList<T extends ArtefactSummary>(list: T[], sort: Sort): T[] {
+/** An ISO timestamp in ms; a missing one sorts last. */
+export const time = (iso: string | undefined) => (iso ? Date.parse(iso) : Number.NEGATIVE_INFINITY);
+
+/** `updated`: by `updatedAt`, newest first. `viewed`: your views newest first,
+ *  then never-viewed by `updatedAt`. `title`: A–Z. */
+// r[impl hosting.browse.one-sort]
+export function sortList<T extends ArtefactSummary>(list: T[], sort: Sort, views: Views): T[] {
+  const byUpdated = (x: T, y: T) => time(y.updatedAt) - time(x.updatedAt);
   const a = [...list];
-  if (sort === "title") a.sort((x, y) => x.title.localeCompare(y.title));
-  else a.sort((x, y) => new Date(y.updatedAt).getTime() - new Date(x.updatedAt).getTime());
-  return a;
+  if (sort === "title") return a.sort((x, y) => x.title.localeCompare(y.title));
+  if (sort === "updated") return a.sort(byUpdated);
+  return a.sort((x, y) => {
+    const vx = views.get(x.id);
+    const vy = views.get(y.id);
+    if (vx && vy) return time(vy) - time(vx);
+    if (vx || vy) return vx ? -1 : 1;
+    return byUpdated(x, y);
+  });
 }
 
 /** Filter + sort a list. `withAccess: false` ignores the access filter (a
  *  collection page has one tier tree-wide). */
 // r[impl platform.search.filters-ignore-text]
-export function applyFilters<T extends ArtefactSummary>(list: T[], f: Filters, withAccess = true): T[] {
+export function applyFilters<T extends ArtefactSummary>(list: T[], f: Filters, views: Views, withAccess = true): T[] {
   return sortList(
     list
       .filter((a) => f.kind === "all" || a.kind === f.kind)
       .filter((a) => !withAccess || f.access === "all" || a.effectiveVisibility === f.access),
     f.sort,
+    views,
   );
 }
 

@@ -31,7 +31,7 @@ import {
   CollectionInvariantViolation,
   CollectionNotFound,
 } from "../../domain/collection/errors";
-import type { Collection } from "../../domain/collection/collection";
+import { archiveCollection, type Collection } from "../../domain/collection/collection";
 
 const OWNER = "owner-1";
 const VIEWER = "viewer-2";
@@ -607,6 +607,49 @@ describe("collection lifecycle cascades (S26)", () => {
       { collectionRepo, artefactRepo },
     );
     expect(cascade.artefacts).toBe(2);
+    expect((await collectionRepo.findById(child.id, SCOPE))?.status).toBe("active");
+    expect((await artefactRepo.findById("a2", SCOPE))?.status).toBe("active");
+  });
+
+  // r[verify collections.lifecycle.restore-under-active-parent+2]
+  it("refuses a restore under an archived ancestor, naming the topmost one, and restores nothing", async () => {
+    const { root, child } = await seedTree();
+    const grand = await makeCollection("Grand", { parentId: child.id });
+    const ids = { requesterId: OWNER, scope: SCOPE };
+    await archiveCollectionCommand({ ...ids, collectionId: root.id }, { collectionRepo, artefactRepo });
+
+    await expect(
+      restoreCollectionCommand({ ...ids, collectionId: grand.id }, { collectionRepo, artefactRepo }),
+    ).rejects.toThrow(/restore 'col-Root' \(Root\) instead/);
+    for (const c of [root, child, grand]) {
+      expect((await collectionRepo.findById(c.id, SCOPE))?.status).toBe("archived");
+    }
+    expect((await artefactRepo.findById("a2", SCOPE))?.status).toBe("archived");
+
+    await restoreCollectionCommand({ ...ids, collectionId: root.id }, { collectionRepo, artefactRepo });
+    for (const c of [root, child, grand]) {
+      expect((await collectionRepo.findById(c.id, SCOPE))?.status).toBe("active");
+    }
+  });
+
+  it("an active collection under an archived ancestor is refused as not archived, not pointed at the ancestor", async () => {
+    // A row left by the old BFF path, which restored a child on its own.
+    const { root, child } = await seedTree();
+    await collectionRepo.save(archiveCollection(root));
+    await expect(
+      restoreCollectionCommand(
+        { collectionId: child.id, requesterId: OWNER, scope: SCOPE },
+        { collectionRepo, artefactRepo },
+      ),
+    ).rejects.toThrow("only an archived collection can be restored");
+  });
+
+  // r[verify collections.lifecycle.restore-under-active-parent+2]
+  it("restores a child archived on its own under an active parent", async () => {
+    const { child } = await seedTree();
+    const ids = { collectionId: child.id, requesterId: OWNER, scope: SCOPE };
+    await archiveCollectionCommand(ids, { collectionRepo, artefactRepo });
+    await restoreCollectionCommand(ids, { collectionRepo, artefactRepo });
     expect((await collectionRepo.findById(child.id, SCOPE))?.status).toBe("active");
     expect((await artefactRepo.findById("a2", SCOPE))?.status).toBe("active");
   });

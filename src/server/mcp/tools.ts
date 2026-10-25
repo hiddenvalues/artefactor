@@ -25,7 +25,6 @@ import {
   restoreArtefactCommand,
 } from "../artefacts/lifecycle.command";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
-import { loadOwnCollection } from "../collections/get-own-collection";
 import { moveArtefactCommand } from "../collections/move-artefact.command";
 import { listPlaceableCollections } from "../collections/placeable-collections.query";
 import {
@@ -685,14 +684,15 @@ export function registerArtefactTools(
     "restore_artefact",
     {
       title: "Restore artefact",
-      description: "Restore an archived artefact to active at its prior tier.",
+      description:
+        "Restore an archived artefact to active at its prior tier. One inside an archived collection is refused: restore the archived collection the refusal names, which restores the artefact with it.",
       inputSchema: { id: z.string().min(1) },
     },
     async ({ id }) =>
       run(async () => {
         const updated = await restoreArtefactCommand(
           { artefactId: id, requesterId: userId, scope },
-          { repo },
+          { repo, collectionRepo: deps.collectionRepo },
         );
         return summarize(updated);
       }),
@@ -846,15 +846,8 @@ function registerCollectionWriteTools(
       },
     },
     async ({ name, parent_id, visibility, description }) =>
-      run(async () => {
-        // A nested collection takes its root's tier (collections.access.set-on-root-only): a tier
-        // given with a parent would be stored, unused, and reported back as if it applied.
-        if (parent_id !== undefined && visibility !== undefined) {
-          throw new ToolInputRejected(
-            "A nested collection takes its tree root's tier: omit visibility, or set the root's with set_collection_visibility.",
-          );
-        }
-        return summarize(
+      run(async () =>
+        summarize(
           await createCollectionCommand(
             {
               requesterId: userId,
@@ -866,8 +859,8 @@ function registerCollectionWriteTools(
             },
             commandDeps,
           ),
-        );
-      }),
+        ),
+      ),
   );
 
   server.registerTool(
@@ -948,34 +941,13 @@ function registerCollectionWriteTools(
       inputSchema: { id: z.string().min(1).describe("Your archived collection's id.") },
     },
     async ({ id }) =>
-      run(async () => {
-        // A collection under an archived ancestor stays archived: restoring it alone would leave
-        // an active node inside an inert tree (collections.lifecycle.archived-inert), unlisted yet
-        // writable. Point at the topmost archived ancestor, whose restore brings this one back too.
-        const target = await loadOwnCollection(deps.collectionRepo, {
-          id,
-          ownerId: userId,
-          scope,
-        });
-        if (target.parentId !== null) {
-          const tree = await deps.collectionRepo.listByOwner(userId, scope, {
-            includeArchived: true,
-          });
-          const archivedAncestor = chainToRoot(tree, target.parentId)
-            .reverse()
-            .find((c) => c.status === "archived");
-          if (archivedAncestor) {
-            throw new ToolInputRejected(
-              `Collection '${id}' sits under an archived collection: restore '${archivedAncestor.id}' (${archivedAncestor.name}) instead, which restores this one with it. Nothing was restored.`,
-            );
-          }
-        }
-        return withCascade(
+      run(async () =>
+        withCascade(
           await restoreCollectionCommand(
             { collectionId: id, requesterId: userId, scope },
             commandDeps,
           ),
-        );
-      }),
+        ),
+      ),
   );
 }

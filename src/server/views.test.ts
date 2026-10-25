@@ -182,7 +182,7 @@ describe("who has viewed (S21)", () => {
     expect(res.status).toBe(401);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify views.viewers.follows-artefact-access]
   it("404s the viewers list for a viewer who cannot see the artefact", async () => {
     // Share to mint a slug, then unshare → private but addressable by slug.

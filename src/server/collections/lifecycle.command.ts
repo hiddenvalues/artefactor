@@ -1,6 +1,7 @@
 import {
   archiveCollection,
   assertCollectionDeletable,
+  assertRestorableIn,
   restoreCollection,
   type Collection,
 } from "../../domain/collection/collection";
@@ -149,6 +150,10 @@ export async function restoreCollectionCommand(
   const subtree = collectSubtree(all, target.id);
 
   let restoredRoot = restoreCollection(target, { now }); // guards non-archived
+  assertRestorableIn(
+    { kind: "collection", id: target.id, name: target.name, parentId: target.parentId },
+    all,
+  ); // before any save
   for (const node of subtree) {
     if (node.id === target.id) {
       await deps.collectionRepo.save(restoredRoot);

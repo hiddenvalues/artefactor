@@ -3,6 +3,7 @@ import type { Collection } from "../../domain/collection/collection";
 import {
   CollectionInvariantViolation,
   CollectionNotFound,
+  RestoreUnderArchivedCollection,
 } from "../../domain/collection/errors";
 import { VISIBILITIES } from "../../domain/artefact/visibility";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
@@ -403,6 +404,10 @@ function mapCollectionError(
 ): Response {
   if (err instanceof CollectionNotFound) {
     return c.json({ error: "not found" }, 404);
+  }
+  // The web app's copy names, never ids (collections.lifecycle.restore-under-active-parent).
+  if (err instanceof RestoreUnderArchivedCollection) {
+    return c.json({ error: err.namesOnly }, 400);
   }
   if (err instanceof CollectionInvariantViolation) {
     return c.json({ error: err.message }, 400);

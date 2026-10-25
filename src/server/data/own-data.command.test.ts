@@ -111,7 +111,7 @@ describe("own-data commands (S11)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   it("is not-found when a non-owner targets a private artefact", async () => {
     // Shared then unshared → private but slug retained.
     const shared = await seed("public");

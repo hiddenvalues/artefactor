@@ -79,9 +79,10 @@ carried but **never consulted** (mirrors how `sharedWith` is carried but unconsu
 `selected` tier, `hosting.access-list.retained`). Changing a root's access changes the effective
 access of everything inside, at once.
 
-r[collections.access.set-on-root-only]
+r[collections.access.set-on-root-only+2]
 Changing access is only meaningful — and only allowed — **on a root**; the UI shows nested
-collections and contained artefacts as "Inherited".
+collections and contained artefacts as "Inherited". A nested collection is created with **no tier
+of its own**: a tier given together with a parent is refused, so the rule holds from creation on.
 
 r[collections.access.contained-own-tier-dormant]
 **Effective artefact access**: an artefact with `collectionId = null` is governed by its own
@@ -110,6 +111,15 @@ r[collections.lifecycle.restore-cascades]
 Restoring a collection restores the whole subtree. An artefact archived individually *before* the
 collection was archived is restored along with it — the cascade does not track provenance
 (documented simplification).
+
+r[collections.lifecycle.restore-under-active-parent+2]
+Neither a collection nor an artefact under an archived collection is restored on its own: the
+restore is refused, naming the topmost archived collection in its chain, whose restore brings it
+back with it (`collections.lifecycle.restore-cascades`). Otherwise an active item would sit inside an
+inert tree (`collections.lifecycle.archived-inert`). A collection's chain starts at its parent, an
+artefact's at its own collection; the owner's tree decides, since a foreign artefact never sits in
+an archived tree (`collections.lifecycle.cascades-evict-foreign`). The web app's refusal names the
+item and that collection by name only; the connector's also gives their ids.
 
 r[collections.lifecycle.archived-inert+3]
 An **archived collection is inert**: no rename, no description change, no access change, no new

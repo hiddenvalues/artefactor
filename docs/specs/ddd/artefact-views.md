@@ -95,8 +95,9 @@ artefact is oblivious to it.
 
 Home (S47 — Home: one landing screen for own and shared artefacts) reads the caller's own views
 (`GET /api/views/mine`, `views.mine.own-visible-only`) for its **Recent** row — ranked by the
-latest of the viewer's own view and, for an artefact they own, its last edit — and its **Last
-viewed** sort.
+latest of the viewer's own view and, for an artefact they own, its last edit. The **Last viewed**
+sort on Home and collection pages (S82 — One sort menu for Home and collection pages) reads the
+same views.
 
 ## Decided
 

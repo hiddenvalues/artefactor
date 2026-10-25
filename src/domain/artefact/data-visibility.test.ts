@@ -49,7 +49,7 @@ describe("setDataVisibility", () => {
     expect(same.updatedAt).toEqual(CREATED);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.authority.owner-only]
   // r[verify hosting.data-visibility.owner-set]
   it("refuses a non-owner as not found", () => {

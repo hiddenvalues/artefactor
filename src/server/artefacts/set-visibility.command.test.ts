@@ -105,7 +105,7 @@ describe("setArtefactVisibilityCommand (S5)", () => {
     expect(a.publicSlug).toBe("free");
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.authority.owner-only]
   it("treats a non-owner request as not-found", async () => {
     await expect(

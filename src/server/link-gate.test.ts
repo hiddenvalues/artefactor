@@ -166,7 +166,7 @@ describe("BFF — setting and clearing the gate", () => {
     expect(summary.linkGate).toBeNull();
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.link-gate.public-only]
   it("is owner-only: a non-owner gets 404", async () => {
     const a = await makePublic();

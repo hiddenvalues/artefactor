@@ -16,7 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "$lib/components/ui/dropdown-menu";
-import { applyFilters, kindChips, showCollectionKindChips, showCollectionSort } from "$lib/browse";
+import { applyFilters, kindChips, showCollectionKindChips, showCollectionSort, type Views } from "$lib/browse";
 import {
   CollectionTile,
   countsLine,
@@ -46,6 +46,7 @@ const crumb = "h-auto cursor-pointer rounded-sm p-0 text-xs font-normal whitespa
 // access and lifecycle are owner-only (collections.authority.owner-only).
 export function CollectionPage({
   collection: c,
+  views,
   isOwn,
   shared: sharedNode,
   owned,
@@ -73,6 +74,8 @@ export function CollectionPage({
   sharedProps,
 }: ListingProps & {
   collection: CollectionSummary;
+  // S82 — the caller's own views, for the Last viewed sort.
+  views: Views;
   isOwn: boolean;
   // The S28 node for a shared page (carries canContribute + owner identity).
   shared: SharedCollectionSummary | null;
@@ -99,8 +102,8 @@ export function CollectionPage({
   const mine = owned.filter((a) => a.collectionId === c.id);
   const theirs = others.filter((g) => g.collectionId === c.id);
   // A collection page has one tier tree-wide: no access filter.
-  const visibleMine = applyFilters(mine, filters, false);
-  const visibleTheirs = applyFilters(theirs, filters, false);
+  const visibleMine = applyFilters(mine, filters, views, false);
+  const visibleTheirs = applyFilters(theirs, filters, views, false);
   const chips = kindChips([...mine, ...theirs]);
   const filtered = filters.kind !== "all";
 
@@ -158,7 +161,7 @@ export function CollectionPage({
             <Folder className="size-5 text-(--hue)" strokeWidth={1.7} />
           </div>
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold tracking-tight">{c.name}</h1>
+            <h1 title={c.name} className="truncate text-xl font-semibold tracking-tight">{c.name}</h1>
             {c.description && (
               <p className="mt-1 max-w-prose text-sm break-words text-muted-foreground">{c.description}</p>
             )}

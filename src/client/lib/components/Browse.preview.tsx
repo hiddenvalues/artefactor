@@ -3,7 +3,7 @@ import { Badge } from "$lib/components/ui/badge";
 import { definePreview } from "../../design/preview";
 import { collection, library, noop, ownedProps, shared, sharedProps } from "../../design/fixtures";
 import { accessChips, kindChips, type AccessFilter, type Density, type KindFilter, type Sort } from "../browse";
-import type { HomeScope, HomeSort } from "../home";
+import type { HomeScope } from "../home";
 import {
   CollectionTile,
   EmptyState,
@@ -45,7 +45,7 @@ function HomeBar({ width }: { width: string }) {
   const [scope, setScope] = useState<HomeScope>("all");
   const [kind, setKind] = useState<KindFilter>("all");
   const [access, setAccess] = useState<AccessFilter>("all");
-  const [sort, setSort] = useState<HomeSort>("updated");
+  const [sort, setSort] = useState<Sort>("updated");
   const [density, setDensity] = useState<Density>("grid");
   return (
     <div className={width}>

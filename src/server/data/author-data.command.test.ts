@@ -100,7 +100,7 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify data.read.follows-artefact-access]
   it("hides a private artefact's authors from a non-owner", async () => {
     const shared = await seed("public");

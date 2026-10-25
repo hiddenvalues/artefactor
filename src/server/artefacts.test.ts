@@ -333,7 +333,7 @@ describe("create artefact (S2)", () => {
       expect((await setVisibility("public", null)).status).toBe(401);
     });
 
-    // r[verify hosting.access.no-existence-leak]
+    // r[verify hosting.access.no-existence-leak+3]
     // r[verify hosting.authority.owner-only]
     it("hides existence from a non-owner with 404", async () => {
       const other = await app.request("/api/auth/sign-up/email", {
@@ -393,7 +393,7 @@ describe("create artefact (S2)", () => {
       expect(await frame.text()).toContain("<h1>mine</h1>");
     });
 
-    // r[verify hosting.access.no-existence-leak]
+    // r[verify hosting.access.no-existence-leak+3]
     it("hides the artefact from a non-owner with 404", async () => {
       const other = await app.request("/api/auth/sign-up/email", {
         method: "POST",
@@ -415,9 +415,12 @@ describe("create artefact (S2)", () => {
       ).toBe(404);
     });
 
-    it("rejects an unauthenticated request with 401", async () => {
+    // r[verify hosting.access.no-existence-leak+3]
+    it("rejects an unauthenticated request with 401, for an existing artefact and an unknown one alike", async () => {
       expect((await app.request(`/api/artefacts/${id}`)).status).toBe(401);
       expect((await app.request(`/api/artefacts/${id}/raw`)).status).toBe(401);
+      expect((await app.request("/api/artefacts/no-such-artefact")).status).toBe(401);
+      expect((await app.request("/api/artefacts/no-such-artefact/raw")).status).toBe(401);
     });
 
     // r[verify hosting.lifecycle.archived-not-served]

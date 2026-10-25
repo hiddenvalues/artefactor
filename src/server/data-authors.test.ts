@@ -132,7 +132,7 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
     expect((await authorData(slug, ownerId)).status).toBe(404);
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify data.read.follows-artefact-access]
   it("denies a non-owner on a private artefact", async () => {
     const { id, slug } = await makeShared(owner, "public");

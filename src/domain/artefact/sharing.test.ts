@@ -151,7 +151,7 @@ describe("applySharing (S55)", () => {
     );
   });
 
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   // r[verify hosting.authority.owner-only]
   it("refuses a non-owner as not found", async () => {
     await expect(applySharing(artefact(), OTHER, { visibility: "public" }, ctx)).rejects.toThrow(ArtefactNotFound);

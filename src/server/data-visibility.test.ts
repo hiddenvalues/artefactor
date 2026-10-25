@@ -140,7 +140,7 @@ describe("owner-set data visibility (S41)", () => {
       expect((await setDataVisibility(id, owner, "own")).status).toBe(400);
     });
 
-    // r[verify hosting.access.no-existence-leak]
+    // r[verify hosting.access.no-existence-leak+3]
     // r[verify hosting.authority.owner-only]
     // r[verify hosting.data-visibility.owner-set]
     it("is 404 for a non-owner", async () => {

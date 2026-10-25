@@ -256,7 +256,7 @@ describe("serve artefact by slug (S6)", () => {
   });
 
   // r[verify hosting.access.anonymous-sign-in-redirect]
-  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.access.no-existence-leak+3]
   it("redirects an anonymous unknown slug to sign in, but 404s an authenticated one (no existence leak)", async () => {
     // Uniform anonymous redirect: an attacker can't tell a missing slug from a
     // real-but-gated one. A signed-in user gets the honest 404.

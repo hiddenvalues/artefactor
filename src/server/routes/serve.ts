@@ -83,7 +83,7 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
           now: new Date(deps.framing.now()),
         })
       : null;
-    // r[impl hosting.access.no-existence-leak]
+    // r[impl hosting.access.no-existence-leak+3]
     const verdict = decision?.verdict ?? (viewerId === null ? "sign-in" : "not-found");
     if (verdict === "challenge") return c.html(renderUnlockPage({ slug }));
     if (!artefact || verdict !== "granted") {

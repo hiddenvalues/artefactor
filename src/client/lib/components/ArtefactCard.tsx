@@ -276,9 +276,11 @@ export function ArtefactCard(p: ArtefactItemProps) {
         }
       />
       <div className="flex flex-1 flex-col gap-2.5 p-3.5 pt-3">
-        <div className="flex items-center gap-2">
+        {/* A long title wraps to two lines; the kind icon and ⋯ stay level with
+            the first, which the title's margin centres on the 32px ⋯. */}
+        <div className="flex items-start gap-2">
           {/* Named, with a tooltip, now that the thumbnail carries no kind text. */}
-          <span role="img" title={kind.label} aria-label={kind.label} style={kindVars(a.kind)} className="inline-flex shrink-0 text-(--kind)">
+          <span role="img" title={kind.label} aria-label={kind.label} style={kindVars(a.kind)} className="inline-flex h-8 shrink-0 items-center text-(--kind)">
             <KindIcon className="size-4" />
           </span>
           {/* eslint-disable-next-line no-restricted-syntax -- the item's title is its open target, a text surface rather than a control */}
@@ -286,9 +288,16 @@ export function ArtefactCard(p: ArtefactItemProps) {
             type="button"
             onClick={p.onOpen}
             title={a.title}
-            className="min-w-0 flex-1 cursor-pointer truncate rounded-sm text-left text-sm leading-snug font-semibold outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="my-1.5 min-w-0 flex-1 cursor-pointer rounded-sm text-left text-sm leading-snug font-semibold outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
-            {a.title}
+            {/* The clamp sits on an inner span: WebKit won't lay a button out
+                as the -webkit-box that line-clamp needs. */}
+            <span
+              // r[impl hosting.card.long-title]
+              className="line-clamp-2 break-words"
+            >
+              {a.title}
+            </span>
           </button>
           {itemMenu(p, "grid")}
         </div>
