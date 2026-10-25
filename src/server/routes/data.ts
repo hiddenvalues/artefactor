@@ -30,13 +30,16 @@ import type {
 
 export interface DataRoutesDeps {
   artefactRepo: ArtefactRepository;
-  // AH20 — the access decision needs the effective tier (collection tree root).
+  // hosting.access.effective-from-tree-root — the access decision needs the effective tier
+  // (collection tree root).
   collectionRepo: CollectionRepository;
   dataRepo: DataRepository;
   userDirectory: UserDirectory;
-  // S22 (AH17) — resolves the request's tenant scope for the id-fallback resolve.
+  // S22 (hosting.tenant.invisible-to-oss) — resolves the request's tenant scope for the id-fallback
+  // resolve.
   resolveScope: TenantScopeResolver;
-  // S22 (AH18) — decides the `authenticated` tier for the slug-resolved artefact.
+  // S22 (hosting.access.policy-decided) — decides the `authenticated` tier for the slug-resolved
+  // artefact.
   accessPolicy?: AccessPolicy;
 }
 
@@ -44,9 +47,11 @@ export interface DataRoutesDeps {
 // `/api/artefacts/:ref/data`, where `:ref` is the artefact's slug or its id (the
 // id form is the alias that gives a never-shared artefact a data store, and is
 // what the owner-preview serving path uses). All three require auth (no
-// anonymous writes — AD3; reads here are the caller's own entry). Ref resolution
+// anonymous writes — data.write.requires-auth; reads here are the caller's own entry). Ref resolution
 // + the access matrix + archived→404 live in the commands; this module just maps
 // the domain outcome to HTTP.
+// r[impl data.write.requires-auth]
+// r[impl data.me.own-entry-endpoint]
 export function createDataRoutes(deps: DataRoutesDeps) {
   const r = new Hono<AuthEnv>();
   const commandDeps: OwnDataDeps = {
@@ -62,7 +67,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
     c.req.param("ref") ?? "";
 
   // S12 — Host data-context switcher. These two reads follow the artefact access
-  // matrix, NOT the caller's identity (AD4): a public artefact's authors are
+  // matrix, NOT the caller's identity (data.read.follows-artefact-access): a public artefact's authors are
   // readable by anyone, including the anonymous — so they are gated by
   // `canViewArtefact` inside the command, not by `requireAuth`. They exist only
   // to power the host picker; the served artefact never calls them.
@@ -81,6 +86,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
         refs.map((a) => a.authorId),
       );
       return c.json<DataAuthorsResponse>({
+        // r[impl mcp.authors.route-unchanged]
         authors: refs.map((a) => {
           const who = identities.get(a.authorId);
           return {
@@ -98,7 +104,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
     }
   });
 
-  // The caller's own entry (AD-table `/data/me`). 200 with `blob: null` when none.
+  // The caller's own entry (`/data/me`, S11). 200 with `blob: null` when none.
   r.get("/me", requireAuth, async (c) => {
     try {
       const entry = await getOwnDataEntry(
@@ -181,7 +187,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
 
   // S12 — Load one author's blob for the host switcher to re-seed the artefact
   // read-only. Defined last so the static `/me` and `/authors` routes win. Like
-  // `/authors`, gated by the access matrix (AD4), not `requireAuth`.
+  // `/authors`, gated by the access matrix (data.read.follows-artefact-access), not `requireAuth`.
   r.get("/:authorId", async (c) => {
     try {
       const entry = await getAuthorDataEntry(
@@ -210,6 +216,7 @@ export function createDataRoutes(deps: DataRoutesDeps) {
 // `If-Match: "<ISO updatedAt>"` → that instant; `If-None-Match: *` → null ("no
 // entry expected"); neither → undefined (unconditional). An If-Match that is not
 // a quoted timestamp is rejected rather than silently written unconditionally.
+// r[impl mcp.data-write.http-conditional]
 function parsePrecondition(
   ifMatch: string | undefined,
   ifNoneMatch: string | undefined,

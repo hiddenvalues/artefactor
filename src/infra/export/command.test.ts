@@ -33,6 +33,7 @@ function run(seed: SeededDeployment, argv: string[]) {
 }
 
 describe("export CLI (S39)", () => {
+  // r[verify export.cli.exit-status]
   it("--out exports the deployment and prints the counts; --verify then exits 0 with the counts", async () => {
     const seed = await seedDeployment();
     const out = join(seed.dir, "bundle");
@@ -48,6 +49,7 @@ describe("export CLI (S39)", () => {
     expect(verified.opened()).toBe(0); // verify never loads the source (database, env)
   });
 
+  // r[verify export.cli.exit-status]
   it("--verify on a tampered bundle exits non-zero, naming the failing check", async () => {
     const seed = await seedDeployment();
     const out = join(seed.dir, "bundle");
@@ -59,6 +61,7 @@ describe("export CLI (S39)", () => {
     expect(verified.stderr).toContain("payload");
   });
 
+  // r[verify export.output.never-reused]
   it("--out on a non-empty directory is refused, with nothing written", async () => {
     const seed = await seedDeployment();
     const out = join(seed.dir, "occupied");
@@ -71,6 +74,7 @@ describe("export CLI (S39)", () => {
     expect(existsSync(`${out}.partial`)).toBe(false);
   });
 
+  // r[verify export.payload.writer-verifies]
   it("an export with a missing payload exits non-zero and leaves no bundle", async () => {
     const seed = await seedDeployment();
     rmSync(join(seed.payloadDir, seed.ref("a-auth")));
@@ -81,6 +85,7 @@ describe("export CLI (S39)", () => {
     expect(existsSync(out)).toBe(false);
   });
 
+  // r[verify export.cli.exit-status]
   it.each([[[]], [["--out"]], [["--frobnicate", "x"]], [["--out", "a", "--verify", "b"]]])(
     "prints usage and exits 2 for %j",
     async (argv) => {
@@ -91,6 +96,7 @@ describe("export CLI (S39)", () => {
     },
   );
 
+  // r[verify export.cli.verify-needs-no-config]
   it("cli.ts --verify runs in production without the server's auth configuration", async () => {
     const seed = await seedDeployment();
     const out = join(seed.dir, "bundle");

@@ -1,11 +1,12 @@
-// S32a (AH22) — the unlock page the shell renders instead of the artefact when
-// a public link's password gate challenges the viewer. Server-rendered, no SPA
-// and no script. It names nothing about the artefact (not even its title): the
-// viewer has not proved the password yet.
+// S32a (hosting.link-gate.narrows-public-audience) — the unlock page the shell renders instead of
+// the artefact when a public link's password gate challenges the viewer. Server-rendered, no SPA
+// and no script. It names nothing about the artefact (not even its title): the viewer has not
+// proved the password yet.
 //
-// S45 — it wears Mint garden (shell-theme.ts) in light and dark. Having no
+// S45 — it wears Ruby (shell-theme.ts) in light and dark. Having no
 // script, it can't read the viewer's stored choice, so it follows the OS.
 
+import { shareLinkPath } from "../../shared/share-link";
 import { shellThemeCss } from "./shell-theme";
 
 export type UnlockError = "wrong" | "rate-limited";
@@ -15,8 +16,9 @@ const MESSAGES: Record<UnlockError, string> = {
   "rate-limited": "Too many attempts. Wait 15 minutes, then try again.",
 };
 
+// r[impl platform.theme.unlock-page]
 export function renderUnlockPage(ctx: { slug: string; error?: UnlockError }): string {
-  const action = `/a/${encodeURIComponent(ctx.slug)}/unlock`;
+  const action = `${shareLinkPath(ctx.slug)}/unlock`;
   const error = ctx.error
     ? `<p class="err" role="alert">${MESSAGES[ctx.error]}</p>`
     : "";

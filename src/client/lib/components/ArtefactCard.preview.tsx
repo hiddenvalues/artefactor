@@ -1,47 +1,82 @@
 import { definePreview } from "../../design/preview";
-import { artefact, gates, ownedProps, thumbnail } from "../../design/fixtures";
-import type { OwnedItemProps } from "./ArtefactCard";
-import { ArtefactCard, ArtefactRow } from "./ArtefactCard";
+import { artefact, gates, noop, ownedProps, people, shared, sharedProps, thumbnail } from "../../design/fixtures";
+import type { ArtefactItemProps } from "./ArtefactCard";
+import { ArtefactCard } from "./ArtefactCard";
 
-// The owner's own artefact, as a grid card and as a list row, in each state the
-// dashboard shows.
-const CASES: [string, OwnedItemProps][] = [
+// S62 — the owner's own artefact as a grid card, in each state the card spec
+// (`docs/design/components/artefact-card.md`) names. The list row has its own
+// preview (S56).
+const CASES: [string, ArtefactItemProps][] = [
   ["Private", ownedProps(artefact())],
-  ["Shared with members", ownedProps(artefact({ id: "art-deck", title: "Design review deck", kind: "slide-deck", visibility: "authenticated", publicSlug: "d3ck01" }))],
+  ["Shared with org members", ownedProps(artefact({ id: "art-deck", title: "Design review deck", kind: "slide-deck", visibility: "authenticated", publicSlug: "d3ck01" }))],
+  [
+    "Public (no activity)",
+    ownedProps(artefact({ id: "art-launch", title: "Launch page", kind: "prototype", visibility: "public", publicSlug: "l4unch", linkGate: null, thumbnailUrl: thumbnail })),
+  ],
   [
     "Public, password + expiry, saves data",
     ownedProps(artefact({ id: "art-survey", title: "Customer survey", kind: "form", visibility: "public", publicSlug: "surv3y", usesStorage: true, dataVisibility: "shared", linkGate: gates.both })),
   ],
-  ["In a collection (inherited access)", ownedProps(artefact({ id: "art-guide", title: "Interactive style guide", kind: "interactive-doc", collectionId: "col-design" }))],
-  ["Bookmarked, rendered thumbnail", ownedProps(artefact({ thumbnailUrl: thumbnail }), { bookmarked: true })],
-  ["Long title", ownedProps(artefact({ id: "art-long", kind: "other", title: "A very long artefact title that has to truncate somewhere sensible in the card" }))],
+  [
+    "In a collection, inherited access (icon)",
+    ownedProps(artefact({ id: "art-guide", title: "Interactive style guide", kind: "interactive-doc", collectionId: "col-research", visibility: "private", effectiveVisibility: "authenticated", publicSlug: "gu1de" })),
+  ],
+  [
+    "Bookmarked, saves data, rendered thumbnail",
+    ownedProps(artefact({ thumbnailUrl: thumbnail, usesStorage: true }), { bookmarked: true }),
+  ],
+  ["Long title (truncated, kind icon kept)", ownedProps(artefact({ id: "art-long", kind: "other", title: "A very long artefact title that has to truncate somewhere sensible in the card" }))],
 ];
 
+// S47/S62 — another user's artefact, on Home and on a collection page: a
+// read-only access badge, "Shared by …" unless public, a Share that copies the
+// link unless private, and only Open / Bookmark / Download HTML in the menu —
+// plus Remove from collection for the collection's owner on their own page.
+const SHARED: [string, ArtefactItemProps][] = [
+  ["Shared with org members (Share copies the link)", sharedProps(shared())],
+  [
+    "Private to you (no Share)",
+    sharedProps(shared({ id: "art-private", title: "Contributed draft", kind: "prototype", effectiveVisibility: "private", publicSlug: null })),
+  ],
+  [
+    "Public, saves data, bookmarked (no activity, no Shared by)",
+    sharedProps(
+      shared({ id: "art-poll", title: "Offsite poll", kind: "form", effectiveVisibility: "public", usesStorage: true, thumbnailUrl: thumbnail }),
+      { bookmarked: true },
+    ),
+  ],
+  [
+    "In a collection shared with you",
+    sharedProps(shared({ id: "art-notes", title: "Interview notes", kind: "interactive-doc", collectionId: "col-research" })),
+  ],
+  [
+    "Specific people, owner without a name",
+    sharedProps(shared({ id: "art-spec", title: "Pricing spec", kind: "interactive-doc", effectiveVisibility: "selected", owner: { name: "", email: people[1]!.email } })),
+  ],
+  [
+    "On your own collection page (menu: Remove from collection)",
+    sharedProps(shared({ id: "art-contrib", title: "Contributed research notes", kind: "interactive-doc", collectionId: "col-research" }), {
+      showCollectionChip: false,
+      onRemoveFromCollection: noop,
+    }),
+  ],
+];
+
+const cards = (cases: [string, ArtefactItemProps][]) => (
+  <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(15.5rem,1fr))] gap-4">
+    {cases.map(([name, p]) => (
+      <div key={name} className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground">{name}</span>
+        <ArtefactCard {...p} />
+      </div>
+    ))}
+  </div>
+);
+
 export default definePreview({
-  title: "Artefact card & row",
+  title: "Artefact card",
   variants: [
-    {
-      name: "Card",
-      render: () => (
-        <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(15.5rem,1fr))] gap-4">
-          {CASES.map(([name, p]) => (
-            <div key={name} className="flex flex-col gap-1.5">
-              <span className="text-xs text-muted-foreground">{name}</span>
-              <ArtefactCard {...p} />
-            </div>
-          ))}
-        </div>
-      ),
-    },
-    {
-      name: "Row",
-      render: () => (
-        <div className="flex w-full flex-col gap-2.5">
-          {CASES.map(([name, p]) => (
-            <ArtefactRow key={name} {...p} />
-          ))}
-        </div>
-      ),
-    },
+    { name: "Card", render: () => cards(CASES) },
+    { name: "Card, shared with you", render: () => cards(SHARED) },
   ],
 });

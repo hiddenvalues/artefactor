@@ -3,7 +3,8 @@
 // (shared between the BFF that sets the header and any client that shows it)
 // rather than in a route handler.
 
-// Base name budget, leaving room for the ".html" suffix inside a 100-char name.
+// Base name budget in code points, leaving room for the ".html" suffix inside a
+// 100-code-point name.
 const MAX_BASE_LENGTH = 95;
 
 // The name used when a title folds away to nothing AND no usable ref is given.
@@ -22,10 +23,14 @@ function slugify(value: string): string {
 
 // The filename for an artefact download. `fallback` is the artefact's ref (slug
 // or id) — used when the title carries no letters or digits at all (a
-// symbol-only or blank title). Always ends in `.html`.
+// symbol-only or blank title). Always ends in `.html`. The bound counts code
+// points, so a cut never splits a surrogate pair (a lone surrogate makes
+// `encodeURIComponent` throw).
+// r[impl mcp.download.filename+3]
 export function artefactFilename(title: string, fallback: string): string {
   const base = slugify(title) || slugify(fallback) || GENERIC_NAME;
-  return `${base.slice(0, MAX_BASE_LENGTH).replace(/-+$/, "")}.html`;
+  const bounded = Array.from(base).slice(0, MAX_BASE_LENGTH).join("");
+  return `${bounded.replace(/-+$/, "")}.html`;
 }
 
 // Fold a name to ASCII for the legacy `filename` parameter: decompose accented
@@ -39,10 +44,15 @@ function foldToAscii(name: string): string {
 
 // The `Content-Disposition` value for an artefact download. Carries both forms:
 // the quoted ASCII `filename` every client understands, and the RFC 5987
-// `filename*` that preserves non-ASCII titles in clients that read it.
-export function attachmentDisposition(filename: string): string {
+// `filename*` that preserves non-ASCII titles in clients that read it. A name
+// that folds to nothing ASCII (a Cyrillic or CJK title) names the plain form
+// after `fallback`, the artefact's slug or id, like a symbol-only title does.
+export function attachmentDisposition(filename: string, fallback: string): string {
   // Fold the *base* name — the ".html" suffix is re-applied by the helper, so
   // folding the whole filename would turn "report.html" into "report-html".
-  const ascii = artefactFilename(foldToAscii(filename.replace(/\.html$/i, "")), "");
+  const ascii = artefactFilename(
+    foldToAscii(filename.replace(/\.html$/i, "")),
+    foldToAscii(fallback),
+  );
   return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }

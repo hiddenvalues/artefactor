@@ -25,7 +25,10 @@ the user** (OAuth), so everything you create is owned by them. Tools:
 - **`create_artefact`** `{ title, kind, html, visibility? }` — publish a self-contained HTML
   document. `kind` is one of `prototype | slide-deck | form | interactive-doc | other`.
   `visibility` is `private` (default) | `authenticated` | `public` | `selected`. Returns the
-  artefact id, slug, and share URL (when shared).
+  artefact id, slug, `url` (the share link, `null` while private) and **`appUrl`** — the
+  Artefactor web app, where the user opens it, private or not. Always leave `visibility` unset —
+  create private, verify, then share with `set_visibility` — even when the user asked for a shared
+  tier up front.
 - **`update_artefact`** `{ id, title?, kind?, html? }` — replace fields on an artefact you own.
   `html` is a **full replacement**, not a patch — send the whole document.
 - **`list_artefacts`** `{ include_archived? }` / **`get_artefact`** `{ id }` — find what the user
@@ -53,8 +56,10 @@ the user** (OAuth), so everything you create is owned by them. Tools:
   out is deleted.** Returns `{ id, bytes, updatedAt }`. See "Editing the user's saved data" below
   before using it.
 - **`set_visibility`** `{ id, visibility }` / **`archive_artefact`** / **`restore_artefact`** —
-  manage sharing and lifecycle. An artefact the user has filed in a collection takes its
-  visibility from that collection, so `set_visibility` refuses it — say so rather than retrying.
+  manage sharing and lifecycle. Share **only on the user's request**, at the tier they asked
+  for, and say who will be able to open it first. An artefact the user has filed in a collection
+  takes its visibility from that collection, so `set_visibility` refuses it — say so rather than
+  retrying.
   Moving a `public` artefact to any other tier clears its link protection (password and expiry);
   passwords and expiry are set only in the Artefactor web app, never over the connector.
 - **`set_data_visibility`** `{ id, dataVisibility }` — whether viewers can load each other's
@@ -63,6 +68,50 @@ the user** (OAuth), so everything you create is owned by them. Tools:
   other's answers. Switch to `"shared"` only when viewers are meant to see one another's data.
   It is per artefact, so it works on one in a collection too. `get_artefact` and
   `list_artefacts` report the current `dataVisibility`.
+- **`list_collections`** — the collections you can file an artefact into: the user's own, at
+  any depth, and those of trees shared with them as a **contributor**. Each row has `id`,
+  `name`, `parentId`, `path` (the names from the tree root down, e.g.
+  `["Landing page", "Gallery"]`), `own`, and `visibility` — the tier an artefact placed there is
+  served under. Own trees come first, parents before children. This is how to find a
+  collection's id; never guess one from a name.
+- **`move_artefact`** `{ id, collection_id }` — put an artefact the user owns into a
+  collection, move it to another, or take it back to top level with `collection_id: null`
+  (the argument is required). Returns the summary with `dataAuthorCount`; every summary's
+  `collectionId` shows where an artefact sits (`null` at top level). **A move changes how the
+  artefact is served:** inside a collection it takes the tree's `visibility` and link
+  protection (password, expiry), at top level its own. So placing it in a collection whose
+  `visibility` isn't `private` **shares it** under that tier and mints its link; placing a
+  shared artefact in a `private` collection, or taking it back to top level when its own tier
+  is `private`, stops its link working; and either way its link protection can appear or go.
+  Tell the user before any of these. A collection the user can't file into comes back as one
+  "no collection" refusal: call `list_collections` rather than retrying.
+- **`create_collection`** `{ name, parent_id?, visibility?, description? }` — create a
+  collection the user owns: top level, or under `parent_id`, one of their **own** collections
+  (`own: true`; a contributed tree can be filed into but never grown). A top-level collection
+  starts `private` unless you pass a `visibility`; a nested one takes its root's, so don't pass
+  one with `parent_id` (it's refused). `selected` shares only with the people the user has
+  granted in the web app, so a new collection set to it is shared with no one yet. To build
+  "Landing page" with "Gallery" and "Games" under it, create the root, then each child with the
+  root's `id`.
+- **`update_collection`** `{ id, name?, description? }` — rename it or change its description
+  (a string sets it, `null` clears it); give at least one.
+- **`set_collection_visibility`** `{ id, visibility }` — set a **top-level** collection's tier.
+  It applies to the **whole tree**: every artefact in it, at any depth, is served under it. So
+  **say before** you call it that it shares (and mints links for) or unshares every artefact in
+  the tree. A nested collection is refused: set its root's tier instead. Leaving `public` clears
+  the tree's link protection.
+- **`archive_collection`** `{ id }` / **`restore_collection`** `{ id }` — archive a collection
+  with its sub-collections and the user's artefacts in them; other people's artefacts in the tree
+  are moved out to their own top level. **Confirm with the user before** archiving. Both return
+  `{ collection, cascade: { collections, artefacts, evicted } }`. Archived collections aren't in
+  `list_collections`: restore by the `id` the archive returned (or from the web app's Archive).
+  A collection inside a still-archived tree can't be restored on its own: the refusal names the
+  archived ancestor to restore instead, which brings it back too.
+- **All five collection tools** return the collection's summary with its `path` and, in
+  `visibility`, the tier it's served under (its tree root's, as in `list_collections`); a collection
+  that isn't the user's own comes back as the same "no collection" refusal. **Only in the
+  Artefactor web app:** who has access to a collection (people and contributors), its link
+  protection (password and expiry), and permanent deletion. Point the user there for those.
 - **`get_authoring_guide`** — returns this guide. If you're working through the connector
   without this skill loaded (e.g. in Claude design), call it before writing artefact HTML to
   get the persistence contract, template, and checklist below.
@@ -80,9 +129,36 @@ can't be parsed. When that happens, the user can get the file from the Artefacto
 **"Download HTML"** in an artefact's ⋯ menu returns the stored document byte-for-byte, so
 download → edit → re-upload round-trips.
 
-**Typical flow:** write the HTML following the persistence rules below → `create_artefact` →
-share via `set_visibility` (or by passing `visibility`). When the user says "update the X
-artefact", prefer `list_artefacts`/`get_artefact` + `update_artefact` over creating a new one.
+**Typical flow:** write the HTML following the persistence rules below → `create_artefact`
+(private) → verify the published result (below) → share via `set_visibility` only if the user
+asked to. When the user says "update the X artefact", prefer `list_artefacts`/`get_artefact` +
+`update_artefact` over creating a new one.
+
+### Verify and share — before calling it done
+
+Verify before you call an artefact done. A preview you show the user must be its own HTML,
+rendered — never an illustration or mockup of what you plan to build; if you can't render HTML,
+say so. Publish it private, then look at the published result yourself or ask the user to open
+it (from appUrl while it's private) and confirm it, compared with what they approved at desktop
+and phone widths; share it at the tier they asked for only after that. Don't claim saved data
+persists until a reload has shown it does.
+
+Keep an artefact private unless the user asked to share it. Never pick a shared tier on their
+behalf, not even to get a link to post in the chat: a private artefact has no share link, so give
+the user the result's appUrl (the Artefactor web app, where they open it) and ask whether, and
+with whom, to share it. When they want a link, offer the tiers — selected (named people, added
+in the web app), authenticated (anyone signed in) or public (anyone with the link) — and set
+public only when they ask for it.
+
+- **A live render counts.** If your client already showed the user a live render of the very
+  HTML you published, that is seeing the look; still confirm the published artefact opens.
+- **What to compare:** layout, text, colours, content below the fold, and a phone width
+  (~390 px) as well as desktop.
+- **Can't see it?** Ask the user to open it — from `appUrl` while it's private, by its share
+  link once shared — and tell you what they see: "published" isn't "done".
+- **Persistence:** change something, reload, and see it still there, before saying saving works.
+- **A shared tier is the user's decision.** `selected` needs people added in the web app before
+  anyone can open it; `public` reaches anyone with the link, so say so before setting it.
 
 ### Two publishing paths — and why raster images decide which
 
@@ -393,6 +469,12 @@ manage who it belongs to.
 - [ ] The artefact declares its data shape in an `application/artefactor-schema+json` block,
       with an invented (never real) `example`.
 - [ ] The declared schema agrees with the code — same key, same version, same shape.
+- [ ] The preview the user approved was the artefact's own rendered HTML, not an illustration.
+- [ ] Published private first; the rendered result was seen (by you or by the user) and matches
+      what the user approved at desktop and phone widths, before sharing or calling it done.
+- [ ] Persistence was tested by a reload before claiming it works.
+- [ ] Shared only at the tier the user asked for — never public by default, never just to get a
+      link.
 - [ ] If publishing via the connector: chose the right `kind` + `visibility`, and on a breaking
       data change read `get_artefact_data` first and shipped a forward migration (rather than
       silently bumping the key, which discards every user's saved data).

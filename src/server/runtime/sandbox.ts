@@ -1,4 +1,4 @@
-// S36 (AH28) — the sandbox a served artefact runs under.
+// S36 — the sandbox a served artefact runs under.
 //
 // The host shell's iframe carries these flags as its `sandbox` attribute, and
 // every frame response carries them again as `Content-Security-Policy: sandbox`,
@@ -6,6 +6,7 @@
 // still an opaque origin. Never `allow-same-origin` (the artefact would regain
 // the app origin and its session) and never `allow-top-navigation*`. No other
 // CSP directive: CDN libraries and external APIs keep working.
+// r[impl hosting.frame.sandboxed]
 export const FRAME_SANDBOX_FLAGS =
   "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
 

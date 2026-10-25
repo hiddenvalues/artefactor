@@ -6,3 +6,5 @@ data
 .DS_Store
 .env
 .env.local
+# Local secrets files (and their temp files) anywhere in the tree: never in a build context.
+**/.env.secrets*

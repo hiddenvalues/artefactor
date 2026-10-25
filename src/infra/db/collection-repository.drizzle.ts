@@ -39,6 +39,16 @@ export class DrizzleCollectionRepository implements CollectionRepository {
     return row ? toAggregate(row, await this.granteesOf(id)) : null;
   }
 
+  // S44 — tenant-global by design, like the artefact slug resolve (hosting.slug.globally-unique).
+  async findBySlug(slug: string): Promise<Collection | null> {
+    const [row] = await this.db
+      .select()
+      .from(collection)
+      .where(eq(collection.publicSlug, slug))
+      .limit(1);
+    return row ? toAggregate(row, await this.granteesOf(row.id)) : null;
+  }
+
   async listByOwner(
     ownerId: string,
     scope: TenantScope,
@@ -61,7 +71,7 @@ export class DrizzleCollectionRepository implements CollectionRepository {
     viewerId: string,
     scope: TenantScope,
   ): Promise<Collection[]> {
-    // Active roots whose tier grants the viewer (CL4/CL5) — the collection side
+    // Active roots whose tier grants the viewer (collections.access.root-governs-tree, collections.access.contained-own-tier-dormant) — the collection side
     // of the effectively-shared composition. Membership via the join table,
     // exactly like listShared on artefacts.
     const memberCollectionIds = this.db
@@ -76,7 +86,7 @@ export class DrizzleCollectionRepository implements CollectionRepository {
           eq(collection.tenantId, scope.tenantId),
           eq(collection.status, "active"),
           ne(collection.ownerId, viewerId),
-          // Roots only — nested collections' tiers are never consulted (CL4).
+          // Roots only — nested collections' tiers are never consulted (collections.access.root-governs-tree).
           isNull(collection.parentId),
           or(
             inArray(collection.visibility, ["authenticated", "public"]),
@@ -176,10 +186,15 @@ function toRow(c: Collection): CollectionRow {
     ownerId: c.ownerId,
     tenantId: c.tenantId,
     name: c.name,
+    description: c.description,
     parentId: c.parentId,
     rootId: c.rootId,
     visibility: c.visibility,
+    publicSlug: c.publicSlug,
     status: c.status,
+    linkPasswordHash: c.linkGate.passwordHash,
+    linkExpiresAt: c.linkGate.expiresAt,
+    linkGateVersion: c.linkGate.version,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
     archivedAt: c.archivedAt,
@@ -192,10 +207,17 @@ function toAggregate(row: CollectionRow, sharedWith: string[]): Collection {
     ownerId: row.ownerId,
     tenantId: row.tenantId,
     name: row.name,
+    description: row.description,
     parentId: row.parentId,
     rootId: row.rootId,
     visibility: row.visibility,
     sharedWith,
+    publicSlug: row.publicSlug,
+    linkGate: {
+      passwordHash: row.linkPasswordHash,
+      expiresAt: row.linkExpiresAt,
+      version: row.linkGateVersion,
+    },
     status: row.status,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

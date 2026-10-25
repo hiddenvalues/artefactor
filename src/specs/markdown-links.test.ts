@@ -1,8 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { posix } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { brokenLinks, root, trackedMarkdown, unreachable } from "./markdown-graph";
 
 // Every tracked Markdown file's relative links must resolve to something that exists. Nothing else
 // in CI catches a link that rots when a file moves (`pnpm lint:md` checks style, not targets), and
@@ -10,58 +9,10 @@ import { describe, expect, it } from "vitest";
 //
 // Only the file part is checked: a `#fragment` is dropped, external URLs are never fetched, and the
 // angle-bracket placeholders the skills' templates carry (`[ALI-N](<linear url>)`) name no file.
-
-const root = fileURLToPath(new URL("../../", import.meta.url));
-
-/** The paths `.markdownlint-cli2.jsonc` ignores; tracked worktree checkouts are none of our business. */
-const IGNORED = /(^|\/)node_modules\/|^dist\/|^\.claude\/worktrees\//;
-
-/** Inline links and images: `](target)`, with an optional `"title"` after the target. */
-const LINK = /\]\(([^()]*)\)/g;
-
-/** A URI scheme — `https:`, `mailto:` — which names no file in this repo. */
-const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-
-/**
- * The repo-relative targets `markdown` links to as files, resolved against `file`'s own directory
- * (or the repo root for a root-absolute target). Fragments, external URLs and placeholders drop
- * out; an angle-bracket destination is unwrapped, so `[x](<docs/a.md>)` is still a path to check
- * while a template's `[ALI-N](<linear url>)` — whitespace, so never a path here — is not.
- */
-function fileTargets(markdown: string, file: string): { target: string; path: string }[] {
-  const dir = posix.dirname(file);
-  const targets: { target: string; path: string }[] = [];
-  for (const [, raw] of markdown.matchAll(LINK)) {
-    // `[x](./a.md "Title")` — the title is not part of the destination.
-    const target = raw!.trim().replace(/\s+["'].*["']$/, "");
-    const destination = /^<([^<>]*)>$/.exec(target)?.[1] ?? target;
-    const [path] = destination.split("#");
-    if (path === "" || SCHEME.test(destination) || /\s/.test(destination)) continue;
-    targets.push({
-      target,
-      path: posix.normalize(path!.startsWith("/") ? path!.slice(1) : posix.join(dir, path!)),
-    });
-  }
-  return targets;
-}
-
-/**
- * `<file> → <target>` for every link in `markdown` whose target is missing. A target that climbs
- * out of the repository is broken whatever sits at that path on the host — it is not ours to link.
- */
-function brokenLinks(markdown: string, file: string): string[] {
-  return fileTargets(markdown, file)
-    .filter(
-      ({ path }) =>
-        path === ".." || path.startsWith("../") || !existsSync(posix.join(root, path)),
-    )
-    .map(({ target }) => `${file} → ${target}`);
-}
-
-function trackedMarkdown(): string[] {
-  const listed = execFileSync("git", ["ls-files", "-z", "*.md"], { cwd: root, encoding: "utf8" });
-  return listed.split("\0").filter((path) => path !== "" && !IGNORED.test(path));
-}
+//
+// Every tracked Markdown file must also be *reachable*: a chain of links leads to it from a front
+// door, so a session that starts at `CLAUDE.md` finds it without a repo-wide search. A doc nothing
+// links to is how the tree goes messy unnoticed — it still resolves, it is just never read.
 
 describe("markdown links", () => {
   it("reports a relative link whose target does not exist", () => {
@@ -114,5 +65,57 @@ describe("markdown links", () => {
       brokenLinks(readFileSync(posix.join(root, file), "utf8"), file),
     );
     expect(broken).toEqual([]);
+  });
+});
+
+describe("markdown reachability", () => {
+  const tree = (entries: Record<string, string>) => new Map(Object.entries(entries));
+
+  it("reports a file no link leads to", () => {
+    expect(unreachable(tree({ "CLAUDE.md": "[a](docs/a.md)", "docs/a.md": "", "docs/b.md": "" }))).toEqual([
+      "docs/b.md",
+    ]);
+  });
+
+  it("follows links transitively, from either front door", () => {
+    const files = tree({
+      "CLAUDE.md": "[a](docs/a.md)",
+      "docs/a.md": "[b](b.md)",
+      "docs/b.md": "",
+      "README.md": "[c](docs/c.md)",
+      "docs/c.md": "",
+    });
+    expect(unreachable(files)).toEqual([]);
+  });
+
+  it("follows a CLAUDE.md import line", () => {
+    expect(unreachable(tree({ "CLAUDE.md": "@ee/CLAUDE.md", "ee/CLAUDE.md": "" }))).toEqual([]);
+  });
+
+  it("leads a folder link to the folder's README when it has one, and only there", () => {
+    const files = tree({ "CLAUDE.md": "[d](docs/)", "docs/README.md": "", "docs/a.md": "" });
+    expect(unreachable(files)).toEqual(["docs/a.md"]);
+  });
+
+  it("leads a folder link without a README to the files directly inside it, not deeper", () => {
+    const files = tree({ "CLAUDE.md": "[d](docs/)", "docs/a.md": "", "docs/sub/b.md": "" });
+    expect(unreachable(files)).toEqual(["docs/sub/b.md"]);
+  });
+
+  it("treats a skill and a tool's dot-directory as entry points of their own", () => {
+    const files = tree({
+      "CLAUDE.md": "",
+      "skills/x/SKILL.md": "[r](reference.md)",
+      "skills/x/reference.md": "",
+      ".tool/notes.md": "",
+    });
+    expect(unreachable(files)).toEqual([]);
+  });
+
+  it("leaves every tracked Markdown file reachable", () => {
+    const files = new Map(
+      trackedMarkdown().map((file) => [file, readFileSync(posix.join(root, file), "utf8")]),
+    );
+    expect(unreachable(files)).toEqual([]);
   });
 });

@@ -5,7 +5,7 @@ import type { ArtefactSummary, SharedListResponse } from "../shared/contracts";
 import { mintFrameToken } from "../test/frame";
 
 // End-to-end S32a — Link controls on public artefacts: password + expiry
-// (AH22–AH24, AH31). The gate narrows only the public cell's extra audience:
+// (the hosting.link-gate.* requirements). The gate narrows only the public cell's extra audience:
 // in OSS the anonymous visitor; under a policy refusing the `authenticated`
 // tier (the cloud shape) also a signed-in outsider. The owner is never gated.
 
@@ -68,7 +68,7 @@ async function makePublic(
   return (await res.json()) as ArtefactSummary;
 }
 
-// `peer` is the socket address the request arrives from (IA8): an in-process
+// `peer` is the socket address the request arrives from: an in-process
 // request has none unless its Node bindings carry one.
 function unlock(
   target: Hono,
@@ -126,13 +126,15 @@ beforeAll(async () => {
 
 let cloudOutsider: string;
 
-describe("BFF — setting and clearing the gate (AH31)", () => {
+describe("BFF — setting and clearing the gate", () => {
+  // r[verify hosting.link-gate.public-only]
   it("sets a password atomically with the change to public", async () => {
     const a = await makePublic({ password: PASSWORD });
     expect(a.visibility).toBe("public");
     expect(a.linkGate).toEqual({ passwordProtected: true, expiresAt: null });
   });
 
+  // r[verify hosting.link-gate.public-only]
   it("rejects a gate with a non-public tier (400)", async () => {
     const a = await create();
     const res = await json(app, "PUT", `/api/artefacts/${a.id}/visibility`, owner, {
@@ -142,6 +144,9 @@ describe("BFF — setting and clearing the gate (AH31)", () => {
     expect(res.status).toBe(400);
   });
 
+  // r[verify hosting.link-gate.public-only]
+  // r[verify hosting.link-gate.password-rules]
+  // r[verify hosting.link-gate.expiry-in-future]
   it("rejects a gate on a non-public artefact, a short password and a past expiry (400)", async () => {
     const priv = await create();
     expect(
@@ -161,7 +166,9 @@ describe("BFF — setting and clearing the gate (AH31)", () => {
     expect(summary.linkGate).toBeNull();
   });
 
-  it("is owner-only: a non-owner gets 404 (AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.link-gate.public-only]
+  it("is owner-only: a non-owner gets 404", async () => {
     const a = await makePublic();
     expect(
       (await json(app, "PUT", `/api/artefacts/${a.id}/link-gate`, other, { password: PASSWORD })).status,
@@ -169,6 +176,7 @@ describe("BFF — setting and clearing the gate (AH31)", () => {
     expect((await json(app, "DELETE", `/api/artefacts/${a.id}/link-gate`, other)).status).toBe(404);
   });
 
+  // r[verify hosting.link-gate.public-only]
   it("rejects an archived artefact (400)", async () => {
     const a = await makePublic();
     await json(app, "POST", `/api/artefacts/${a.id}/archive`, owner);
@@ -188,6 +196,7 @@ describe("BFF — setting and clearing the gate (AH31)", () => {
     expect(((await res.json()) as ArtefactSummary).linkGate).toBeNull();
   });
 
+  // r[verify hosting.link-gate.cleared-leaving-public]
   it("leaving public clears the gate; coming back is ungated", async () => {
     const a = await makePublic({ password: PASSWORD });
     await json(app, "PUT", `/api/artefacts/${a.id}/visibility`, owner, { visibility: "authenticated" });
@@ -198,6 +207,7 @@ describe("BFF — setting and clearing the gate (AH31)", () => {
     expect((await get(app, `/a/${a.publicSlug}`)).status).toBe(200);
   });
 
+  // r[verify hosting.link-gate.owner-summary-only]
   it("never returns the hash, and linkGate only on owner summaries", async () => {
     const a = await makePublic({ password: PASSWORD });
     const own = await (await get(app, "/api/artefacts", owner)).text();
@@ -214,7 +224,8 @@ describe("BFF — setting and clearing the gate (AH31)", () => {
   });
 });
 
-describe("anonymous visitor on a password-gated public link (AH22)", () => {
+describe("anonymous visitor on a password-gated public link", () => {
+  // r[verify hosting.link-gate.unlock-issues-pass+2]
   it("gets the unlock page and no frame", async () => {
     const a = await makePublic({ password: PASSWORD });
     const res = await get(app, `/a/${a.publicSlug}`);
@@ -227,6 +238,8 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect((await get(app, `/a/${a.publicSlug}/frame`)).status).toBe(404);
   });
 
+  // r[verify hosting.link-gate.unlock-issues-pass+2]
+  // r[verify hosting.link-gate.correct-password-yields-pass]
   it("a wrong password re-renders the page with an error (401) and sets no pass", async () => {
     const a = await makePublic({ password: PASSWORD });
     const res = await unlock(app, a.publicSlug!, "wrong-password");
@@ -235,6 +248,7 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect(await res.text()).toContain("Wrong password");
   });
 
+  // r[verify hosting.link-gate.unlock-issues-pass+2]
   it("the right password sets a pass that opens shell, frame and data reads", async () => {
     const a = await makePublic({ password: PASSWORD });
     const res = await unlock(app, a.publicSlug!, PASSWORD);
@@ -258,6 +272,7 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect((await get(app, `/api/artefacts/${a.publicSlug}/download`, pass)).status).toBe(200);
   });
 
+  // r[verify hosting.link-gate.correct-password-yields-pass]
   it("the same pass does not open another gated artefact", async () => {
     const a = await makePublic({ password: PASSWORD });
     const b = await makePublic({ password: PASSWORD });
@@ -267,6 +282,7 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect((await get(app, `/api/artefacts/${b.publicSlug}/data/authors`, pass)).status).toBe(403);
   });
 
+  // r[verify hosting.link-gate.api-challenge]
   it("the API answers 403 { gate: 'password' } by slug and by id alias", async () => {
     const a = await makePublic({ password: PASSWORD });
     for (const ref of [a.publicSlug!, a.id]) {
@@ -278,6 +294,7 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     }
   });
 
+  // r[verify hosting.link-gate.password-change-voids-pass]
   it("changing or clearing the password voids a pass; an expiry-only change does not", async () => {
     const a = await makePublic({ password: PASSWORD });
     let pass = await passFor(app, a.publicSlug!);
@@ -296,6 +313,7 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect(await (await get(app, `/a/${a.publicSlug}`, pass)).text()).toContain("/unlock");
   });
 
+  // r[verify hosting.link-gate.password-change-voids-pass]
   it("a frame token minted under a pass is refused once the password changes", async () => {
     const a = await makePublic({ password: PASSWORD });
     const pass = await passFor(app, a.publicSlug!);
@@ -304,6 +322,7 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect((await app.request(src)).status).toBe(404);
   });
 
+  // r[verify hosting.link-gate.pass-bounded-by-expiry]
   it("a pass never outlives the expiry", async () => {
     const expiresAt = new Date(Date.now() + HOUR);
     const a = await makePublic({ password: PASSWORD, expiresAt: expiresAt.toISOString() });
@@ -315,11 +334,13 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect(claims.exp).toBe(expiresAt.getTime());
   });
 
+  // r[verify identity.client-ip.unlock-limit+2]
+  // r[verify hosting.link-gate.unlock-rate-limited+2]
   it("the 11th unlock attempt for one holder from one IP within 15 minutes is refused (429)", async () => {
     const a = await makePublic({ password: PASSWORD });
     // Behind a trusted proxy (a Docker-network peer), the proxy appends the real
     // client (198.51.100.7) after whatever the client sent, so rotating the
-    // client-sent value earns no fresh attempts (IA8).
+    // client-sent value earns no fresh attempts.
     const PROXY = "10.0.1.5";
     const via = (spoofed: string) => ({ "X-Forwarded-For": `${spoofed}, 198.51.100.7` });
     for (let i = 0; i < 10; i++) {
@@ -334,7 +355,9 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect((await unlock(app, a.publicSlug!, PASSWORD, other, PROXY)).status).toBe(303);
   });
 
-  it("a public peer forging X-Forwarded-For earns no fresh attempts (S42, IA8)", async () => {
+  // r[verify identity.client-ip.unlock-limit+2]
+  // r[verify identity.client-ip.resolved-once]
+  it("a public peer forging X-Forwarded-For earns no fresh attempts (S42)", async () => {
     const a = await makePublic({ password: PASSWORD });
     // A client reaching the app port directly: its header is ignored, so every
     // attempt counts against its socket address.
@@ -349,6 +372,7 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
     expect((await unlock(app, a.publicSlug!, PASSWORD, {}, "198.51.100.10")).status).toBe(303);
   });
 
+  // r[verify hosting.link-gate.no-existence-leak]
   it("unlocking an ungated or unknown link reveals nothing new", async () => {
     const open = await makePublic();
     expect((await unlock(app, open.publicSlug!, "whatever")).status).toBe(303);
@@ -358,7 +382,8 @@ describe("anonymous visitor on a password-gated public link (AH22)", () => {
   });
 });
 
-describe("expiry (AH23)", () => {
+describe("expiry", () => {
+  // r[verify hosting.link-gate.expiry-reads-as-private]
   it("past expiresAt: anonymous → sign-in, frame → 404; the owner is never expired", async () => {
     const a = await makePublic({ expiresAt: new Date(Date.now() + HOUR).toISOString() });
     expect((await get(app, `/a/${a.publicSlug}`)).status).toBe(200);
@@ -389,6 +414,7 @@ describe("expiry (AH23)", () => {
     expect((await get(app, `/a/${a.publicSlug}`)).status).toBe(200);
   });
 
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("OSS: a signed-in non-owner opens a gated or expired public artefact normally", async () => {
     const a = await makePublic({ password: PASSWORD, expiresAt: new Date(Date.now() + HOUR).toISOString() });
     const shell = await get(app, `/a/${a.publicSlug}`, other);
@@ -403,7 +429,29 @@ describe("expiry (AH23)", () => {
   });
 });
 
-describe("a signed-in outsider the policy refuses the authenticated tier (AH18/AH22)", () => {
+describe("an anonymous thumbnail read of a gated artefact (S44)", () => {
+  // r[verify hosting.thumbnail.anonymous-by-slug]
+  // r[verify hosting.thumbnail.cache-by-audience]
+  // r[verify hosting.link-gate.narrows-public-audience]
+  it("gets the standard challenge, and with a pass the image, never cached", async () => {
+    const a = await makePublic({ password: PASSWORD });
+    const { artefactRepository: repo, thumbnailStore } = await import("./adapters");
+    const stored = (await repo.findById(a.id, { tenantId: "default" }))!;
+    await thumbnailStore.put(a.id, stored.payloadHash, new Uint8Array([82, 73, 70, 70]));
+    expect(await repo.recordThumbnail(a.id, stored.payloadHash)).toBe(true);
+
+    const challenged = await get(app, `/api/artefacts/${a.publicSlug}/thumbnail`);
+    expect(challenged.status).toBe(403);
+    expect(await challenged.json()).toEqual({ gate: "password" });
+    const pass = await passFor(app, a.publicSlug!);
+    const opened = await get(app, `/api/artefacts/${a.publicSlug}/thumbnail`, pass);
+    expect(opened.status).toBe(200);
+    expect(opened.headers.get("cache-control")).toBe("private, no-store");
+  });
+});
+
+describe("a signed-in outsider the policy refuses the authenticated tier", () => {
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("is challenged on every read, and a pass opens them", async () => {
     const a = await makePublic({ password: PASSWORD });
     const slug = a.publicSlug!;
@@ -435,6 +483,8 @@ describe("a signed-in outsider the policy refuses the authenticated tier (AH18/A
     expect((await get(cloudApp, `/api/artefacts/${slug}/data/authors`, both)).status).toBe(200);
   });
 
+  // r[verify hosting.link-gate.narrows-public-audience]
+  // r[verify hosting.link-gate.expiry-reads-as-private]
   it("gets 404 once expired, while a teammate the tier admits still opens it", async () => {
     const a = await makePublic({ expiresAt: new Date(Date.now() + HOUR).toISOString() });
     expireNow(a.id);
@@ -443,10 +493,49 @@ describe("a signed-in outsider the policy refuses the authenticated tier (AH18/A
     expect((await get(cloudApp, `/a/${a.publicSlug}`, other)).status).toBe(200);
   });
 
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("the owner is never challenged", async () => {
     const a = await makePublic({ password: PASSWORD });
     expect(await (await get(cloudApp, `/a/${a.publicSlug}`, owner)).text()).toContain("<iframe");
     expect((await get(cloudApp, `/api/artefacts/${a.publicSlug}/thumbnail`, owner)).status).toBe(404);
+  });
+
+  // r[verify collections.bookmark.artefact-view-gated]
+  it("can't bookmark an authenticated artefact the policy refuses them (uniform 404)", async () => {
+    const a = await create();
+    const shared = await json(app, "PUT", `/api/artefacts/${a.id}/visibility`, owner, {
+      visibility: "authenticated",
+    });
+    expect(shared.status).toBe(200);
+    const res = await json(cloudApp, "PUT", `/api/artefacts/${a.id}/bookmark`, cloudOutsider);
+    expect(res.status).toBe(404);
+    expect((await json(cloudApp, "PUT", `/api/artefacts/${a.id}/bookmark`, other)).status).toBe(204);
+  });
+
+  // r[verify collections.bookmark.artefact-view-gated]
+  // r[verify collections.bookmark.hidden-not-pruned]
+  it("bookmarks a password-gated artefact only through a pass, and then lists it", async () => {
+    const a = await makePublic({ password: PASSWORD });
+    const bare = await json(cloudApp, "PUT", `/api/artefacts/${a.id}/bookmark`, cloudOutsider);
+    expect(bare.status).toBe(404);
+    const both = `${cloudOutsider}; ${await passFor(cloudApp, a.publicSlug!)}`;
+    expect((await json(cloudApp, "PUT", `/api/artefacts/${a.id}/bookmark`, both)).status).toBe(204);
+    const listed = (await (await get(cloudApp, "/api/bookmarks", both)).json()) as {
+      artefacts: ArtefactSummary[];
+    };
+    expect(listed.artefacts.map((s) => s.id)).toContain(a.id);
+    const unlocked = (await (await get(cloudApp, "/api/bookmarks", cloudOutsider)).json()) as {
+      artefacts: ArtefactSummary[];
+    };
+    expect(unlocked.artefacts.map((s) => s.id)).not.toContain(a.id);
+  });
+
+  // r[verify collections.bookmark.artefact-view-gated]
+  it("can't bookmark an artefact whose link has expired (uniform 404)", async () => {
+    const a = await makePublic({ expiresAt: new Date(Date.now() + HOUR).toISOString() });
+    expireNow(a.id);
+    const res = await json(cloudApp, "PUT", `/api/artefacts/${a.id}/bookmark`, cloudOutsider);
+    expect(res.status).toBe(404);
   });
 
   it("a thumbnail read through a pass is never cached; the owner's still is", async () => {

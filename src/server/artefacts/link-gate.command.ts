@@ -7,12 +7,13 @@ import {
   type LinkPasswordHasher,
 } from "../../domain/artefact/link-gate";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
+import { mutateArtefact } from "./mutate-artefact";
 
-// Application commands for S32a — Link controls on public artefacts: password +
-// expiry. Load the artefact in the caller's tenant scope (missing or out of scope
-// → not found, AH8), then delegate to the pure AH31 transitions, which refuse a
-// non-owner (as not found), an archived, contained or non-public artefact, a bad
-// password and a past expiry.
+// Application commands for S32a — Link controls on public artefacts: password + expiry. Load the
+// artefact in the caller's tenant scope (missing or out of scope → not found,
+// hosting.access.no-existence-leak), then delegate to the pure hosting.link-gate.public-only
+// transitions, which refuse a non-owner (as not found), an archived, contained or non-public
+// artefact, a bad password and a past expiry.
 
 export interface LinkGateDeps {
   repo: ArtefactRepository;
@@ -39,30 +40,25 @@ export async function setLinkGateCommand(
   input: SetLinkGateInput,
   deps: LinkGateDeps,
 ): Promise<Artefact> {
-  const existing = await load(deps.repo, input.artefactId, input.scope);
-  const updated = await setArtefactLinkGate(
-    existing,
-    {
-      requesterId: input.requesterId,
-      password: input.password,
-      expiresAt: input.expiresAt,
-      now: (deps.now ?? (() => new Date()))(),
-    },
-    deps.hasher,
-  );
-  await deps.repo.save(updated);
-  return updated;
+  const now = (deps.now ?? (() => new Date()))();
+  return mutateArtefact(deps.repo, {
+    load: () => load(deps.repo, input.artefactId, input.scope),
+    apply: (existing) =>
+      setArtefactLinkGate(
+        existing,
+        { requesterId: input.requesterId, password: input.password, expiresAt: input.expiresAt, now },
+        deps.hasher,
+      ),
+  });
 }
 
 export async function clearLinkGateCommand(
   input: { artefactId: string; requesterId: string; scope: TenantScope },
   deps: Omit<LinkGateDeps, "hasher">,
 ): Promise<Artefact> {
-  const existing = await load(deps.repo, input.artefactId, input.scope);
-  const updated = clearArtefactLinkGate(existing, {
-    requesterId: input.requesterId,
-    now: (deps.now ?? (() => new Date()))(),
+  const now = (deps.now ?? (() => new Date()))();
+  return mutateArtefact(deps.repo, {
+    load: () => load(deps.repo, input.artefactId, input.scope),
+    apply: (existing) => clearArtefactLinkGate(existing, { requesterId: input.requesterId, now }),
   });
-  await deps.repo.save(updated);
-  return updated;
 }

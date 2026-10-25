@@ -26,9 +26,12 @@ export interface ServeRenderOptions {
 //
 // Default context = the viewer's own entry: an authenticated viewer gets it
 // read-write, an unauthenticated viewer gets an empty read-only one (no
-// anonymous writes — AD3/AD5). Selecting another author (S12) seeds that
-// author's blob read-only — only the viewer's *own* context is writable (AD5).
-// S36 — the viewer and author come from the frame token, never a cookie.
+// anonymous writes — data.write.requires-auth). Selecting another author (S12)
+// seeds that author's blob read-only — only the viewer's *own* context is
+// writable (data.write.own-context-only).
+// S36 — the viewer and author come from the frame token, never a cookie. The
+// payload itself is inserted as stored: never sanitized, scripts kept.
+// r[impl hosting.serve.as-is]
 export async function renderServedArtefact(
   artefact: Artefact,
   viewerId: string | null,
@@ -37,14 +40,18 @@ export async function renderServedArtefact(
 ): Promise<string> {
   const bytes = await deps.payloadStore.get(artefact.payloadRef);
   const html = new TextDecoder().decode(bytes);
+  // r[impl data.context.host-chosen]
   // Which author's data to load: the requested one, else the viewer's own.
   const contextAuthorId = options.authorId ?? viewerId;
+  // r[impl data.write.own-context-only]
   // Writable only when the viewer is signed in AND looking at their own data.
   const writable = viewerId !== null && contextAuthorId === viewerId;
+  // r[impl data.shim.seeded-server-side]
   const entry = contextAuthorId
     ? await deps.dataRepo.findByArtefactAndAuthor(artefact.id, contextAuthorId)
     : null;
   return renderArtefactHtml(html, {
+    // r[impl mcp.data-write.seeds-served-artefact]
     seedBlob: entry?.blob ?? "{}",
     writable,
     targetOrigin: options.targetOrigin,
@@ -53,7 +60,7 @@ export async function renderServedArtefact(
   });
 }
 
-// S36 (AD10) — what an expired frame token gets instead of the artefact: a page
+// S36 (data.frame-token.absent-invalid-expired) — what an expired frame token gets instead of the artefact: a page
 // that seeds nothing and asks the host shell to mint a fresh frame URL (the shell
 // accepts it only from its own frame's window). This is what keeps an in-artefact
 // `location.reload()` working after the token's five minutes.

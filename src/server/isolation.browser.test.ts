@@ -5,8 +5,8 @@ import { chromium, type Browser, type Frame, type Page } from "playwright-core";
 import type { Hono } from "hono";
 import type { ArtefactSummary } from "../shared/contracts";
 
-// S36 (AH28, AD10, IA6) — the isolation, proven in a real Chromium against the
-// real app and its real shell. CI installs `chromium-headless-shell` first (as
+// S36 (`hosting.frame.sandboxed`, `identity.origin.app-origin-only`) — the isolation, proven in a
+// real Chromium against the real app and its real shell. CI installs `chromium-headless-shell` first (as
 // for the S35 renderer), so this always runs there; locally it skips only when
 // no browser is installed.
 const chromiumAvailable = await chromium
@@ -18,7 +18,7 @@ const chromiumAvailable = await chromium
   );
 const runBrowserTests = chromiumAvailable || Boolean(process.env.CI);
 
-// The shell posts to, and IA6 trusts, the app origin — so the app must think it
+// The shell posts to, and the origin guard trusts, the app origin — so the app must think it
 // lives where the browser reaches it. Pick the port before the app is imported.
 const port = await new Promise<number>((resolve) => {
   const s = createNetServer().listen(0, () => {
@@ -128,6 +128,9 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
     }
   }
 
+  // r[verify hosting.frame.sandboxed]
+  // r[verify hosting.frame.no-cookies]
+  // r[verify identity.origin.app-origin-only+2]
   it("the artefact can't read the session cookie, read the API, or change state", async () => {
     const { page, frame } = await openShell();
     const f = await frame();
@@ -167,6 +170,8 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
     await page.context().close();
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify hosting.frame.shell-saves-for-frame]
   it("localStorage persists through the shell, and an in-frame reload after the token expired comes back seeded", async () => {
     const first = await openShell();
     await (await first.frame()).evaluate(`localStorage.setItem("k", "persisted")`);

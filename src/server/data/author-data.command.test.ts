@@ -22,7 +22,7 @@ describe("author-data commands — host data-context switcher (S12)", () => {
   let deps: DataAccessDeps & { newId: () => string };
 
   // Seed an artefact owned by OWNER, shared at `tier` so it carries a slug. Its
-  // data visibility is `shared` (AD4 as written) unless `over` says otherwise.
+  // data visibility is `shared` (data.read.follows-artefact-access as written) unless `over` says otherwise.
   async function seed(
     tier: "authenticated" | "public" = "public",
     over: Partial<Artefact> = {},
@@ -38,8 +38,7 @@ describe("author-data commands — host data-context switcher (S12)", () => {
       { tier, newSlug: "slug1" },
     );
     const seeded: Artefact = { ...a, dataVisibility: "shared", ...over };
-    await artefactRepo.save(seeded);
-    return seeded;
+    return artefactRepo.save(seeded);
   }
 
   beforeEach(() => {
@@ -54,7 +53,8 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     };
   });
 
-  it("lists every author who has an entry, with freshness (AD4)", async () => {
+  // r[verify data.read.follows-artefact-access]
+  it("lists every author who has an entry, with freshness", async () => {
     await seed("authenticated");
     await putOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, '{"v":1}', deps);
     await putOwnDataEntry({ ref: "slug1", authorId: OTHER, scope: SCOPE }, '{"v":2}', deps);
@@ -64,7 +64,8 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     expect(authors.every((a) => a.updatedAt instanceof Date)).toBe(true);
   });
 
-  it("loads another author's blob for a viewer with read access (AD4)", async () => {
+  // r[verify data.read.follows-artefact-access]
+  it("loads another author's blob for a viewer with read access", async () => {
     await seed("authenticated");
     await putOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, '{"who":"owner"}', deps);
     // A different signed-in viewer can load the owner's entry (read-only seed).
@@ -77,7 +78,8 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     expect(await getAuthorDataEntry("slug1", OWNER, OTHER, SCOPE, deps)).toBeNull();
   });
 
-  it("lets an unauthenticated viewer read a public artefact's authors (AD4)", async () => {
+  // r[verify data.read.follows-artefact-access]
+  it("lets an unauthenticated viewer read a public artefact's authors", async () => {
     await seed("public");
     await putOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, '{"v":1}', deps);
     const authors = await listDataAuthors("slug1", null, SCOPE, deps);
@@ -87,7 +89,8 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     );
   });
 
-  it("hides an authenticated artefact's authors from the anonymous (AD4)", async () => {
+  // r[verify data.read.follows-artefact-access]
+  it("hides an authenticated artefact's authors from the anonymous", async () => {
     await seed("authenticated");
     await expect(listDataAuthors("slug1", null, SCOPE, deps)).rejects.toBeInstanceOf(
       ArtefactNotFound,
@@ -97,7 +100,9 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  it("hides a private artefact's authors from a non-owner (AD4/AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify data.read.follows-artefact-access]
+  it("hides a private artefact's authors from a non-owner", async () => {
     const shared = await seed("public");
     await artefactRepo.save({ ...shared, visibility: "private" });
     await expect(
@@ -107,7 +112,7 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     await expect(listDataAuthors("slug1", OWNER, SCOPE, deps)).resolves.toBeDefined();
   });
 
-  describe("under own-only data visibility (S41, AD11)", () => {
+  describe("under own-only data visibility (S41)", () => {
     const THIRD = "user-3";
     const NOBODY = "user-4";
 
@@ -120,11 +125,13 @@ describe("author-data commands — host data-context switcher (S12)", () => {
 
     const ids = (list: { authorId: string }[]) => list.map((a) => a.authorId).sort();
 
+    // r[verify data.visibility.listing-filtered]
     it("lists only a non-owner's own entry", async () => {
       await seedOwn();
       expect(ids(await listDataAuthors("slug1", OTHER, SCOPE, deps))).toEqual([OTHER]);
     });
 
+    // r[verify data.visibility.listing-filtered]
     it("lists every author to the owner", async () => {
       await seedOwn();
       expect(ids(await listDataAuthors("slug1", OWNER, SCOPE, deps))).toEqual(
@@ -132,11 +139,14 @@ describe("author-data commands — host data-context switcher (S12)", () => {
       );
     });
 
+    // r[verify data.visibility.listing-filtered]
     it("lists nothing to a viewer without an entry", async () => {
       await seedOwn();
       expect(await listDataAuthors("slug1", NOBODY, SCOPE, deps)).toEqual([]);
     });
 
+    // r[verify data.visibility.author-read-refused]
+    // r[verify data.visibility.refusal-no-leak]
     it("refuses a non-owner another author's entry as not found", async () => {
       await seedOwn();
       await expect(
@@ -148,6 +158,7 @@ describe("author-data commands — host data-context switcher (S12)", () => {
       ).rejects.toBeInstanceOf(ArtefactNotFound);
     });
 
+    // r[verify data.visibility.narrows-reads]
     it("still loads a non-owner's own entry", async () => {
       await seedOwn();
       expect((await getAuthorDataEntry("slug1", OTHER, OTHER, SCOPE, deps))?.blob).toBe(
@@ -155,6 +166,7 @@ describe("author-data commands — host data-context switcher (S12)", () => {
       );
     });
 
+    // r[verify data.visibility.narrows-reads]
     it("lets the owner load any author's entry", async () => {
       await seedOwn();
       expect((await getAuthorDataEntry("slug1", OWNER, THIRD, SCOPE, deps))?.blob).toBe(
@@ -162,6 +174,7 @@ describe("author-data commands — host data-context switcher (S12)", () => {
       );
     });
 
+    // r[verify data.visibility.listing-filtered]
     it("gives the anonymous nothing on a public artefact", async () => {
       await seedOwn("public");
       expect(await listDataAuthors("slug1", null, SCOPE, deps)).toEqual([]);
@@ -171,7 +184,9 @@ describe("author-data commands — host data-context switcher (S12)", () => {
     });
   });
 
-  it("is not-found for an archived artefact (AD6)", async () => {
+  // r[verify hosting.lifecycle.archived-data-inert]
+  // r[verify data.lifecycle.archived-inert]
+  it("is not-found for an archived artefact", async () => {
     const shared = await seed("authenticated");
     await artefactRepo.save(archiveArtefact(shared));
     await expect(

@@ -139,7 +139,8 @@ Commands: `drizzle-kit generate` (from schema) → `drizzle-kit migrate` (apply)
 
 ## Server wiring (Hono)
 
-- `app.ts`: Hono app with logger + error middleware; mounts:
+- `app.ts`: Hono app with the request log (S50 — query values redacted,
+  `identity.log.request-log-no-values`) + error middleware; mounts:
   - `/api/*` → BFF routes (added per slice).
   - BetterAuth handler route (S1).
   - artefact serving route by slug (S6) — also where the localStorage-hijack bootstrap is

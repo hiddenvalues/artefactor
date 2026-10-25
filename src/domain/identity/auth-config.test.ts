@@ -4,7 +4,7 @@ import {
   type AuthConfigInput,
 } from "./auth-config";
 
-// S38 (IA7) — the pure sign-in-method decision. The whole truth table lives
+// S38 — the pure sign-in-method decision. The whole truth table lives
 // here; env.ts, auth.ts and the config route only consume the result.
 const input = (over: Partial<AuthConfigInput> = {}): AuthConfigInput => ({
   nodeEnv: "production",
@@ -15,6 +15,7 @@ const input = (over: Partial<AuthConfigInput> = {}): AuthConfigInput => ({
 });
 
 describe("resolveAuthConfig (S38)", () => {
+  // r[verify identity.signin.methods-configured]
   describe("emailPasswordEnabled", () => {
     it("defaults to off in production", () => {
       expect(
@@ -47,6 +48,7 @@ describe("resolveAuthConfig (S38)", () => {
     });
   });
 
+  // r[verify identity.signin.methods-configured]
   describe("googleEnabled", () => {
     it("mirrors googleConfigured exactly", () => {
       for (const nodeEnv of ["development", "test", "production"] as const) {
@@ -62,6 +64,7 @@ describe("resolveAuthConfig (S38)", () => {
     });
   });
 
+  // r[verify identity.signup.gate-default]
   describe("signupAllowed default (tracks the unverified path)", () => {
     it("is closed in production when email+password is enabled", () => {
       expect(
@@ -99,6 +102,7 @@ describe("resolveAuthConfig (S38)", () => {
     });
   });
 
+  // r[verify identity.signup.gate-default]
   describe("an explicit allowSignup wins over the default", () => {
     const cases: { name: string; over: Partial<AuthConfigInput> }[] = [
       {

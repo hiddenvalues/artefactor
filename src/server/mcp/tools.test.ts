@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildMcpServer, type McpToolDeps } from "./server";
+import { buildMcpServer, type McpScopeRefusal, type McpToolDeps } from "./server";
+import { singletonMcpScopeResolver } from "./routes";
 import { MAX_MCP_BLOB_BYTES, MAX_MCP_HTML_BYTES } from "./tools";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
 import { SINGLETON_SCOPE, type TenantScope } from "../../domain/artefact/tenant-scope";
+import { ArtefactConflict } from "../../domain/artefact/errors";
+import {
+  archiveCollection,
+  createCollection,
+  grantCollectionAccess,
+  type Collection,
+} from "../../domain/collection/collection";
+import type { Visibility } from "../../domain/artefact/visibility";
 import { InMemoryDataRepository } from "../../domain/data/in-memory-data-repository";
 import { MAX_BLOB_BYTES, upsertDataEntry } from "../../domain/data/data-entry";
 import { renderServedArtefact } from "../runtime/render";
@@ -76,7 +85,7 @@ describe("MCP artefact tools (S18)", () => {
   // A connected MCP client acting as `userId` against the shared deps.
   async function clientFor(
     userId: string,
-    scope: TenantScope = SINGLETON_SCOPE,
+    scope: TenantScope | McpScopeRefusal = SINGLETON_SCOPE,
   ): Promise<Client> {
     const server = buildMcpServer(userId, deps, scope);
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
@@ -96,28 +105,39 @@ describe("MCP artefact tools (S18)", () => {
 
   const json = (r: ToolResult) => JSON.parse(r.content[0]!.text);
 
-  it("advertises the full tool set", async () => {
+  // r[verify mcp.tools.surface+4]
+  // r[verify mcp.collections.web-app-only]
+  it("advertises the full tool set, with no tool for people, link protection or permanent deletion", async () => {
     const client = await clientFor("u1");
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
+    expect(names.filter((n) => /delete|grant|revoke|access|gate|eject/.test(n))).toEqual([]);
     expect(names).toEqual(
       [
         "archive_artefact",
+        "archive_collection",
         "create_artefact",
+        "create_collection",
         "get_artefact",
         "get_artefact_data",
         "get_artefact_html",
         "get_authoring_guide",
         "list_artefact_data_authors",
         "list_artefacts",
+        "list_collections",
+        "move_artefact",
         "restore_artefact",
+        "restore_collection",
         "set_artefact_data",
+        "set_collection_visibility",
         "set_data_visibility",
         "set_visibility",
         "update_artefact",
+        "update_collection",
       ].sort(),
     );
   });
 
+  // r[verify mcp.guide.instructions-summary]
   it("advertises the persistence contract as server instructions", async () => {
     const client = await clientFor("u1");
     const instructions = client.getInstructions();
@@ -129,8 +149,12 @@ describe("MCP artefact tools (S18)", () => {
     expect(instructions).toMatch(/if_unmodified_since/);
     // S40 — and so is the owner's read of everyone's data.
     expect(instructions).toMatch(/list_artefact_data_authors/);
+    // S75 — and placing an artefact in a collection.
+    expect(instructions).toMatch(/list_collections/);
+    expect(instructions).toMatch(/move_artefact/);
   });
 
+  // r[verify mcp.guide.full-guide-tool]
   it("get_authoring_guide returns the full skill body", async () => {
     const client = await clientFor("u1");
     const r = await call(client, "get_authoring_guide", {});
@@ -147,6 +171,7 @@ describe("MCP artefact tools (S18)", () => {
 
   // S36 — the sandboxed frame makes the other browser stores throw, so the
   // guide and the ambient instructions both say so, in the same words.
+  // r[verify hosting.frame.guide-warns-storage]
   it("warns, in both the instructions and the guide, that other browser storage throws in the sandbox", async () => {
     const STORAGE =
       "sessionStorage, IndexedDB and cookies are never saved, and in Artefactor's sandboxed frame they throw. Don't use them, even for temporary state; keep temporary state in memory.";
@@ -159,6 +184,87 @@ describe("MCP artefact tools (S18)", () => {
       }
       expect(text).toMatch(/target="_blank"/);
     }
+  });
+
+  // S78 — two paragraphs carried word for word by both channels of the
+  // authoring contract: verify the rendered result, share only on request.
+  const VERIFY_PARAGRAPH =
+    "Verify before you call an artefact done. A preview you show the user must be its own HTML, rendered — never an illustration or mockup of what you plan to build; if you can't render HTML, say so. Publish it private, then look at the published result yourself or ask the user to open it (from appUrl while it's private) and confirm it, compared with what they approved at desktop and phone widths; share it at the tier they asked for only after that. Don't claim saved data persists until a reload has shown it does.";
+  const SHARE_PARAGRAPH =
+    "Keep an artefact private unless the user asked to share it. Never pick a shared tier on their behalf, not even to get a link to post in the chat: a private artefact has no share link, so give the user the result's appUrl (the Artefactor web app, where they open it) and ask whether, and with whom, to share it. When they want a link, offer the tiers — selected (named people, added in the web app), authenticated (anyone signed in) or public (anyone with the link) — and set public only when they ask for it.";
+  const normalised = (text: string) => text.replace(/\s+/g, " ");
+
+  async function bothChannels(): Promise<string[]> {
+    const client = await clientFor("u1");
+    const guide = (await call(client, "get_authoring_guide", {})).content[0]!.text;
+    return [client.getInstructions()!, guide].map(normalised);
+  }
+
+  // r[verify mcp.guide.verify-rendered]
+  it("tells the agent, in both the instructions and the guide, to verify the rendered result", async () => {
+    for (const text of await bothChannels()) expect(text).toContain(VERIFY_PARAGRAPH);
+  });
+
+  // r[verify mcp.guide.share-on-request]
+  it("tells the agent, in both the instructions and the guide, to share only on request", async () => {
+    for (const text of await bothChannels()) expect(text).toContain(SHARE_PARAGRAPH);
+  });
+
+  // r[verify mcp.guide.verify-rendered]
+  // r[verify mcp.guide.share-on-request]
+  it("the guide's verify-and-share section and shipping checklist", async () => {
+    const [, guide] = await bothChannels();
+    expect(guide).toContain("### Verify and share — before calling it done");
+    for (const item of [
+      "- [ ] The preview the user approved was the artefact's own rendered HTML, not an illustration.",
+      "- [ ] Published private first; the rendered result was seen (by you or by the user) and matches what the user approved at desktop and phone widths, before sharing or calling it done.",
+      "- [ ] Persistence was tested by a reload before claiming it works.",
+      "- [ ] Shared only at the tier the user asked for — never public by default, never just to get a link.",
+    ]) {
+      expect(guide).toContain(item);
+    }
+  });
+
+  // r[verify mcp.guide.verify-rendered]
+  // r[verify mcp.guide.share-on-request]
+  it("puts both paragraphs and the get_authoring_guide pointer within the instructions' first 4,000 characters", async () => {
+    const client = await clientFor("u1");
+    const head = normalised(client.getInstructions()!.slice(0, 4000));
+    expect(head).toContain(VERIFY_PARAGRAPH);
+    expect(head).toContain(SHARE_PARAGRAPH);
+    expect(head).toContain("Call get_authoring_guide for the full contract");
+  });
+
+  // r[verify mcp.tools.create-app-url]
+  it("create_artefact returns appUrl beside the share url, private or shared", async () => {
+    const client = await clientFor("u1");
+    const priv = json(
+      await call(client, "create_artefact", { title: "P", kind: "other", html: "<h1>p</h1>" }),
+    );
+    expect(priv.url).toBeNull();
+    expect(priv.appUrl).toBe("http://localhost:3000/");
+    const pub = json(
+      await call(client, "create_artefact", {
+        title: "Q",
+        kind: "other",
+        html: "<h1>q</h1>",
+        visibility: "public",
+      }),
+    );
+    expect(pub.url).toBe(`http://localhost:3000/a/${pub.publicSlug}`);
+    expect(pub.appUrl).toBe("http://localhost:3000/");
+  });
+
+  it("the sharing tools' descriptions say to share only on the user's request", async () => {
+    const client = await clientFor("u1");
+    const tools = (await client.listTools()).tools;
+    const create = tools.find((t) => t.name === "create_artefact")!;
+    const setVisibility = tools.find((t) => t.name === "set_visibility")!;
+    expect(create.description).toContain("Always leave visibility unset");
+    const visibilityArg = (create.inputSchema.properties as Record<string, { description?: string }>)
+      .visibility!;
+    expect(visibilityArg.description).toContain("Leave it unset: create private, verify, then share with set_visibility");
+    expect(setVisibility.description).toContain("Only on the user's request");
   });
 
   describe("thumbnails (S35)", () => {
@@ -211,6 +317,7 @@ describe("MCP artefact tools (S18)", () => {
       return id as string;
     }
 
+    // r[verify hosting.link-gate.owner-summary-only]
     it("the owner's summaries carry linkGate, never the hash", async () => {
       const u1 = await clientFor("u1");
       const id = await gatedPublic(u1);
@@ -248,6 +355,7 @@ describe("MCP artefact tools (S18)", () => {
     });
   });
 
+  // r[verify hosting.create.owner-is-creator]
   it("create_artefact creates a private artefact owned by the caller", async () => {
     const client = await clientFor("u1");
     const r = json(
@@ -266,6 +374,35 @@ describe("MCP artefact tools (S18)", () => {
       url: null,
     });
     expect(typeof r.id).toBe("string");
+  });
+
+  // r[verify hosting.create.owner-is-creator]
+  it("create_artefact never takes an owner from its arguments", async () => {
+    const client = await clientFor("u1");
+    const r = await call(client, "create_artefact", {
+      title: "Spoofed",
+      kind: "form",
+      html: "<h1>x</h1>",
+      ownerId: "u2",
+    });
+    // The unknown argument is ignored: the artefact is created, and owned by the caller.
+    expect(r.isError).toBeFalsy();
+    expect(json(r).ownerId).toBe("u1");
+    expect(json(await call(await clientFor("u2"), "list_artefacts", {})).artefacts).not.toContainEqual(
+      expect.objectContaining({ title: "Spoofed" }),
+    );
+  });
+
+  // r[verify hosting.ingestion.parity]
+  it("create_artefact refuses a blank title, as the upload does, and creates nothing", async () => {
+    const client = await clientFor("parity");
+    const r = await call(client, "create_artefact", {
+      title: "   ",
+      kind: "form",
+      html: "<!doctype html><h1>hi</h1>",
+    });
+    expect(r.isError).toBe(true);
+    expect(json(await call(client, "list_artefacts", {}))).toMatchObject({ artefacts: [] });
   });
 
   it("create_artefact can publish at a shareable tier (mints slug + url)", async () => {
@@ -296,6 +433,21 @@ describe("MCP artefact tools (S18)", () => {
       await call(client, "update_artefact", { id: created.id, title: "New" }),
     );
     expect(updated.title).toBe("New");
+  });
+
+  // S60 — Save concurrency: a save never overwrites a newer artefact.
+  // r[verify mcp.tools.save-conflict]
+  it("update_artefact whose save keeps conflicting returns an error naming get_artefact", async () => {
+    const client = await clientFor("u1");
+    const created = json(
+      await call(client, "create_artefact", { title: "Old", kind: "other", html: "<h1>1</h1>" }),
+    );
+    deps.repo.save = async (a) => {
+      throw new ArtefactConflict(a.id);
+    };
+    const r = await call(client, "update_artefact", { id: created.id, title: "New" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]!.text).toMatch(/get_artefact/);
   });
 
   it("list_artefacts lists the caller's own, newest first, archived opt-in", async () => {
@@ -382,6 +534,7 @@ describe("MCP artefact tools (S18)", () => {
     );
   });
 
+  // r[verify mcp.tools.data-author-count]
   it("reports dataAuthorCount so a breaking update can be flagged", async () => {
     const client = await clientFor("u1");
     const a = json(
@@ -406,6 +559,30 @@ describe("MCP artefact tools (S18)", () => {
     expect(updated.dataAuthorCount).toBe(2);
   });
 
+  // r[verify mcp.tools.update-replaces-html]
+  // r[verify data.entry.survives-payload-edit]
+  it("update_artefact replaces the HTML and leaves every saved data blob in place", async () => {
+    const client = await clientFor("u1");
+    const a = json(
+      await call(client, "create_artefact", { title: "Form", kind: "form", html: "<i>v1</i>" }),
+    );
+    await deps.dataRepo.save(
+      upsertDataEntry({ id: "d1", artefactId: a.id, authorId: "u1", blob: '{"mine":"1"}', authoredAgainstVersion: null }),
+    );
+    await deps.dataRepo.save(
+      upsertDataEntry({ id: "d2", artefactId: a.id, authorId: "u2", blob: '{"theirs":"2"}', authoredAgainstVersion: null }),
+    );
+
+    const r = await call(client, "update_artefact", { id: a.id, html: "<i>v2</i>" });
+    expect(r.isError).toBeFalsy();
+
+    expect(json(await call(client, "get_artefact_html", { id: a.id })).html).toBe("<i>v2</i>");
+    expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"mine":"1"}');
+    expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u2"))?.blob).toBe('{"theirs":"2"}');
+  });
+
+  // r[verify identity.mcp.token-one-account]
+  // r[verify hosting.authority.owner-only]
   it("attributes authority to the token's user — cannot touch another user's artefact", async () => {
     const u1 = await clientFor("u1");
     const a = json(
@@ -423,6 +600,7 @@ describe("MCP artefact tools (S18)", () => {
     expect(json(await call(u2, "list_artefacts", {})).artefacts).toEqual([]);
   });
 
+  // r[verify mcp.tools.refusal-is-error-result]
   it("returns an error result (not a crash) for an unknown artefact", async () => {
     const client = await clientFor("u1");
     const r = await call(client, "get_artefact", { id: "does-not-exist" });
@@ -434,6 +612,7 @@ describe("MCP artefact tools (S18)", () => {
   // place after losing the original from context (B) — seeing, for (B), the
   // data shape a breaking HTML change might orphan.
 
+  // r[verify mcp.read.html-exact]
   it("get_artefact_html returns the exact stored HTML with dataAuthorCount", async () => {
     const client = await clientFor("u1");
     const html =
@@ -455,6 +634,7 @@ describe("MCP artefact tools (S18)", () => {
     });
   });
 
+  // r[verify mcp.read.over-cap-refused+2]
   it("get_artefact_html refuses an over-cap payload, naming the real size", async () => {
     const client = await clientFor("u1");
     const html = "<i>" + "a".repeat(MAX_MCP_HTML_BYTES) + "</i>";
@@ -472,6 +652,8 @@ describe("MCP artefact tools (S18)", () => {
     expect(r.content[0]!.text).toMatch(/download/i);
   });
 
+  // r[verify mcp.read.own-entry-default]
+  // r[verify data.blob.bounded-opaque-json]
   it("get_artefact_data returns the caller's own blob verbatim", async () => {
     const client = await clientFor("u1");
     const a = json(
@@ -496,6 +678,7 @@ describe("MCP artefact tools (S18)", () => {
     expect(r.dataAuthorCount).toBe(1);
   });
 
+  // r[verify mcp.read.own-entry-default]
   it("get_artefact_data returns blob: null when the caller has no entry, and never another author's", async () => {
     const client = await clientFor("u1");
     const a = json(
@@ -514,6 +697,7 @@ describe("MCP artefact tools (S18)", () => {
     expect(JSON.stringify(r)).not.toContain("theirs");
   });
 
+  // r[verify mcp.read.over-cap-refused+2]
   it("get_artefact_data refuses an over-cap blob, naming the real size", async () => {
     const client = await clientFor("u1");
     const a = json(
@@ -532,6 +716,7 @@ describe("MCP artefact tools (S18)", () => {
     expect(r.content[0]!.text).toMatch(/download/i);
   });
 
+  // r[verify mcp.read.schema-best-effort+2]
   it("get_artefact_data returns the artefact's declared schema as parsed JSON", async () => {
     const client = await clientFor("u1");
     const a = json(
@@ -555,6 +740,7 @@ describe("MCP artefact tools (S18)", () => {
     });
   });
 
+  // r[verify mcp.read.schema-best-effort+2]
   it("get_artefact_data returns schema: null when it is absent or unparseable", async () => {
     const client = await clientFor("u1");
     const none = json(
@@ -575,7 +761,8 @@ describe("MCP artefact tools (S18)", () => {
     expect(json(r).schema).toBeNull();
   });
 
-  it("never validates a blob against the declared schema (AD8 opacity)", async () => {
+  // r[verify data.blob.bounded-opaque-json]
+  it("never validates a blob against the declared schema", async () => {
     const client = await clientFor("u1");
     const a = json(
       await call(client, "create_artefact", {
@@ -596,7 +783,9 @@ describe("MCP artefact tools (S18)", () => {
     expect(json(r).blob).toBe(blob);
   });
 
-  it("get_artefact_data reports the payload version pin (AD9)", async () => {
+  // r[verify mcp.read.version-pair+2]
+  // r[verify data.pin.stamped-on-write]
+  it("get_artefact_data reports the payload version pin", async () => {
     const client = await clientFor("u1");
     const a = json(
       await call(client, "create_artefact", { title: "Pinned", kind: "form", html: "<i>p</i>" }),
@@ -622,7 +811,9 @@ describe("MCP artefact tools (S18)", () => {
     expect(stale.authoredAgainstVersion).toBe(stored.payloadHash);
   });
 
-  it("an entry predating the pin reads authoredAgainstVersion null, never an error (AD9)", async () => {
+  // r[verify mcp.read.version-pair+2]
+  // r[verify data.pin.null-before-pin]
+  it("an entry predating the pin reads authoredAgainstVersion null, never an error", async () => {
     const client = await clientFor("u1");
     const a = json(
       await call(client, "create_artefact", { title: "Legacy", kind: "form", html: "<i>l</i>" }),
@@ -636,7 +827,8 @@ describe("MCP artefact tools (S18)", () => {
     expect(json(r).authoredAgainstVersion).toBeNull();
   });
 
-  it("set_artefact_data stamps the pin exactly as PUT …/data/me does (AD9)", async () => {
+  // r[verify data.pin.stamped-on-write]
+  it("set_artefact_data stamps the pin exactly as PUT …/data/me does", async () => {
     const client = await clientFor("u1");
     const a = json(
       await call(client, "create_artefact", { title: "Same path", kind: "form", html: "<i>s</i>" }),
@@ -657,6 +849,8 @@ describe("MCP artefact tools (S18)", () => {
     expect(viaCommand.authoredAgainstVersion).toBe(viaTool.authoredAgainstVersion);
   });
 
+  // r[verify mcp.read.owner-scoped+2]
+  // r[verify hosting.access.no-existence-leak]
   it("both read-back tools are owner-scoped: unknown, another user's, and archived all -> not found", async () => {
     const u1 = await clientFor("u1");
     const a = json(
@@ -673,6 +867,23 @@ describe("MCP artefact tools (S18)", () => {
     await call(u1, "archive_artefact", { id: a.id });
     expect((await call(u1, "get_artefact_html", { id: a.id })).isError).toBe(true);
     expect((await call(u1, "get_artefact_data", { id: a.id })).isError).toBe(true);
+  });
+
+  // r[verify mcp.read.owner-scoped+2]
+  // r[verify hosting.tenant.scope-excludes-other-tenants+2]
+  it("both read-back tools treat the owner's artefact as not found from another tenant scope", async () => {
+    const u1 = await clientFor("u1");
+    const a = json(
+      await call(u1, "create_artefact", { title: "Mine", kind: "other", html: "<i>m</i>" }),
+    );
+    const u1Elsewhere = await clientFor("u1", { tenantId: "another-tenant" });
+
+    for (const tool of ["get_artefact_html", "get_artefact_data"]) {
+      const r = await call(u1Elsewhere, tool, { id: a.id });
+      expect(r.isError).toBe(true);
+      // The same ArtefactNotFound as an unknown id — existence does not leak.
+      expect(r.content[0]!.text).toBe(a.id);
+    }
   });
 
   // S31 — the agent writes the caller's own blob: whole-blob replacement through
@@ -696,7 +907,10 @@ describe("MCP artefact tools (S18)", () => {
       expect(tool?.description).toMatch(/not a (patch|merge)|no merge|not merged/i);
     });
 
-    it("round-trips: get → set → re-read returns the new blob verbatim, preserving identity (AD1)", async () => {
+    // r[verify mcp.data-write.round-trip+2]
+    // r[verify data.entry.identity-immutable+2]
+    // r[verify data.entry.one-per-pair]
+    it("round-trips: get → set → re-read returns the new blob verbatim, preserving identity", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       await deps.dataRepo.save(
@@ -725,6 +939,7 @@ describe("MCP artefact tools (S18)", () => {
       expect(entry?.createdAt).toEqual(PAST);
     });
 
+    // r[verify data.entry.one-per-pair]
     it("creates the entry on first write and updates it in place on the second — never two", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
@@ -739,7 +954,8 @@ describe("MCP artefact tools (S18)", () => {
       expect(await deps.dataRepo.listAuthorsByArtefact(a.id)).toHaveLength(1);
     });
 
-    it("writes only the caller's own entry — another author's is untouched (AD2)", async () => {
+    // r[verify data.write.author-is-caller]
+    it("writes only the caller's own entry — another author's is untouched", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       await deps.dataRepo.save(
@@ -753,7 +969,9 @@ describe("MCP artefact tools (S18)", () => {
       expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"mine":1}');
     });
 
-    it("rejects invalid JSON with an error naming the parse failure, writing nothing (AD8)", async () => {
+    // r[verify mcp.data-write.refusal-names-fix]
+    // r[verify data.blob.bounded-opaque-json]
+    it("rejects invalid JSON with an error naming the parse failure, writing nothing", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       const r = await call(client, "set_artefact_data", { id: a.id, blob: '{"a":' });
@@ -768,7 +986,9 @@ describe("MCP artefact tools (S18)", () => {
       expect(await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1")).toBeNull();
     });
 
-    it("rejects an over-cap blob with an error naming the actual size against the 5 MB cap (AD8)", async () => {
+    // r[verify mcp.data-write.refusal-names-fix]
+    // r[verify data.blob.bounded-opaque-json]
+    it("rejects an over-cap blob with an error naming the actual size against the 5 MB cap", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
       const blob = JSON.stringify({ big: "a".repeat(MAX_BLOB_BYTES) });
@@ -779,6 +999,8 @@ describe("MCP artefact tools (S18)", () => {
       expect(await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1")).toBeNull();
     });
 
+    // r[verify mcp.data-write.refusal-names-fix]
+    // r[verify data.write.stale-pin-refused]
     it("a stale if_unmodified_since → conflict error directing a re-read, nothing written", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
@@ -804,6 +1026,7 @@ describe("MCP artefact tools (S18)", () => {
       expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"v":"tab"}');
     });
 
+    // r[verify data.write.stale-pin-refused]
     it("a null if_unmodified_since (the empty read) conflicts once the user has saved", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
@@ -822,6 +1045,8 @@ describe("MCP artefact tools (S18)", () => {
       expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"v":"tab"}');
     });
 
+    // r[verify mcp.data-write.no-pin-unconditional+2]
+    // r[verify data.write.stale-pin-refused]
     it("without if_unmodified_since, writes unconditionally", async () => {
       const client = await clientFor("u1");
       const a = await mine(client);
@@ -833,7 +1058,11 @@ describe("MCP artefact tools (S18)", () => {
       expect((await deps.dataRepo.findByArtefactAndAuthor(a.id, "u1"))?.blob).toBe('{"v":"agent"}');
     });
 
-    it("is owner-scoped: another user's (even when shared), unknown, archived, and out-of-scope → not found (AD6, AH7)", async () => {
+    // r[verify mcp.data-write.owner-scoped+2]
+    // r[verify hosting.access.no-existence-leak]
+    // r[verify hosting.lifecycle.archived-data-inert]
+    // r[verify data.lifecycle.archived-inert]
+    it("is owner-scoped: another user's (even when shared), unknown, archived, and out-of-scope → not found", async () => {
       const u1 = await clientFor("u1");
       const a = await mine(u1);
       await call(u1, "set_visibility", { id: a.id, visibility: "authenticated" });
@@ -857,6 +1086,7 @@ describe("MCP artefact tools (S18)", () => {
       expect(await deps.dataRepo.listAuthorsByArtefact(a.id)).toHaveLength(0);
     });
 
+    // r[verify mcp.data-write.seeds-served-artefact]
     it("a blob written into an empty entry from the declared schema's example is what the served artefact seeds", async () => {
       const client = await clientFor("u1");
       const a = await mine(
@@ -895,8 +1125,9 @@ describe("MCP artefact tools (S18)", () => {
   });
 
   // S40 — the owner's connector reads every author's entry, as the host
-  // data-context switcher does (AD4): list who holds data, then fetch one
-  // author's blob verbatim. Read-only (AD2/AD5) and owner-scoped.
+  // data-context switcher does (data.read.follows-artefact-access): list who holds data, then fetch one
+  // author's blob verbatim. Read-only (data.write.author-is-caller,
+  // data.write.own-context-only) and owner-scoped.
   describe("reading every author's data (S40)", () => {
     const T1 = new Date("2026-04-01T00:00:00.000Z");
     const T2 = new Date("2026-04-02T00:00:00.000Z");
@@ -925,6 +1156,8 @@ describe("MCP artefact tools (S18)", () => {
     const payloadHash = async (id: string) =>
       (await deps.repo.findById(id, SINGLETON_SCOPE))!.payloadHash;
 
+    // r[verify mcp.authors.listing+2]
+    // r[verify data.read.follows-artefact-access]
     it("lists every author with identity, bytes, updatedAt and pin, newest first", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
@@ -947,6 +1180,7 @@ describe("MCP artefact tools (S18)", () => {
       });
     });
 
+    // r[verify mcp.authors.listing+2]
     it("lists no authors when nobody has saved data", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
@@ -964,6 +1198,7 @@ describe("MCP artefact tools (S18)", () => {
       expect(r).not.toHaveProperty("author");
     });
 
+    // r[verify mcp.authors.resolve-author]
     it("returns another author's entry verbatim by id, and by email in any case", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
@@ -990,6 +1225,7 @@ describe("MCP artefact tools (S18)", () => {
       expect(json(byEmail)).toEqual(json(byId));
     });
 
+    // r[verify mcp.authors.resolve-author]
     it("naming the caller's own id returns the own entry, plus author", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
@@ -1004,6 +1240,7 @@ describe("MCP artefact tools (S18)", () => {
       });
     });
 
+    // r[verify mcp.authors.no-email-probe+2]
     it("refuses an author with no entry the same way, whether or not the user exists", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
@@ -1017,6 +1254,7 @@ describe("MCP artefact tools (S18)", () => {
       }
     });
 
+    // r[verify mcp.authors.over-cap-refused+2]
     it("refuses another author's over-cap blob, naming its size, without truncating", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
@@ -1030,7 +1268,10 @@ describe("MCP artefact tools (S18)", () => {
       expect(r.content[0]!.text).not.toContain('"big"');
     });
 
-    it("is owner-scoped: a viewer of a shared artefact, unknown, archived and out-of-scope → not found (AD6, AH7)", async () => {
+    // r[verify mcp.authors.owner-scoped+2]
+    // r[verify hosting.lifecycle.archived-data-inert]
+    // r[verify data.lifecycle.archived-inert]
+    it("is owner-scoped: a viewer of a shared artefact, unknown, archived and out-of-scope → not found", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
       await call(u1, "set_visibility", { id: a.id, visibility: "authenticated" });
@@ -1059,7 +1300,9 @@ describe("MCP artefact tools (S18)", () => {
       expect((await call(u1, "get_artefact_data", { id: a.id, author: "u1" })).isError).toBe(true);
     });
 
-    it("reading another author's entry leaves set_artefact_data writing only the caller's own (AD2/AD5)", async () => {
+    // r[verify data.write.author-is-caller]
+    // r[verify data.write.own-context-only]
+    it("reading another author's entry leaves set_artefact_data writing only the caller's own", async () => {
       const u1 = await clientFor("u1");
       const a = await form(u1);
       await seed(a.id, "u2", '{"theirs":1}', T1);
@@ -1082,6 +1325,529 @@ describe("MCP artefact tools (S18)", () => {
       expect(get.description).toMatch(/set_artefact_data/);
       expect(list.description).toMatch(/get_artefact_data/);
       expect(list.description).toMatch(/authoredAgainstVersion/);
+    });
+  });
+
+  describe("placing an artefact in a collection (S75)", () => {
+    async function collection(
+      id: string,
+      ownerId: string,
+      options: { parent?: Collection; visibility?: Visibility; grant?: string[] } = {},
+    ): Promise<Collection> {
+      let c = createCollection({
+        id,
+        ownerId,
+        name: id,
+        parent: options.parent ?? null,
+        visibility: options.visibility,
+      });
+      for (const userId of options.grant ?? []) c = grantCollectionAccess(c, userId);
+      await deps.collectionRepo.save(c);
+      return c;
+    }
+
+    async function publish(client: Client) {
+      return json(
+        await call(client, "create_artefact", { title: "T", kind: "other", html: "<h1>x</h1>" }),
+      );
+    }
+
+    // r[verify mcp.collections.list-shape]
+    it("list_collections returns a tree's rows root first, with path, parentId, own and the root's tier", async () => {
+      const a = await collection("A", "u1", { visibility: "authenticated" });
+      const a1 = await collection("A1", "u1", { parent: a });
+      await collection("A2", "u1", { parent: a1 });
+
+      const r = await call(await clientFor("u1"), "list_collections", {});
+      expect(json(r)).toEqual({
+        collections: [
+          { id: "A", name: "A", parentId: null, path: ["A"], own: true, visibility: "authenticated" },
+          { id: "A1", name: "A1", parentId: "A", path: ["A", "A1"], own: true, visibility: "authenticated" },
+          {
+            id: "A2",
+            name: "A2",
+            parentId: "A1",
+            path: ["A", "A1", "A2"],
+            own: true,
+            visibility: "authenticated",
+          },
+        ],
+      });
+    });
+
+    // r[verify mcp.collections.list-placeable]
+    it("list_collections lists contributed trees after the caller's own, and nothing for a user with none", async () => {
+      await collection("Mine", "u1");
+      await collection("Theirs", "u2", { visibility: "selected", grant: ["u1"] });
+      await collection("Viewable", "u2", { visibility: "authenticated" });
+
+      const rows = json(await call(await clientFor("u1"), "list_collections", {})).collections;
+      expect(rows.map((r: { id: string; own: boolean }) => [r.id, r.own])).toEqual([
+        ["Mine", true],
+        ["Theirs", false],
+      ]);
+      expect(json(await call(await clientFor("u3"), "list_collections", {}))).toEqual({
+        collections: [],
+      });
+    });
+
+    // r[verify mcp.collections.move-runs-command]
+    it("move_artefact places an artefact in an own collection, and get_artefact agrees", async () => {
+      const client = await clientFor("u1");
+      const a = await publish(client);
+      await collection("C", "u1");
+
+      const moved = await call(client, "move_artefact", { id: a.id, collection_id: "C" });
+      expect(moved.isError).toBeFalsy();
+      expect(json(moved)).toMatchObject({ id: a.id, collectionId: "C", dataAuthorCount: 0 });
+      expect(json(await call(client, "get_artefact", { id: a.id })).collectionId).toBe("C");
+    });
+
+    // r[verify mcp.collections.move-runs-command]
+    it("move_artefact with collection_id null takes it back to top level, where its own tier resurfaces", async () => {
+      const client = await clientFor("u1");
+      const a = await publish(client);
+      await call(client, "set_visibility", { id: a.id, visibility: "public" });
+      await collection("C", "u1");
+      const inside = json(await call(client, "move_artefact", { id: a.id, collection_id: "C" }));
+      expect(inside.effectiveVisibility).toBe("private");
+
+      const out = json(await call(client, "move_artefact", { id: a.id, collection_id: null }));
+      expect(out).toMatchObject({ collectionId: null, effectiveVisibility: "public" });
+      expect(out.url).toMatch(/\/a\//);
+    });
+
+    // r[verify mcp.collections.move-runs-command]
+    it("move_artefact requires collection_id, so an omitted one is never read as top level", async () => {
+      const client = await clientFor("u1");
+      const a = await publish(client);
+      await collection("C", "u1");
+      await call(client, "move_artefact", { id: a.id, collection_id: "C" });
+
+      const r = await call(client, "move_artefact", { id: a.id });
+      expect(r.isError).toBe(true);
+      expect((await deps.repo.findById(a.id, SINGLETON_SCOPE))!.collectionId).toBe("C");
+    });
+
+    // r[verify mcp.collections.move-runs-command]
+    it("move_artefact places into a node of a tree the caller contributes to", async () => {
+      const root = await collection("Theirs", "u2", { visibility: "selected", grant: ["u1"] });
+      await collection("Theirs-1", "u2", { parent: root });
+      const client = await clientFor("u1");
+      const a = await publish(client);
+
+      const moved = await call(client, "move_artefact", { id: a.id, collection_id: "Theirs-1" });
+      expect(moved.isError).toBeFalsy();
+      expect(json(moved).collectionId).toBe("Theirs-1");
+    });
+
+    // r[verify mcp.collections.move-runs-command]
+    it("move_artefact into an authenticated tree shares a never-shared artefact and mints its link", async () => {
+      const client = await clientFor("u1");
+      const a = await publish(client);
+      expect(a.publicSlug).toBeNull();
+      await collection("Team", "u1", { visibility: "authenticated" });
+
+      const moved = json(await call(client, "move_artefact", { id: a.id, collection_id: "Team" }));
+      expect(moved.publicSlug).toEqual(expect.any(String));
+      expect(moved.url).toContain(moved.publicSlug);
+      expect(moved.effectiveVisibility).toBe("authenticated");
+    });
+
+    // r[verify mcp.collections.target-refusal+2]
+    it("refuses an unknown, another user's and a viewer-only collection with one message naming list_collections", async () => {
+      await collection("Private", "u2");
+      await collection("Viewable", "u2", { visibility: "authenticated" });
+      const client = await clientFor("u1");
+      const a = await publish(client);
+
+      const texts: string[] = [];
+      for (const id of ["nope", "Private", "Viewable"]) {
+        const r = await call(client, "move_artefact", { id: a.id, collection_id: id });
+        expect(r.isError).toBe(true);
+        texts.push(r.content[0]!.text.replace(id, "<id>"));
+        expect(r.content[0]!.text).toContain(id);
+      }
+      expect(new Set(texts).size).toBe(1);
+      expect(texts[0]).toMatch(/list_collections/);
+      expect((await deps.repo.findById(a.id, SINGLETON_SCOPE))!.collectionId).toBeNull();
+    });
+
+    // r[verify mcp.collections.move-runs-command]
+    it("move_artefact into an archived own collection is refused and changes nothing", async () => {
+      const c = await collection("Old", "u1");
+      await deps.collectionRepo.save(archiveCollection(c));
+      const client = await clientFor("u1");
+      const a = await publish(client);
+
+      const r = await call(client, "move_artefact", { id: a.id, collection_id: "Old" });
+      expect(r.isError).toBe(true);
+      expect((await deps.repo.findById(a.id, SINGLETON_SCOPE))!.collectionId).toBeNull();
+    });
+
+    // r[verify mcp.collections.move-runs-command]
+    it("move_artefact on another user's, an archived and an unknown artefact is get_artefact's not-found", async () => {
+      await collection("C", "u1");
+      const u1 = await clientFor("u1");
+      const u2 = await clientFor("u2");
+      const theirs = await publish(u2);
+      const archived = await publish(u1);
+      await call(u1, "archive_artefact", { id: archived.id });
+
+      for (const id of [theirs.id, archived.id, "nope"]) {
+        const r = await call(u1, "move_artefact", { id, collection_id: "C" });
+        const got = await call(u1, "get_artefact", { id });
+        expect(r).toEqual(got);
+        expect(r.isError).toBe(true);
+      }
+    });
+
+    // r[verify mcp.tools.save-conflict]
+    it("move_artefact whose save keeps conflicting returns the save-conflict error", async () => {
+      const client = await clientFor("u1");
+      const a = await publish(client);
+      await collection("C", "u1");
+      deps.repo.save = async (x) => {
+        throw new ArtefactConflict(x.id);
+      };
+      const r = await call(client, "move_artefact", { id: a.id, collection_id: "C" });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toMatch(/get_artefact/);
+    });
+  });
+
+  describe("managing collections (S76)", () => {
+    async function collection(
+      id: string,
+      ownerId: string,
+      options: { parent?: Collection; visibility?: Visibility; grant?: string[]; tenantId?: string } = {},
+    ): Promise<Collection> {
+      let c = createCollection({
+        id,
+        ownerId,
+        name: id,
+        parent: options.parent ?? null,
+        visibility: options.visibility,
+        tenantId: options.tenantId,
+      });
+      for (const userId of options.grant ?? []) c = grantCollectionAccess(c, userId);
+      await deps.collectionRepo.save(c);
+      return c;
+    }
+
+    async function publishInto(client: Client, collectionId: string) {
+      const a = json(
+        await call(client, "create_artefact", { title: "T", kind: "other", html: "<h1>x</h1>" }),
+      );
+      const moved = await call(client, "move_artefact", { id: a.id, collection_id: collectionId });
+      expect(moved.isError).toBeFalsy();
+      return a.id as string;
+    }
+
+    const stored = async (id: string) => (await deps.collectionRepo.findById(id, SINGLETON_SCOPE))!;
+    const ownCollectionIds = async (ownerId: string) =>
+      (await deps.collectionRepo.listByOwner(ownerId, SINGLETON_SCOPE, { includeArchived: true })).map(
+        (c) => c.id,
+      );
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("create_collection makes a private root owned by the caller, which list_collections then lists", async () => {
+      const client = await clientFor("u1");
+      const r = await call(client, "create_collection", { name: "Landing page" });
+      expect(r.isError).toBeFalsy();
+      const created = json(r);
+      expect(created).toMatchObject({
+        name: "Landing page",
+        ownerId: "u1",
+        parentId: null,
+        visibility: "private",
+        status: "active",
+        publicSlug: null,
+        linkGate: null,
+        path: ["Landing page"],
+      });
+      expect(json(await call(client, "list_collections", {})).collections).toEqual([
+        expect.objectContaining({ id: created.id, path: ["Landing page"], own: true }),
+      ]);
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("create_collection under an own root makes a child whose path runs from the root", async () => {
+      const client = await clientFor("u1");
+      const root = json(await call(client, "create_collection", { name: "Landing page" }));
+      const child = json(
+        await call(client, "create_collection", { name: "Gallery", parent_id: root.id, description: "Shots" }),
+      );
+      expect(child).toMatchObject({
+        parentId: root.id,
+        rootId: root.id,
+        description: "Shots",
+        path: ["Landing page", "Gallery"],
+      });
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("a nested collection's result reports the tier its tree root serves it under, following the root's changes", async () => {
+      const client = await clientFor("u1");
+      const root = json(await call(client, "create_collection", { name: "Site", visibility: "public" }));
+      const child = json(await call(client, "create_collection", { name: "Games", parent_id: root.id }));
+      expect(child.visibility).toBe("public");
+      expect((await stored(child.id)).visibility).toBe("private"); // the stored row is untouched
+
+      await call(client, "set_collection_visibility", { id: root.id, visibility: "authenticated" });
+      const renamed = json(await call(client, "update_collection", { id: child.id, name: "Play" }));
+      expect(renamed.visibility).toBe("authenticated");
+
+      const archived = json(await call(client, "archive_collection", { id: child.id }));
+      expect(archived.collection.visibility).toBe("authenticated");
+      const restored = json(await call(client, "restore_collection", { id: child.id }));
+      expect(restored.collection.visibility).toBe("authenticated");
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("create_collection with a shared tier mints the root's public slug", async () => {
+      const client = await clientFor("u1");
+      const r = json(await call(client, "create_collection", { name: "Site", visibility: "public" }));
+      expect(r.visibility).toBe("public");
+      expect(r.publicSlug).toEqual(expect.any(String));
+    });
+
+    // r[verify mcp.collections.target-refusal+2]
+    it("create_collection under an unknown, another user's, a contributed or an out-of-scope parent is the uniform refusal", async () => {
+      await collection("Theirs", "u2");
+      const shared = await collection("Shared", "u2", { visibility: "selected", grant: ["u1"] });
+      await collection("Shared-1", "u2", { parent: shared });
+      await collection("Elsewhere", "u1", { tenantId: "other-tenant" });
+      const client = await clientFor("u1");
+
+      const texts: string[] = [];
+      for (const id of ["nope", "Theirs", "Shared", "Shared-1", "Elsewhere"]) {
+        const r = await call(client, "create_collection", { name: "X", parent_id: id });
+        expect(r.isError).toBe(true);
+        expect(r.content[0]!.text).toContain(id);
+        texts.push(r.content[0]!.text.replace(id, "<id>"));
+      }
+      expect(new Set(texts).size).toBe(1);
+      expect(texts[0]).toMatch(/list_collections/);
+      expect(await ownCollectionIds("u1")).toEqual([]);
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("create_collection under an archived own parent is refused and creates nothing", async () => {
+      const old = await collection("Old", "u1");
+      await deps.collectionRepo.save(archiveCollection(old));
+      const r = await call(await clientFor("u1"), "create_collection", { name: "X", parent_id: "Old" });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toMatch(/archived/);
+      expect(await ownCollectionIds("u1")).toEqual(["Old"]);
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("create_collection with both parent_id and visibility is refused: a nested collection takes its root's tier", async () => {
+      await collection("Root", "u1");
+      const r = await call(await clientFor("u1"), "create_collection", {
+        name: "Games",
+        parent_id: "Root",
+        visibility: "public",
+      });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toMatch(/root's tier/);
+      expect(await ownCollectionIds("u1")).toEqual(["Root"]);
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("update_collection renames, sets and clears the description, and refuses an empty update", async () => {
+      const root = await collection("Root", "u1");
+      await collection("Kid", "u1", { parent: root });
+      const client = await clientFor("u1");
+
+      const renamed = json(await call(client, "update_collection", { id: "Kid", name: "Games" }));
+      expect(renamed).toMatchObject({ id: "Kid", name: "Games", path: ["Root", "Games"] });
+      const described = json(await call(client, "update_collection", { id: "Kid", description: "Play" }));
+      expect(described.description).toBe("Play");
+      const cleared = json(await call(client, "update_collection", { id: "Kid", description: null }));
+      expect(cleared.description).toBeNull();
+
+      const empty = await call(client, "update_collection", { id: "Kid" });
+      expect(empty.isError).toBe(true);
+      expect(empty.content[0]!.text).toMatch(/nothing to update/i);
+      expect((await stored("Kid")).name).toBe("Games");
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("update_collection with a blank name carries the domain's refusal and changes nothing", async () => {
+      await collection("Root", "u1");
+      const r = await call(await clientFor("u1"), "update_collection", { id: "Root", name: "  " });
+      expect(r.isError).toBe(true);
+      expect((await stored("Root")).name).toBe("Root");
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("set_collection_visibility on a root changes the tree's tier, mints its slug and back-fills artefact slugs", async () => {
+      const root = await collection("Root", "u1");
+      await collection("Kid", "u1", { parent: root });
+      const client = await clientFor("u1");
+      const artefactId = await publishInto(client, "Kid");
+      expect((await deps.repo.findById(artefactId, SINGLETON_SCOPE))!.publicSlug).toBeNull();
+
+      const r = json(
+        await call(client, "set_collection_visibility", { id: "Root", visibility: "authenticated" }),
+      );
+      expect(r).toMatchObject({ id: "Root", visibility: "authenticated", path: ["Root"] });
+      expect(r.publicSlug).toEqual(expect.any(String));
+      expect((await deps.repo.findById(artefactId, SINGLETON_SCOPE))!.publicSlug).toEqual(
+        expect.any(String),
+      );
+    });
+
+    // r[verify mcp.collections.web-app-only]
+    it("set_collection_visibility away from public clears the root's link protection", async () => {
+      const root = await collection("Root", "u1", { visibility: "public" });
+      await deps.collectionRepo.save({
+        ...root,
+        linkGate: { passwordHash: "scrypt$salt$key", expiresAt: null, version: 1 },
+      });
+      const r = await call(await clientFor("u1"), "set_collection_visibility", {
+        id: "Root",
+        visibility: "authenticated",
+      });
+      expect(r.content[0]!.text).not.toMatch(/passwordHash|scrypt/);
+      expect(json(r).linkGate).toBeNull();
+      // Cleared, its version bumped so every outstanding pass is void.
+      expect((await stored("Root")).linkGate).toEqual({ passwordHash: null, expiresAt: null, version: 2 });
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("set_collection_visibility on a non-root is refused, saying the root governs the tree", async () => {
+      const root = await collection("Root", "u1");
+      await collection("Kid", "u1", { parent: root });
+      const r = await call(await clientFor("u1"), "set_collection_visibility", {
+        id: "Kid",
+        visibility: "public",
+      });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toMatch(/root/);
+      expect((await stored("Kid")).visibility).toBe("private");
+      expect((await stored("Root")).visibility).toBe("private");
+    });
+
+    // r[verify mcp.collections.archive-reports-cascade]
+    // r[verify mcp.collections.writes-run-commands]
+    it("archive_collection cascades over the tree, evicts a contributor's artefact and reports the counts; restore brings it back", async () => {
+      const root = await collection("Root", "u1", { visibility: "selected", grant: ["u2"] });
+      await collection("Kid", "u1", { parent: root });
+      const u1 = await clientFor("u1");
+      const own = await publishInto(u1, "Kid");
+      const theirs = await publishInto(await clientFor("u2"), "Kid");
+
+      const archived = await call(u1, "archive_collection", { id: "Root" });
+      expect(archived.isError).toBeFalsy();
+      expect(json(archived)).toMatchObject({
+        collection: { id: "Root", status: "archived", path: ["Root"] },
+        cascade: { collections: 1, artefacts: 1, evicted: 1 },
+      });
+      expect((await deps.repo.findById(theirs, SINGLETON_SCOPE))!).toMatchObject({
+        collectionId: null,
+        status: "active",
+      });
+      expect((await deps.repo.findById(own, SINGLETON_SCOPE))!.status).toBe("archived");
+      expect(json(await call(u1, "list_collections", {})).collections).toEqual([]);
+
+      const restored = await call(u1, "restore_collection", { id: "Root" });
+      expect(json(restored)).toMatchObject({
+        collection: { id: "Root", status: "active" },
+        cascade: { collections: 1, artefacts: 1, evicted: 0 },
+      });
+      expect((await stored("Kid")).status).toBe("active");
+      expect((await deps.repo.findById(own, SINGLETON_SCOPE))!).toMatchObject({
+        status: "active",
+        collectionId: "Kid",
+      });
+    });
+
+    // r[verify mcp.collections.writes-run-commands]
+    it("restore_collection under an archived ancestor is refused, naming the topmost archived ancestor, and restores nothing", async () => {
+      const root = await collection("Root", "u1");
+      const mid = await collection("Mid", "u1", { parent: root });
+      await collection("Kid", "u1", { parent: mid });
+      const u1 = await clientFor("u1");
+      const own = await publishInto(u1, "Kid");
+      expect((await call(u1, "archive_collection", { id: "Root" })).isError).toBeFalsy();
+
+      const r = await call(u1, "restore_collection", { id: "Kid" });
+      expect(r.isError).toBe(true);
+      expect(r.content[0]!.text).toMatch(/restore 'Root'/);
+      expect((await stored("Kid")).status).toBe("archived");
+      expect((await stored("Mid")).status).toBe("archived");
+      expect((await deps.repo.findById(own, SINGLETON_SCOPE))!.status).toBe("archived");
+    });
+
+    // r[verify mcp.collections.target-refusal+2]
+    it("every write tool on another user's, a contributed, an unknown and an out-of-scope collection is the uniform refusal", async () => {
+      await collection("Theirs", "u2");
+      const shared = await collection("Shared", "u2", { visibility: "selected", grant: ["u1"] });
+      await collection("Shared-1", "u2", { parent: shared });
+      await collection("Elsewhere", "u1", { tenantId: "other-tenant" });
+      const before = await Promise.all(["Theirs", "Shared", "Shared-1"].map(stored));
+      const client = await clientFor("u1");
+      const calls: [string, Record<string, unknown>][] = [
+        ["update_collection", { name: "Hijacked" }],
+        ["set_collection_visibility", { visibility: "public" }],
+        ["archive_collection", {}],
+        ["restore_collection", {}],
+      ];
+
+      const texts = new Set<string>();
+      for (const [tool, args] of calls) {
+        for (const id of ["Theirs", "Shared", "Shared-1", "nope", "Elsewhere"]) {
+          const r = await call(client, tool, { id, ...args });
+          expect(r.isError).toBe(true);
+          expect(r.content[0]!.text).toContain(id);
+          texts.add(r.content[0]!.text.replace(id, "<id>"));
+        }
+      }
+      expect(texts.size).toBe(1);
+      expect([...texts][0]).toMatch(/list_collections/);
+      expect(await Promise.all(["Theirs", "Shared", "Shared-1"].map(stored))).toEqual(before);
+      expect(
+        (await deps.collectionRepo.findById("Elsewhere", { tenantId: "other-tenant" }))!,
+      ).toMatchObject({ name: "Elsewhere", status: "active" });
+    });
+  });
+
+  describe("a refused scope", () => {
+    const REFUSAL = "This account can't use the connector right now.";
+
+    // Arguments that pass a tool's input schema, from its advertised JSON Schema: the refusal
+    // must be what answers, not a validation error.
+    type Schema = { type?: string; enum?: unknown[]; required?: string[]; properties?: Record<string, Schema> };
+    const valueFor = (s: Schema): unknown =>
+      s.enum ? s.enum[0] : s.type === "number" || s.type === "integer" ? 1 : s.type === "boolean" ? true
+        : s.type === "object" ? {} : s.type === "array" ? [] : "x";
+    const argsFor = (schema: Schema) =>
+      Object.fromEntries((schema.required ?? []).map((k) => [k, valueFor(schema.properties?.[k] ?? {})]));
+
+    // r[verify mcp.tools.scope-refusal]
+    it("answers every tool with the refusal's message, while initialize and tools/list still work", async () => {
+      const client = await clientFor("u1", { refused: REFUSAL });
+      const tools = (await client.listTools()).tools;
+      const full = (await (await clientFor("u1")).listTools()).tools;
+      expect(tools).toEqual(full);
+      for (const tool of tools) {
+        const result = (await client.callTool({
+          name: tool.name,
+          arguments: argsFor(tool.inputSchema as Schema),
+        })) as ToolResult;
+        expect({ tool: tool.name, result }).toEqual({
+          tool: tool.name,
+          result: { content: [{ type: "text", text: REFUSAL }], isError: true },
+        });
+      }
+    });
+
+    // r[verify mcp.tools.scope-refusal]
+    it("the OSS resolver never refuses: every Account gets the single tenant", async () => {
+      expect(await singletonMcpScopeResolver({ userId: "u1" })).toBe(SINGLETON_SCOPE);
     });
   });
 });

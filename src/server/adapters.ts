@@ -54,9 +54,9 @@ export const viewRepository = new DrizzleViewRepository(db);
 export const payloadStore = new FilesystemPayloadStore(
   env.ARTEFACTOR_PAYLOAD_DIR,
 );
-// S35 — thumbnails beside the payloads. S37 (AH29) — they are rendered only by
-// the isolated renderer at `ARTEFACTOR_RENDERER_URL`, never in this process;
-// unset, there is no renderer and cards show the kind placeholder.
+// S35 — thumbnails beside the payloads. S37 (hosting.renderer.only-isolated-renders) —
+// they are rendered only by the isolated renderer at `ARTEFACTOR_RENDERER_URL`, never
+// in this process; unset, there is no renderer and cards show the kind placeholder.
 export const thumbnailStore = new FilesystemThumbnailStore(
   env.ARTEFACTOR_THUMBNAIL_DIR,
 );

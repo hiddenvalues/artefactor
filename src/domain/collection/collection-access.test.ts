@@ -15,12 +15,14 @@ function root(over: Partial<Collection> = {}): Collection {
   };
 }
 
-describe("canViewCollection (S28, CL11)", () => {
+describe("canViewCollection (S28)", () => {
+  // r[verify collections.read.follows-root]
   it("is signed-in only — even a public root denies anonymous", () => {
     expect(canViewCollection(root({ visibility: "public" }), null)).toBe(false);
     expect(canViewCollection(root({ visibility: "public" }), OTHER)).toBe(true);
   });
 
+  // r[verify collections.read.follows-root]
   it("follows the matrix per tier", () => {
     expect(canViewCollection(root(), OWNER)).toBe(true);
     expect(canViewCollection(root(), OTHER)).toBe(false); // private
@@ -30,6 +32,7 @@ describe("canViewCollection (S28, CL11)", () => {
     expect(canViewCollection(root({ visibility: "authenticated" }), OTHER)).toBe(true);
   });
 
+  // r[verify collections.read.follows-root]
   it("an archived root grants no one, owner included", () => {
     const archived = root({ visibility: "public", status: "archived" });
     expect(canViewCollection(archived, OWNER)).toBe(false);
@@ -37,7 +40,8 @@ describe("canViewCollection (S28, CL11)", () => {
   });
 });
 
-describe("canContributeToTree (S29, CL12)", () => {
+describe("canContributeToTree (S29)", () => {
+  // r[verify collections.contributor.on-root-access-list]
   it("grants the owner and listed members who can view", () => {
     const shared = root({ visibility: "authenticated", sharedWith: [MEMBER] });
     expect(canContributeToTree(shared, OWNER)).toBe(true);
@@ -47,18 +51,20 @@ describe("canContributeToTree (S29, CL12)", () => {
     expect(canContributeToTree(shared, OTHER)).toBe(false);
   });
 
+  // r[verify collections.contributor.on-root-access-list]
   it("a private root's list grants nothing (members cannot even view)", () => {
     const priv = root({ visibility: "private", sharedWith: [MEMBER] });
     expect(canContributeToTree(priv, MEMBER)).toBe(false);
     expect(canContributeToTree(priv, OWNER)).toBe(true);
   });
 
+  // r[verify collections.contributor.on-root-access-list]
   it("denies anonymous", () => {
     expect(canContributeToTree(root({ visibility: "public" }), null)).toBe(false);
   });
 });
 
-describe("evictFromCollection (CL13/CL14)", () => {
+describe("evictFromCollection", () => {
   const artefact = createArtefact({
     id: "a1",
     ownerId: MEMBER,

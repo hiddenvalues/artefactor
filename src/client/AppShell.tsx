@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
-import { Archive as ArchiveIcon, Check, CircleAlert, Database, RotateCcw, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Archive as ArchiveIcon, Bookmark, Check, CircleAlert, Database, RotateCcw, Trash2 } from "lucide-react";
 import type {
   ArtefactSummary,
   CollectionSummary,
+  MeResponse,
   SetLinkGateRequest,
   SharedArtefactSummary,
 } from "../shared/contracts";
@@ -11,24 +12,32 @@ import { api, ApiError, ownOpenUrl, shareUrl } from "$lib/api";
 import { signOut } from "$lib/auth";
 import { DENSITIES, SORTS, type AccessFilter, type Filters, type KindFilter } from "$lib/browse";
 import { AddToCollectionDialog } from "$lib/components/AddToCollectionDialog";
-import type { OwnedItemProps } from "$lib/components/ArtefactCard";
+import { AppShell as AppFrame } from "$lib/components/AppShell";
+import { ArtefactAccessDialog } from "$lib/components/ArtefactAccessDialog";
+import type { ArtefactItemProps, OwnedItemProps, SharedItemProps } from "$lib/components/ArtefactCard";
 import { CollectionEditorDialog } from "$lib/components/CollectionEditorDialog";
 import { ConfirmDialog } from "$lib/components/ConfirmDialog";
-import type { GalleryItemProps } from "$lib/components/GalleryCard";
 import { ManageAccessDialog, type AccessTarget } from "$lib/components/ManageAccessDialog";
 import { Sidebar } from "$lib/components/Sidebar";
-import { TopBar } from "$lib/components/TopBar";
+import { TopBar, type TopBarAccount } from "$lib/components/TopBar";
 import { UploadDialog } from "$lib/components/UploadDialog";
 import { count, DATA_VIS, KIND_ORDER, VIS, VIS_ORDER, type DataVisibility, type Visibility } from "$lib/format";
-import { persist, restore, usePref } from "$lib/prefs";
+import { accessRootOf, collectionRowOf } from "$lib/artefact-card";
+import { HOME_SCOPES, HOME_SORTS, isShared, type HomeItem, type HomeScope } from "$lib/home";
+import { usePref } from "$lib/prefs";
+import { copyText, inheritedLinkGate } from "$lib/link-protection";
 import { notify } from "$lib/toast";
 import { searchLibrary, type Hit } from "$lib/search";
 import { useLibrary } from "$lib/use-library";
-import type { View } from "$lib/view";
+import { HOME, type Route } from "$lib/route";
+import { useRoute } from "$lib/use-route";
+import { AccountScreen } from "./screens/AccountScreen";
 import { Archive, type PendingDelete } from "./screens/Archive";
 import { CollectionPage } from "./screens/CollectionPage";
-import { Dashboard } from "./screens/Dashboard";
-import { SharedGallery } from "./screens/SharedGallery";
+import type { EditorInput } from "./lib/collection-editor";
+import { Home } from "./screens/Home";
+import { OrganizationSettings } from "./screens/OrganizationSettings";
+import { shareLinkPath } from "../shared/share-link";
 
 /** What every listing screen shares: the filters, density and item props. */
 export interface ListingProps {
@@ -39,32 +48,59 @@ export interface ListingProps {
   density: (typeof DENSITIES)[number];
   onDensity: (d: (typeof DENSITIES)[number]) => void;
   ownedProps: (a: ArtefactSummary) => OwnedItemProps;
-  galleryProps: (g: SharedArtefactSummary, onEject?: () => void) => GalleryItemProps;
+  sharedProps: (g: SharedArtefactSummary, onRemoveFromCollection?: () => void) => SharedItemProps;
 }
 
 // The signed-in app: TopBar + Sidebar + the current screen, and the dialogs
-// every screen can open. Views are in-memory state (no URL router).
+// every screen can open. The current screen lives in the URL (S59, `useRoute`).
 export function AppShell({ user }: { user: { id: string; name: string; email: string } }) {
   const lib = useLibrary(true);
   const { owned, shared, collections, sharedCollections, collectionById } = lib;
   const myId = user.id;
-
-  // ---- view / control state (all but the query and the collection persist) ----
-  const [view, setView] = useState<View>(() => restore("view", ["dashboard", "gallery"], "dashboard"));
+  // S53 — `/api/me`, for the org context a superset reports (none in OSS);
+  // the session's user stands in until it answers.
+  const [me, setMe] = useState<MeResponse | null>(null);
+  // S59 — whether `/api/me` has answered, so a reload on `/organization` waits.
+  const [meLoaded, setMeLoaded] = useState(false);
   useEffect(() => {
-    // Only the two tabs are restored across reloads — a collection/archive view
-    // isn't (its target id wouldn't be).
-    if (view === "dashboard" || view === "gallery") persist("view", view);
-  }, [view]);
+    api
+      .me()
+      .then(setMe, () => {})
+      .finally(() => setMeLoaded(true));
+  }, []);
+
+  // ---- control state (all but the screen, query and expanded rows persist) ----
   const [density, setDensity] = usePref("density", DENSITIES, "grid");
   const [kind, setKind] = usePref<KindFilter>("kind", ["all", ...KIND_ORDER], "all");
   const [access, setAccess] = usePref<AccessFilter>("access", ["all", ...VIS_ORDER], "all");
   const [sort, setSort] = usePref("sort", SORTS, "updated");
+  // S47 — Home's switch and its own sorts (collection pages keep theirs).
+  const [scope, setScope] = usePref<HomeScope>("scope", HOME_SCOPES, "all");
+  const [homeSort, setHomeSort] = usePref("home-sort", HOME_SORTS, "updated");
   // S25 — the collections/bookmarks sidebar. Closed by default; remembered.
   const [sidebar, setSidebar] = usePref("sidebar", ["open", "closed"] as const, "closed");
   const [query, setQuery] = useState("");
-  const [currentCollectionId, setCurrentCollectionId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // ---- the screen (S59): its path is the URL's ----
+  // S58 — the active org, which Organization settings shows; none in OSS.
+  const activeOrg = me?.organizations?.memberships.find((m) => m.id === me.organizations?.activeId);
+  const openableCollectionIds = useMemo(
+    () => new Set([...collections, ...sharedCollections].filter((c) => c.status === "active").map((c) => c.id)),
+    [collections, sharedCollections],
+  );
+  const nav = useRoute(
+    {
+      collectionIds: openableCollectionIds,
+      organizationOffered: activeOrg !== undefined,
+      collectionsLoaded: lib.collectionsLoaded,
+      meLoaded,
+    },
+    // A reload keeps the stored filters; Back and Forward reset them as an open does.
+    (route, via) => enter(route, via === "pop"),
+  );
+  const view = nav.route?.view ?? "dashboard";
+  const currentCollectionId = nav.route?.view === "collection" ? nav.route.id : null;
 
   // ---- dialogs ----
   const [upload, setUpload] = useState<{ editing: ArtefactSummary | null } | null>(null);
@@ -73,6 +109,8 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [managing, setManaging] = useState<AccessTarget | null>(null);
+  // S55 — the top-level artefact whose Manage access dialog is open.
+  const [sharing, setSharing] = useState<ArtefactSummary | null>(null);
   const [movingArtefact, setMovingArtefact] = useState<ArtefactSummary | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
   const [editor, setEditor] = useState<{ editing: CollectionSummary | null; parent: CollectionSummary | null } | null>(
@@ -97,79 +135,71 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   }, [lib.archived, lib.archivedCollections]);
 
   // ---- navigation ----
-  function go(next: View, collectionId: string | null = null) {
-    setView(next);
-    setCurrentCollectionId(collectionId);
-    setKind("all");
-    setAccess("all");
-    setQuery("");
-  }
-  const goDashboard = () => go("dashboard");
-  const goGallery = () => go("gallery");
-  const openArchive = () => go("archive");
-  function openCollection(id: string) {
-    go("collection", id);
-    // Auto-expand the ancestors + the node so the sidebar shows where you are.
-    const open = { ...expanded, [id]: true };
-    let node = collectionById.get(id);
-    while (node?.parentId) {
-      open[node.parentId] = true;
-      node = collectionById.get(node.parentId);
+  // Entering a screen: filters and query reset, and a collection page expands
+  // its ancestors + itself so the sidebar shows where you are.
+  function enter(route: Route, resetFilters = true) {
+    if (resetFilters) {
+      setKind("all");
+      setAccess("all");
+      setQuery("");
     }
-    setExpanded(open);
+    if (route.view !== "collection") return;
+    const { id } = route;
+    setExpanded((prev) => {
+      const open = { ...prev, [id]: true };
+      let node = collectionById.get(id);
+      while (node?.parentId) {
+        open[node.parentId] = true;
+        node = collectionById.get(node.parentId);
+      }
+      return open;
+    });
   }
+  // Each opener pushes one history entry (none when already there).
+  function go(route: Route) {
+    nav.open(route);
+    enter(route);
+  }
+  const goDashboard = () => go(HOME);
+  // A shared collection's breadcrumb returns to Home's Shared with me (S47).
+  const goSharedHome = () => {
+    go(HOME);
+    setScope("shared");
+  };
+  const openArchive = () => go({ view: "archive" });
+  const openAccount = () => go({ view: "account" });
+  const openOrganization = () => go({ view: "organization" });
+  const openCollection = (id: string) => go({ view: "collection", id });
 
   // ---- artefact actions ----
-  const openItem = (a: ArtefactSummary) => window.open(ownOpenUrl(a), "_blank", "noopener");
-  // A bookmarked artefact may be someone else's (BM2) — those open via their
+  // S47 — every open stamps your view locally, so Home's Recent moves at once;
+  // the server records it as the shell is served (views.record.on-shell-serve,
+  // views.record.on-owner-preview).
+  const openUrl = (id: string, url: string) => {
+    lib.markViewed(id);
+    window.open(url, "_blank", "noopener");
+  };
+  const openItem = (a: ArtefactSummary) => openUrl(a.id, ownOpenUrl(a));
+  // A bookmarked artefact may be someone else's (collections.bookmark.artefact-view-gated) — those open via their
   // slug link; the owner-preview path is owner-only.
   const openBookmarked = (a: ArtefactSummary) =>
-    window.open(a.ownerId === myId ? ownOpenUrl(a) : `/a/${a.publicSlug}`, "_blank", "noopener");
-  const openShared = (g: SharedArtefactSummary) => window.open(`/a/${g.publicSlug}`, "_blank", "noopener");
+    openUrl(a.id, a.ownerId === myId ? ownOpenUrl(a) : shareLinkPath(a.publicSlug!));
+  const openShared = (g: SharedArtefactSummary) => openUrl(g.id, shareLinkPath(g.publicSlug!));
 
+  // S62 — the card's and the row's copy: "Link copied" only once the write has
+  // resolved; no clipboard, or a rejected write, says so instead.
+  // r[impl hosting.card.copy-failure-says-so]
   async function copyLink(a: ArtefactSummary) {
     const url = shareUrl(a);
     if (!url) return;
-    try {
-      await navigator.clipboard?.writeText(url);
-    } catch {
-      /* clipboard may be unavailable */
-    }
-    notify(`Link copied · ${url.replace(/^https?:\/\//, "")}`, Check);
+    if ((await copyText(navigator.clipboard, url)) === "Copied")
+      notify(`Link copied · ${url.replace(/^https?:\/\//, "")}`, Check);
+    else notify("Couldn't copy the link", CircleAlert);
   }
 
   const fail = (e: unknown, fallback: string) => notify(e instanceof ApiError ? e.message : fallback, CircleAlert);
 
-  async function changeVisibility(a: ArtefactSummary, v: Visibility, linkGate?: { password?: string; expiresAt?: string }) {
-    try {
-      await api.setVisibility(a.id, v, linkGate);
-      await Promise.all([lib.loadOwned(), lib.loadShared()]);
-      notify(`Visibility set to ${VIS[v].label}`, VIS[v].icon);
-      // Switching to "Specific people" jumps straight into the member picker.
-      if (v === "selected") setManaging({ kind: "artefact", id: a.id, title: a.title });
-    } catch (e) {
-      fail(e, "Could not update visibility");
-    }
-  }
-
-  // S32a — change the link protection of a public artefact (AH31). Clearing
-  // both halves is a DELETE; anything else a PUT of just what changed.
-  async function changeLinkGate(a: ArtefactSummary, change: SetLinkGateRequest) {
-    const clearsAll =
-      (change.password === null || (change.password === undefined && !a.linkGate?.passwordProtected)) &&
-      (change.expiresAt === null || (change.expiresAt === undefined && !a.linkGate?.expiresAt));
-    try {
-      if (clearsAll) await api.clearLinkGate(a.id);
-      else if (Object.keys(change).length) await api.setLinkGate(a.id, change);
-      else return;
-      await lib.loadOwned();
-      notify(clearsAll ? "Link protection removed" : "Link protection saved", Check);
-    } catch (e) {
-      fail(e, "Could not update link protection");
-    }
-  }
-
-  // S41 — whether viewers may load each other's saved data (AH30).
+  // S41 — whether viewers may load each other's saved data (hosting.data-visibility.owner-set).
   async function changeDataVisibility(a: ArtefactSummary, v: DataVisibility) {
     try {
       await api.setDataVisibility(a.id, v);
@@ -209,16 +239,24 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   }
 
   // ---- bookmarks (S27) ----
-  async function setBookmark(kindOf: "artefact" | "collection", id: string, on: boolean) {
+  async function setBookmark(kindOf: "artefact" | "collection", id: string, on: boolean): Promise<boolean> {
     try {
       await (kindOf === "artefact" ? api.setArtefactBookmark(id, on) : api.setCollectionBookmark(id, on));
       await lib.loadBookmarks();
+      return true;
     } catch {
       notify("Could not update the bookmark", CircleAlert);
+      return false;
     }
   }
 
-  // ---- eject (S29, CL13) ----
+  // S54 — a card's bookmark button removes the bookmark, and Undo re-adds it.
+  async function removeBookmark(id: string) {
+    if (await setBookmark("artefact", id, false))
+      notify("Bookmark removed", Bookmark, { label: "Undo", onClick: () => void setBookmark("artefact", id, true) });
+  }
+
+  // ---- eject (S29, collections.containment.co-owned) ----
   async function ejectFromCurrent(g: SharedArtefactSummary) {
     if (!currentCollectionId) return;
     try {
@@ -236,21 +274,24 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
     setEditor({ editing, parent });
   }
 
-  async function submitEditor(input: { name: string; visibility?: Visibility }) {
+  async function submitEditor(input: EditorInput) {
     if (!editor) return;
     setEditorBusy(true);
     setEditorError(null);
     try {
       if (editor.editing) {
+        const before = editor.editing.visibility;
         const updated = await api.editCollection(editor.editing.id, input);
         notify("Collection updated", Check);
         setEditor(null);
         await Promise.all([lib.loadCollections(), lib.loadOwned(), lib.loadShared()]);
-        if (input.visibility === "selected") setManaging({ kind: "collection", id: updated.id, title: updated.name });
+        // Open the access list only on a change to `selected`, not on every save of a selected root.
+        if (input.visibility === "selected" && before !== "selected") setManaging({ kind: "collection", id: updated.id, title: updated.name });
       } else {
         const parent = editor.parent;
         const created = await api.createCollection({
           name: input.name,
+          description: input.description,
           parentId: parent?.id ?? null,
           visibility: input.visibility,
         });
@@ -268,14 +309,35 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
     }
   }
 
-  async function changeCollectionVisibility(c: CollectionSummary, v: Visibility) {
+  async function changeCollectionVisibility(
+    c: CollectionSummary,
+    v: Visibility,
+    linkGate?: { password?: string; expiresAt?: string },
+  ) {
     try {
-      await api.editCollection(c.id, { visibility: v });
+      await api.editCollection(c.id, linkGate ? { visibility: v, linkGate } : { visibility: v });
       await Promise.all([lib.loadCollections(), lib.loadOwned(), lib.loadShared()]);
       notify(`Collection access set to ${VIS[v].label} — artefacts inside follow`, VIS[v].icon);
       if (v === "selected") setManaging({ kind: "collection", id: c.id, title: c.name });
     } catch (e) {
       fail(e, "Could not update access");
+    }
+  }
+
+  // S32b — change the link protection of a public collection root, which its
+  // whole tree follows. Clearing both halves is a DELETE, as for an artefact.
+  async function changeCollectionLinkGate(c: CollectionSummary, change: SetLinkGateRequest) {
+    const clearsAll =
+      (change.password === null || (change.password === undefined && !c.linkGate?.passwordProtected)) &&
+      (change.expiresAt === null || (change.expiresAt === undefined && !c.linkGate?.expiresAt));
+    try {
+      if (clearsAll) await api.clearCollectionLinkGate(c.id);
+      else if (Object.keys(change).length) await api.setCollectionLinkGate(c.id, change);
+      else return;
+      await lib.loadCollections();
+      notify(clearsAll ? "Link protection removed" : "Link protection saved", Check);
+    } catch (e) {
+      fail(e, "Could not update link protection");
     }
   }
 
@@ -292,8 +354,12 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   async function archiveCollection(c: CollectionSummary) {
     try {
       const { cascade } = await api.archiveCollection(c.id);
-      // Navigating from inside the archived subtree would strand the view.
-      if (view === "collection") goDashboard();
+      // Navigating from inside the archived subtree would strand the view;
+      // replacing its entry keeps Back from returning to it.
+      if (view === "collection") {
+        nav.leave(HOME);
+        enter(HOME);
+      }
       await lib.refreshAll();
       const suffix = cascade.artefacts > 0 ? ` with ${count(cascade.artefacts, "artefact")}` : "";
       const evicted =
@@ -401,9 +467,9 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
       } else {
         const created = await api.create({ title: input.title, kind: input.kind, file: input.file! });
         watchThumbnail(created.id, created.thumbnailUrl);
-        // Uploading from a collection page you own or contribute to (CL12)
+        // Uploading from a collection page you own or contribute to (collections.contributor.on-root-access-list)
         // places the new artefact there: create-in = create + move-in, so the
-        // usual invariants and the CL6 slug mint apply unchanged.
+        // usual invariants and the collections.slug.minted-on-effective-share slug mint apply unchanged.
         const into =
           view === "collection" &&
           currentCollection !== null &&
@@ -431,6 +497,47 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
     }
   }
 
+  // S80 — a switch lands on Home: the shell takes the fresh identity, shows
+  // Home (the page you were on belonged to the previous org), re-fetches its
+  // lists under the new org and moves focus to Home's heading; a failed one
+  // moves focus to the account button. The menu leaves focus to the shell, so
+  // it goes straight there however long the answer takes, unless the user has
+  // moved it on meanwhile.
+  // One switch at a time: a pick made while one is pending is ignored, so an
+  // older answer can never land after a newer choice.
+  const switching = useRef(false);
+  const topBar = useRef<TopBarAccount>(null);
+  const homeHeading = useRef<HTMLHeadingElement>(null);
+  const focusHome = useRef(false);
+  const focusIsFree = () => {
+    const at = document.activeElement;
+    return at === null || at === document.body || (topBar.current?.holds(at) ?? false);
+  };
+  useEffect(() => {
+    if (!focusHome.current || !homeHeading.current) return;
+    focusHome.current = false;
+    if (focusIsFree()) homeHeading.current.focus();
+  });
+  // r[impl platform.top-bar.switch-organization+3]
+  async function switchOrganization(organizationId: string) {
+    if (switching.current) return;
+    switching.current = true;
+    try {
+      const next = await api.switchOrganization(organizationId);
+      setMe(next);
+      focusHome.current = true;
+      goDashboard();
+      const org = next.organizations?.memberships.find((m) => m.id === next.organizations?.activeId);
+      notify(`Switched to ${org?.name ?? "the organization"}`, Check);
+      void lib.refreshAll();
+    } catch {
+      notify("Couldn’t switch organization", CircleAlert);
+      if (focusIsFree()) topBar.current?.focus();
+    } finally {
+      switching.current = false;
+    }
+  }
+
   async function doSignOut() {
     // signOut() clears the session cookie server-side; a full reload re-resolves
     // the (now absent) session and clears all state.
@@ -441,30 +548,50 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   // ---- per-item props, shared by every listing screen ----
   const isColl = view === "collection";
   const collectionNameOf = (id: string | null) => (id ? (collectionById.get(id)?.name ?? "") : "");
+  // S64 — the tree root an owned artefact's access follows, for its "Access
+  // inherited" popover to name and open.
+  const accessRootProp = (a: ArtefactSummary) => {
+    const root = accessRootOf(a, collectionById);
+    return root && { name: root.name, onOpen: () => openCollection(root.id) };
+  };
   const ownedProps = (a: ArtefactSummary): OwnedItemProps => ({
     a,
     onOpen: () => openItem(a),
     onCopy: () => void copyLink(a),
     onEdit: () => openUpload(a),
     onArchive: () => void archiveItem(a),
-    onVisibility: (v, gate) => void changeVisibility(a, v, gate),
-    onLinkGate: (change) => void changeLinkGate(a, change),
     onDataVisibility: (v) => void changeDataVisibility(a, v),
-    onManage: () => setManaging({ kind: "artefact", id: a.id, title: a.title }),
+    onShare: () => setSharing(a),
     collectionName: a.collectionId ? collectionNameOf(a.collectionId) : null,
+    collection: collectionRowOf(a, collectionById),
+    inheritedGate: inheritedLinkGate(a.collectionId, collectionById),
     onOpenCollection: a.collectionId ? () => openCollection(a.collectionId!) : undefined,
+    accessRoot: accessRootProp(a),
     bookmarked: lib.bookmarkedArtefactIds.has(a.id),
     onBookmark: () => void setBookmark("artefact", a.id, !lib.bookmarkedArtefactIds.has(a.id)),
+    onRemoveBookmark: () => void removeBookmark(a.id),
     onMoveToCollection: () => setMovingArtefact(a),
     showCollectionChip: !isColl,
   });
-  const galleryProps = (g: SharedArtefactSummary, onEject?: () => void): GalleryItemProps => ({
-    g,
-    onOpen: () => openShared(g),
-    bookmarked: lib.bookmarkedArtefactIds.has(g.id),
-    onBookmark: () => void setBookmark("artefact", g.id, !lib.bookmarkedArtefactIds.has(g.id)),
-    onEject,
+  // S47/S62 — another user's artefact, on Home and on a collection page alike:
+  // the same card and row in their viewer variant, with only what a viewer may
+  // do, plus the collection owner's eject on their own page (S29).
+  const sharedProps = (a: SharedArtefactSummary, onRemoveFromCollection?: () => void): SharedItemProps => ({
+    a,
+    shared: true,
+    onOpen: () => openShared(a),
+    onCopy: () => void copyLink(a),
+    bookmarked: lib.bookmarkedArtefactIds.has(a.id),
+    onBookmark: () => void setBookmark("artefact", a.id, !lib.bookmarkedArtefactIds.has(a.id)),
+    onRemoveBookmark: () => void removeBookmark(a.id),
+    // S54 — a collection shared with you opens like the Sidebar's "Shared
+    // with me" group does; one you can't see isn't named (S28).
+    collection: collectionRowOf(a, collectionById),
+    onOpenCollection: a.collectionId ? () => openCollection(a.collectionId!) : undefined,
+    showCollectionChip: !isColl,
+    onRemoveFromCollection,
   });
+  const homeItemProps = (a: HomeItem): ArtefactItemProps => (isShared(a) ? sharedProps(a) : ownedProps(a));
   const listing: ListingProps = {
     filters: { kind, access, sort },
     onKind: setKind,
@@ -473,7 +600,7 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
     density,
     onDensity: setDensity,
     ownedProps,
-    galleryProps,
+    sharedProps,
   };
 
   // S46 — the top bar's search is global: every artefact and collection the
@@ -490,84 +617,113 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   }
 
   return (
-    <div className="flex min-h-screen">
-      {sidebar === "open" && (
-        <Sidebar
-          view={view}
-          collections={collections}
-          activeCollectionId={currentCollectionId}
-          expanded={expanded}
-          bookmarkedArtefacts={lib.bookmarkedArtefacts}
-          bookmarkedCollections={lib.bookmarkedCollections}
-          archivedCount={archivedCount}
-          onHome={goDashboard}
-          onOpenShared={goGallery}
-          onOpenCollection={openCollection}
-          onOpenArchive={openArchive}
-          onNewCollection={() => openEditor(null, null)}
-          onToggleExpand={(id) => setExpanded((e) => ({ ...e, [id]: !e[id] }))}
-          onOpenArtefact={openBookmarked}
-          onRemoveBookmark={(k, id) => void setBookmark(k, id, false)}
-        />
-      )}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar
-          query={query}
-          results={results}
-          user={user}
-          onSearch={setQuery}
-          onOpenResult={openResult}
-          onOpenUpload={() => openUpload()}
-          onSignOut={() => void doSignOut()}
-          onToggleSidebar={() => setSidebar(sidebar === "open" ? "closed" : "open")}
-        />
-
-        <main className="mx-auto w-full max-w-7xl flex-1 px-6 pt-6 pb-16">
-          {view === "archive" ? (
-            <Archive
-              archived={lib.archived}
-              archivedCollections={lib.archivedCollections}
-              onRestore={(id) => void restoreItem(id)}
-              onRestoreCollection={(c) => void restoreCollection(c)}
-              onDelete={setPendingDelete}
-            />
-          ) : view === "collection" && currentCollection ? (
-            <CollectionPage
-              {...listing}
-              collection={currentCollection}
-              isOwn={isOwnCollection}
-              shared={currentShared}
-              owned={owned}
-              others={shared}
-              collectionById={collectionById}
-              pool={isOwnCollection ? collections : sharedCollections}
-              bookmarked={lib.bookmarkedCollectionIds.has(currentCollection.id)}
-              onToggleBookmark={() =>
-                void setBookmark("collection", currentCollection.id, !lib.bookmarkedCollectionIds.has(currentCollection.id))
-              }
-              onOpenCollection={openCollection}
-              onGoDashboard={goDashboard}
-              onGoGallery={goGallery}
-              onChangeVisibility={(v) => void changeCollectionVisibility(currentCollection, v)}
-              onManage={() => setManaging({ kind: "collection", id: currentCollection.id, title: currentCollection.name })}
-              onEdit={() => openEditor(currentCollection, null)}
-              onNewSub={() => openEditor(null, currentCollection)}
-              onArchive={() => void archiveCollection(currentCollection)}
-              onEject={(g) => void ejectFromCurrent(g)}
-            />
-          ) : view === "gallery" ? (
-            <SharedGallery
-              {...listing}
-              shared={shared}
+    <>
+      <AppFrame
+        sidebar={
+          sidebar === "open" && (
+            <Sidebar
+              view={view}
+              collections={collections}
               sharedCollections={sharedCollections}
-              owned={owned}
+              activeCollectionId={currentCollectionId}
+              expanded={expanded}
+              bookmarkedArtefacts={lib.bookmarkedArtefacts}
+              bookmarkedCollections={lib.bookmarkedCollections}
+              archivedCount={archivedCount}
+              onHome={goDashboard}
               onOpenCollection={openCollection}
+              onOpenArchive={openArchive}
+              onNewCollection={() => openEditor(null, null)}
+              onToggleExpand={(id) => setExpanded((e) => ({ ...e, [id]: !e[id] }))}
+              onOpenArtefact={openBookmarked}
+              onRemoveBookmark={(k, id) => void setBookmark(k, id, false)}
             />
-          ) : (
-            <Dashboard {...listing} owned={owned} onUpload={() => openUpload()} />
-          )}
-        </main>
-      </div>
+          )
+        }
+        topBar={
+          <TopBar
+            query={query}
+            results={results}
+            user={me ?? user}
+            onSearch={setQuery}
+            onOpenResult={openResult}
+            onOpenUpload={() => openUpload()}
+            onSignOut={() => void doSignOut()}
+            onSwitchOrganization={(id) => void switchOrganization(id)}
+            onOpenAccount={openAccount}
+            onOpenOrganization={openOrganization}
+            onToggleSidebar={() => setSidebar(sidebar === "open" ? "closed" : "open")}
+            onGoHome={goDashboard}
+            accountRef={topBar}
+          />
+        }
+      >
+        {nav.route === null ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">Loading…</div>
+        ) : view === "account" ? (
+          <AccountScreen user={me ?? user} onSaved={setMe} />
+        ) : view === "organization" && activeOrg ? (
+          <OrganizationSettings
+            activeId={activeOrg.id}
+            orgName={activeOrg.name}
+            youId={myId}
+            onRenamed={() => void api.me().then(setMe, () => {})}
+          />
+        ) : view === "archive" ? (
+          <Archive
+            archived={lib.archived}
+            archivedCollections={lib.archivedCollections}
+            onRestore={(id) => void restoreItem(id)}
+            onRestoreCollection={(c) => void restoreCollection(c)}
+            onDelete={setPendingDelete}
+          />
+        ) : view === "collection" && currentCollection ? (
+          <CollectionPage
+            {...listing}
+            collection={currentCollection}
+            isOwn={isOwnCollection}
+            shared={currentShared}
+            owned={owned}
+            others={shared}
+            collectionById={collectionById}
+            pool={isOwnCollection ? collections : sharedCollections}
+            bookmarked={lib.bookmarkedCollectionIds.has(currentCollection.id)}
+            onToggleBookmark={() =>
+              void setBookmark("collection", currentCollection.id, !lib.bookmarkedCollectionIds.has(currentCollection.id))
+            }
+            onOpenCollection={openCollection}
+            onGoDashboard={goDashboard}
+            onGoGallery={goSharedHome}
+            onChangeVisibility={(v, gate) => void changeCollectionVisibility(currentCollection, v, gate)}
+            onLinkGate={(change) => void changeCollectionLinkGate(currentCollection, change)}
+            onManage={() => setManaging({ kind: "collection", id: currentCollection.id, title: currentCollection.name })}
+            onEdit={() => openEditor(currentCollection, null)}
+            onNewSub={() => openEditor(null, currentCollection)}
+            onArchive={() => void archiveCollection(currentCollection)}
+            onEject={(g) => void ejectFromCurrent(g)}
+          />
+        ) : (
+          <Home
+            headingRef={homeHeading}
+            owned={owned}
+            shared={shared}
+            views={lib.views}
+            loaded={lib.loaded}
+            scope={scope}
+            onScope={setScope}
+            kind={kind}
+            onKind={setKind}
+            access={access}
+            onAccess={setAccess}
+            sort={homeSort}
+            onSort={setHomeSort}
+            density={density}
+            onDensity={setDensity}
+            itemProps={homeItemProps}
+            onUpload={() => openUpload()}
+          />
+        )}
+      </AppFrame>
 
       {upload && (
         <UploadDialog
@@ -579,6 +735,15 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
         />
       )}
       {managing && <ManageAccessDialog target={managing} onClose={closeManaging} />}
+      {sharing && (
+        <ArtefactAccessDialog
+          artefact={sharing}
+          onClose={() => setSharing(null)}
+          onSaved={async () => {
+            await Promise.all([lib.loadOwned(), lib.loadShared(), lib.loadCollections()]);
+          }}
+        />
+      )}
       {movingArtefact && (
         <AddToCollectionDialog
           artefact={movingArtefact}
@@ -608,7 +773,7 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
           onClose={() => setPendingDelete(null)}
         />
       )}
-    </div>
+    </>
   );
 }
 

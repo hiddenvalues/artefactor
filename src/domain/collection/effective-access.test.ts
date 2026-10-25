@@ -30,12 +30,15 @@ function makeRoot(over: Partial<Collection> = {}): Collection {
   };
 }
 
-describe("effectiveViewable (CL5/AH20) feeding the unchanged access matrix", () => {
+describe("effectiveViewable feeding the unchanged access matrix", () => {
+  // r[verify hosting.access.effective-from-tree-root]
   it("a top-level artefact is governed by its own tier", () => {
     const a = makeArtefact({ visibility: "public" });
     expect(canViewArtefact(effectiveViewable(a, null), null)).toBe(true);
   });
 
+  // r[verify hosting.access.effective-from-tree-root]
+  // r[verify collections.access.root-governs-tree]
   it("a private artefact in an authenticated tree is viewable by any signed-in user", () => {
     const root = makeRoot({ visibility: "authenticated" });
     const a = makeArtefact({ collectionId: root.id }); // own tier: private
@@ -45,6 +48,8 @@ describe("effectiveViewable (CL5/AH20) feeding the unchanged access matrix", () 
     expect(effectiveVisibility(a, root)).toBe("authenticated");
   });
 
+  // r[verify hosting.access.effective-from-tree-root]
+  // r[verify collections.access.contained-own-tier-dormant]
   it("an own-tier public artefact in a private tree is NOT viewable by others (dormancy)", () => {
     const root = makeRoot({ visibility: "private" });
     const a = makeArtefact({
@@ -58,21 +63,25 @@ describe("effectiveViewable (CL5/AH20) feeding the unchanged access matrix", () 
     expect(canViewArtefact(eff, OWNER)).toBe(true); // the owner always may
   });
 
+  // r[verify hosting.access.effective-from-tree-root]
+  // r[verify collections.access.root-governs-tree]
+  // r[verify collections.access.contained-own-tier-dormant]
   it("a selected tree grants exactly the root's members", () => {
     const root = makeRoot({ visibility: "selected", sharedWith: ["friend"] });
     const a = makeArtefact({ sharedWith: ["stranger"], collectionId: root.id });
     const eff = effectiveViewable(a, root);
     expect(canViewArtefact(eff, "friend")).toBe(true);
-    // The artefact's own dormant list does not leak through (CL5).
+    // The artefact's own dormant list does not leak through.
     expect(canViewArtefact(eff, "stranger")).toBe(false);
   });
 
   it("the artefact's own archived status stays authoritative", () => {
     const root = makeRoot({ visibility: "public" });
     const a = makeArtefact({ status: "archived", collectionId: root.id });
-    expect(canViewArtefact(effectiveViewable(a, root), null)).toBe(false); // AH7
+    expect(canViewArtefact(effectiveViewable(a, root), null)).toBe(false); // hosting.lifecycle.archived-not-served
   });
 
+  // r[verify collections.access.archived-root-serves-nothing]
   it("an archived root renders the whole tree inert, even for an active artefact", () => {
     const root = makeRoot({ visibility: "public", status: "archived" });
     const a = makeArtefact({ collectionId: root.id }); // active, out of step
@@ -80,7 +89,8 @@ describe("effectiveViewable (CL5/AH20) feeding the unchanged access matrix", () 
   });
 });
 
-describe("moveArtefactToCollection (CL1/CL7)", () => {
+describe("moveArtefactToCollection", () => {
+  // r[verify collections.access.contained-own-tier-dormant]
   it("sets collectionId, leaving the own tier dormant but intact", () => {
     const root = makeRoot();
     const a = makeArtefact({ visibility: "authenticated", publicSlug: "s" });
@@ -89,7 +99,7 @@ describe("moveArtefactToCollection (CL1/CL7)", () => {
     expect(moved.visibility).toBe("authenticated"); // dormant, retained
     expect(moved.publicSlug).toBe("s");
     const back = moveArtefactToCollection(moved, null);
-    expect(back.collectionId).toBeNull(); // own tier resurfaces (CL5)
+    expect(back.collectionId).toBeNull(); // own tier resurfaces
   });
 
   it("is a no-op when the target equals the current collection", () => {
@@ -97,8 +107,11 @@ describe("moveArtefactToCollection (CL1/CL7)", () => {
     expect(moveArtefactToCollection(a, null)).toBe(a);
   });
 
+  // r[verify hosting.collection.same-tenant]
+  // r[verify collections.lifecycle.archived-inert+3]
   it("rejects cross-tenant, archived targets, and archived artefacts", () => {
-    // Cross-owner placement is a command-level authority question now (CL12) —
+    // Cross-owner placement is a command-level authority question now
+    // (hosting.collection.move-into-own-or-contributed) —
     // the pure transition allows it (a contributor placing into another
     // owner's tree); tenant and status stay hard invariants.
     expect(

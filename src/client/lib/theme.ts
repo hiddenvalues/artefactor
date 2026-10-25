@@ -15,6 +15,7 @@ const KEY = "theme";
 const FALLBACK: Theme = "system";
 const DARK_QUERY = "(prefers-color-scheme: dark)";
 
+// r[impl platform.theme.resolve]
 export function resolveTheme(pref: Theme, prefersDark: boolean): ResolvedTheme {
   return pref === "dark" || (pref === "system" && prefersDark) ? "dark" : "light";
 }
@@ -36,6 +37,7 @@ const osPrefersDark = () => typeof matchMedia === "function" && matchMedia(DARK_
 const ThemeContext = createContext<ThemeState>({ theme: FALLBACK, resolved: "light", setTheme: () => {} });
 
 /** Mounted once at the app root: owns the preference and `<html>`'s `.dark`. */
+// r[impl platform.theme.menu-applies]
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = usePref(KEY, THEMES, FALLBACK);
   const [prefersDark, setPrefersDark] = useState(osPrefersDark);

@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, mergeConfig, type Plugin } from "vite";
 import app from "./vite.config";
-import { COMPONENTS_DIR, previewGroup, previewId } from "./src/client/design/registry";
+import { COMPONENTS_DIR, previewGroup, previewId, SCREENS_DIR } from "./src/client/design/registry";
 
-// The design catalog (docs/design/README.md): every component's `*.preview.tsx`
-// on one page. Its own Vite root, so the app's build never sees it.
+// The design catalog (docs/design/README.md): every component's and (S70)
+// screen's `*.preview.tsx` on one page. Its own Vite root, so the app's build never sees it.
 //   pnpm design:catalog — the catalog in dev, on http://localhost:5274
 //   pnpm design:export  — dist/design: the catalog page plus one standalone page
 //                         per preview (components/<id>.html) for `/design-sync`
@@ -22,9 +22,11 @@ function standalonePages(): Plugin {
     writeBundle({ dir }) {
       if (!dir) return;
       const catalog = readFileSync(join(dir, "index.html"), "utf8").replaceAll('"./', '"../');
-      const previews = readdirSync(COMPONENTS_DIR, { recursive: true, withFileTypes: true })
-        .filter((e) => e.isFile() && e.name.endsWith(".preview.tsx"))
-        .map((e) => join(e.parentPath, e.name).split("\\").join("/"));
+      const previews = [COMPONENTS_DIR, SCREENS_DIR].flatMap((d) =>
+        readdirSync(d, { recursive: true, withFileTypes: true })
+          .filter((e) => e.isFile() && e.name.endsWith(".preview.tsx"))
+          .map((e) => join(e.parentPath, e.name).split("\\").join("/")),
+      );
       mkdirSync(join(dir, "components"), { recursive: true });
       for (const file of previews) {
         const id = previewId(file);
@@ -40,7 +42,8 @@ export default mergeConfig(
   defineConfig({
     root,
     base: "./",
-    publicDir: false,
+    // The app's static assets, which a screen preview loads as the app does (`/google-g.svg`).
+    publicDir: fileURLToPath(new URL("./public", import.meta.url)),
     plugins: [standalonePages()],
     build: {
       outDir: fileURLToPath(new URL("./dist/design", import.meta.url)),

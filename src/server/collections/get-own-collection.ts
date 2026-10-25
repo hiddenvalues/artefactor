@@ -6,7 +6,9 @@ import type { TenantScope } from "../../domain/artefact/tenant-scope";
 // Load a collection the requester owns, regardless of status (the lifecycle
 // commands need the archived one). Missing, not-owned, and out-of-scope all
 // surface identically as not-found, so a collection's existence never leaks to
-// a non-owner (CL10, mirroring AH8/AH9).
+// a non-owner (mirroring hosting.access.matrix, hosting.authority.owner-only).
+// r[impl collections.authority.owner-only+3]
+// r[impl collections.access.no-existence-leak]
 export async function loadOwnCollection(
   repo: CollectionRepository,
   params: { id: string; ownerId: string; scope: TenantScope },

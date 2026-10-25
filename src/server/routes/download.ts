@@ -15,22 +15,26 @@ import {
 
 export interface DownloadRoutesDeps {
   artefactRepo: ArtefactRepository;
-  // AH20 — the access decision needs the effective tier (collection tree root).
+  // hosting.access.effective-from-tree-root — the access decision needs the effective tier
+  // (collection tree root).
   collectionRepo: CollectionRepository;
   payloadStore: PayloadStore;
-  // S22 (AH17) — resolves the request's tenant scope for the id-fallback resolve.
+  // S22 (hosting.tenant.invisible-to-oss) — resolves the request's tenant scope for the id-fallback
+  // resolve.
   resolveScope: TenantScopeResolver;
-  // S22 (AH18) — decides the `authenticated` tier for the slug-resolved artefact.
+  // S22 (hosting.access.policy-decided) — decides the `authenticated` tier for the slug-resolved
+  // artefact.
   accessPolicy?: AccessPolicy;
 }
 
-// S30 — export an artefact's HTML. Mounted at `/api/artefacts/:ref/download`,
-// where `:ref` is the artefact's slug or its id (the id form is what the owner's
-// dashboard uses for a never-shared artefact). Resolution and the access matrix
-// are the *same* ones the data reads use (`resolveViewableArtefact`), so
-// effective-tier resolution through a collection root (AH20) and the
-// `AccessPolicy` cell (AH18) are inherited, not re-implemented: unknown ref,
-// not-viewable, and archived all surface as a flat 404 (AH7/AH8).
+// S30 — export an artefact's HTML. Mounted at `/api/artefacts/:ref/download`, where `:ref` is the
+// artefact's slug or its id (the id form is what the owner's dashboard uses for a never-shared
+// artefact). Resolution and the access matrix are the *same* ones the data reads use
+// (`resolveViewableArtefact`), so effective-tier resolution through a collection root
+// (hosting.access.effective-from-tree-root) and the `AccessPolicy` cell
+// (hosting.access.policy-decided) are inherited, not re-implemented: unknown ref, not-viewable, and
+// archived all surface as a flat 404 (hosting.lifecycle.archived-not-served,
+// hosting.access.no-existence-leak).
 //
 // The body is the **stored** payload, verbatim — never the injected render: no
 // S13 localStorage bootstrap and no S12 host shell. That is what makes the
@@ -42,6 +46,9 @@ export function createDownloadRoutes(deps: DownloadRoutesDeps) {
   r.get("/:ref/download", async (c) => {
     const ref = c.req.param("ref");
     try {
+      // r[impl mcp.download.owner-by-id]
+      // r[impl mcp.download.shared-by-slug+2]
+      // r[impl hosting.export.archived-not-exported]
       const artefact = await resolveViewableArtefact(
         deps,
         ref,
@@ -52,19 +59,21 @@ export function createDownloadRoutes(deps: DownloadRoutesDeps) {
       const payload = await deps.payloadStore.get(artefact.payloadRef);
       // Name the file after the title; a title with no letters or digits at all
       // falls back to the handle the caller already has (slug, else id).
-      const filename = artefactFilename(
-        artefact.title,
-        artefact.publicSlug ?? artefact.id,
-      );
+      const handle = artefact.publicSlug ?? artefact.id;
+      const filename = artefactFilename(artefact.title, handle);
       // A raw Response (rather than `c.body`) so the stored bytes go out
       // untouched — the payload is an opaque byte array, not a Hono body type.
       // The cast only narrows the store's `ArrayBufferLike` backing to the
       // `ArrayBuffer` a BodyInit is typed for; the bytes are never copied.
+      // r[impl hosting.export.byte-identical]
+      // r[impl hosting.export.no-injected-render]
+      // r[impl mcp.download.schema-round-trip+2]
       return new Response(payload as Uint8Array<ArrayBuffer>, {
         status: 200,
         headers: {
           "Content-Type": "text/html; charset=UTF-8",
-          "Content-Disposition": attachmentDisposition(filename),
+          // r[impl mcp.download.headers+2]
+          "Content-Disposition": attachmentDisposition(filename, handle),
           // The bytes actually being sent, which for a healthy store is the
           // aggregate's `payloadBytes` — taking it from the body means a
           // store/row disagreement can never produce a malformed response.
@@ -72,6 +81,7 @@ export function createDownloadRoutes(deps: DownloadRoutesDeps) {
         },
       });
     } catch (err) {
+      // r[impl mcp.download.not-found]
       if (err instanceof ArtefactNotFound) return c.notFound();
       if (err instanceof LinkGateChallenge) return linkGateChallenged(c);
       throw err;

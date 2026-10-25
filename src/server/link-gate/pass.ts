@@ -1,11 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { LinkPass } from "../../domain/artefact/link-gate";
 
-// S32a (AH22) — the link pass. A correct password yields an httpOnly cookie,
-// named for the gate's holder, carrying `{ holderId, version, exp }` signed with
-// a key derived from `BETTER_AUTH_SECRET` under its own label (never the session
-// or frame-token key). The gate counts it only at its current `version`, so a
-// password change or clear voids every pass already issued.
+// S32a (hosting.link-gate.narrows-public-audience) — the link pass. A correct password yields an
+// httpOnly cookie, named for the gate's holder, carrying `{ holderId, version, exp }` signed with a
+// key derived from `BETTER_AUTH_SECRET` under its own label (never the session or frame-token key).
+// The gate counts it only at its current `version`, so a password change or clear voids every pass
+// already issued.
 //
 // Format: `base64url(JSON claims) "." base64url(HMAC-SHA256)`.
 
@@ -68,7 +68,9 @@ export function passCookieName(holderId: string): string {
   return `ae_pass_${holderId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 }
 
-// A pass lasts 7 days and never outlives the gate's expiry (AH23).
+// A pass lasts 7 days and never outlives the gate's expiry
+// (hosting.link-gate.pass-bounded-by-expiry).
+// r[impl hosting.link-gate.pass-bounded-by-expiry]
 export function passExpiry(now: number, expiresAt: Date | null): number {
   const ttl = now + PASS_TTL_MS;
   return expiresAt === null ? ttl : Math.min(ttl, expiresAt.getTime());

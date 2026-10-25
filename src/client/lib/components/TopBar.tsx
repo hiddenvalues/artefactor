@@ -1,35 +1,28 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { ChevronDown, LogOut, Menu, Monitor, Moon, Plus, Search, Sun, X } from "lucide-react";
-import { Avatar, AvatarFallback } from "$lib/components/ui/avatar";
+import { useEffect, useId, useImperativeHandle, useRef, useState, type KeyboardEvent, type Ref } from "react";
+import { Menu, Plus, Search, X } from "lucide-react";
+import type { OrganizationContext } from "../../../shared/contracts";
 import { Button } from "$lib/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "$lib/components/ui/dropdown-menu";
 import { Input } from "$lib/components/ui/input";
 import { Popover, PopoverAnchor, PopoverContent } from "$lib/components/ui/popover";
-import { initials, kindMeta } from "../format";
+import { kindMeta } from "../format";
+import { HOME, routePath } from "../route";
 import { highlight, type Hit, type SearchResults } from "../search";
 import { hueVars, kindVars } from "../style";
-import { THEMES, useTheme, type Theme } from "../theme";
 import { cn } from "../utils";
+import { AccountMenu } from "./AccountMenu";
 import { Logo } from "./Logo";
-
-// S45 — the avatar menu's theme choice.
-const THEME_OPTIONS: Record<Theme, { label: string; Icon: typeof Sun }> = {
-  light: { label: "Light", Icon: Sun },
-  dark: { label: "Dark", Icon: Moon },
-  system: { label: "System", Icon: Monitor },
-};
 
 const SEARCH_LABEL = "Search artefacts and collections";
 
+/** S80 — the account button, for a host that moves focus after a switch. */
+export interface TopBarAccount {
+  /** Focuses the account button on display (one variant is hidden). */
+  focus(): void;
+  /** Whether `el` is the account button or inside an open menu, i.e. focus the user hasn't moved on. */
+  holds(el: Element): boolean;
+}
+
+// r[impl platform.search.top-bar-dropdown+2]
 export function TopBar({
   query,
   results,
@@ -38,25 +31,55 @@ export function TopBar({
   onOpenResult,
   onOpenUpload,
   onSignOut,
+  onSwitchOrganization,
+  onOpenAccount,
+  onOpenOrganization,
   onToggleSidebar,
+  onGoHome,
+  accountRef,
+  switcherOpen = false,
 }: {
   query: string;
   // S46 — the global search's hits (`searchLibrary`) for `query`.
   results: SearchResults;
-  user: { name: string; email: string };
+  // S53 — `organizations` only when a superset supplies an org context.
+  user: { name: string; email: string; organizations?: OrganizationContext };
   onSearch: (q: string) => void;
   onOpenResult: (hit: Hit) => void;
   onOpenUpload: () => void;
   onSignOut: () => void;
+  // S53 — picking an org other than the active one.
+  onSwitchOrganization: (organizationId: string) => void;
+  // S57 — opens the Account screen.
+  onOpenAccount: () => void;
+  // S58 — opens Organization settings (offered only with an org context).
+  onOpenOrganization: () => void;
   // S25 — toggles the collections/bookmarks sidebar (closed by default).
   onToggleSidebar: () => void;
+  // S80 — the logo's plain click: shows Home.
+  onGoHome: () => void;
+  // S80 — the account button, for the shell's focus after a switch.
+  accountRef?: Ref<TopBarAccount>;
+  // S53 — previews only: mount with the account menu and its switcher open
+  // (a standalone preview page's primary overlay, as `Launcher` does). Only the
+  // wide variant takes it: a hidden trigger's menu would open too.
+  switcherOpen?: boolean;
 }) {
-  const displayName = user.name || user.email;
-  const { theme, setTheme } = useTheme();
+  const account = { user, onSwitchOrganization, onOpenAccount, onOpenOrganization, onSignOut };
+  const wide = useRef<HTMLButtonElement>(null);
+  const narrow = useRef<HTMLButtonElement>(null);
+  useImperativeHandle(
+    accountRef,
+    () => ({
+      focus: () => [wide.current, narrow.current].find((b) => b?.offsetParent != null)?.focus(),
+      holds: (el) => el === wide.current || el === narrow.current || el.closest("[role='menu']") !== null,
+    }),
+    [],
+  );
 
   return (
-    <header className="sticky top-0 z-20 border-b bg-background/85 backdrop-blur">
-      <div className="flex items-center gap-2 px-4 py-2.5 sm:gap-3.5 sm:px-6">
+    <header className="@container/top-bar sticky top-0 z-20 border-b bg-background/85 backdrop-blur">
+      <div className="flex items-center gap-2 px-4 py-2.5 @min-[40rem]/top-bar:gap-3.5 @min-[40rem]/top-bar:px-6">
         <Button
           variant="ghost"
           size="icon"
@@ -68,7 +91,8 @@ export function TopBar({
           <Menu />
         </Button>
         <div className="mr-1 shrink-0">
-          <Logo />
+          {/* r[impl platform.top-bar.logo-home] */}
+          <Logo href={routePath(HOME)} label="Artefactor, go to Home" onNavigate={onGoHome} />
         </div>
 
         <GlobalSearch query={query} results={results} onSearch={onSearch} onOpenResult={onOpenResult} />
@@ -80,45 +104,14 @@ export function TopBar({
           New artefact
         </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="shrink-0 gap-1.5 px-1.5" title="Account" aria-label="Account">
-              <Avatar className="size-6">
-                <AvatarFallback className="text-[11px] font-semibold">{initials(displayName)}</AvatarFallback>
-              </Avatar>
-              <ChevronDown className="text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-56">
-            <DropdownMenuLabel className="flex items-center gap-2.5 font-normal">
-              <Avatar className="size-8">
-                <AvatarFallback className="text-xs font-semibold">{initials(displayName)}</AvatarFallback>
-              </Avatar>
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">{displayName}</span>
-                <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
-              </span>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Theme</DropdownMenuLabel>
-            <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)}>
-              {THEMES.map((t) => {
-                const { label, Icon } = THEME_OPTIONS[t];
-                return (
-                  <DropdownMenuRadioItem key={t} value={t}>
-                    <Icon />
-                    {label}
-                  </DropdownMenuRadioItem>
-                );
-              })}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={onSignOut}>
-              <LogOut />
-              Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* One variant is displayed at a time, so the account button is one tab stop.
+            r[impl platform.top-bar.narrow-fit+2] */}
+        <div className="hidden shrink-0 @min-[40rem]/top-bar:block">
+          <AccountMenu variant="default" {...account} triggerRef={wide} switcherOpen={switcherOpen} />
+        </div>
+        <div className="shrink-0 @min-[40rem]/top-bar:hidden">
+          <AccountMenu variant="avatar" {...account} triggerRef={narrow} />
+        </div>
       </div>
     </header>
   );

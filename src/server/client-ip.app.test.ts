@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Hono } from "hono";
 
-// S42 — Trusted-proxy client address (IA8), through the app: BetterAuth sees only
+// S42 — Trusted-proxy client address, through the app: BetterAuth sees only
 // the address `createApp` resolved, never a client-chosen header. Asserted on
 // the `ipAddress` BetterAuth stores on the session row a sign-in creates.
 
@@ -54,7 +54,9 @@ beforeAll(async () => {
   expect(res.status).toBe(200);
 });
 
-describe("BetterAuth reads only the IA8 address (S42)", () => {
+// r[verify identity.client-ip.better-auth-header]
+// r[verify identity.client-ip.resolved-once]
+describe("BetterAuth reads only the resolved address (S42)", () => {
   it("a client-sent X-Artefactor-Client-IP from a public peer is replaced by the peer's address", async () => {
     const ip = await signInFrom("ip@example.com", "198.51.100.9", {
       "X-Artefactor-Client-IP": "6.6.6.6",

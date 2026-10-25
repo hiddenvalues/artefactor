@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AccessPolicy } from "../../domain/artefact/access";
+import type { Artefact } from "../../domain/artefact/artefact";
 import { ArtefactNotFound, LinkGateChallenge } from "../../domain/artefact/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
@@ -18,17 +19,18 @@ import { DataConflict } from "../../domain/data/errors";
 // served-artefact handle) or its id (the owner-preview handle for a never-shared
 // artefact that has no slug). Access follows the Artefact access matrix: an
 // archived artefact, or one the caller cannot view, surfaces as not-found
-// (AD4, AD6, AH7/8).
+// (data.read.follows-artefact-access, data.lifecycle.archived-inert, hosting.lifecycle.archived-data-inert, hosting.access.matrix).
 // What `resolveViewableArtefact` needs: the artefact itself plus the collection
 // tree its effective tier comes from. Narrower than a data request's deps so the
 // S30 export path can inherit the same resolve without carrying a data repo.
 export interface ArtefactResolveDeps {
   artefactRepo: ArtefactRepository;
-  // AH20 — access is decided on the *effective* tier, so resolving an artefact
-  // in a collection needs its tree root.
+  // hosting.access.effective-from-tree-root — access is decided on the *effective* tier, so
+  // resolving an artefact in a collection needs its tree root.
   collectionRepo: CollectionRepository;
-  // S22 (AH18) — the slug resolve below is tenant-global (AH6), so the per-tier
-  // tenant decision is the policy's. Default = the OSS matrix.
+  // S22 (hosting.access.policy-decided) — the slug resolve below is tenant-global
+  // (hosting.slug.globally-unique), so the per-tier tenant decision is the
+  // policy's. Default = the OSS matrix.
   accessPolicy?: AccessPolicy;
 }
 
@@ -43,12 +45,15 @@ export interface OwnDataDeps extends DataAccessDeps {
   now?: () => Date;
 }
 
-// Resolve the artefact a data request targets — by slug, falling back to id —
-// then authorize the read (S32a, AH22–AH24): the access matrix on the effective
-// tier, then the link gate against the request's passes. Missing / archived /
-// not-viewable / expired all → not-found; a gate asking for its password →
-// `LinkGateChallenge`, on the slug and the id alias alike. (Slugs are base64url
-// tokens and ids are uuids, so the slug→id fallback cannot mis-resolve.)
+// Resolve the artefact a data request targets — by slug, falling back to id — then authorize the
+// read (S32a, the hosting.link-gate.* requirements): the access matrix on the effective tier, then
+// the link gate against the request's passes. Missing / archived / not-viewable / expired all →
+// not-found; a gate asking for its password → `LinkGateChallenge`, on the slug and the id alias
+// alike. (Slugs are base64url tokens and ids are uuids, so the slug→id fallback cannot
+// mis-resolve.)
+// r[impl hosting.lifecycle.archived-data-inert]
+// r[impl data.lifecycle.archived-inert]
+// r[impl data.read.follows-artefact-access]
 export async function resolveViewableArtefact(
   deps: ArtefactResolveDeps,
   ref: string,
@@ -56,13 +61,36 @@ export async function resolveViewableArtefact(
   scope: TenantScope,
   passes?: PassLookup,
 ) {
-  // The slug form is a global capability (AH6); the id fallback is tenant-scoped
-  // (S22/T2), so an out-of-scope artefact can't be reached by guessing its id.
+  // The slug form is a global capability (hosting.slug.globally-unique); the id
+  // fallback is tenant-scoped (S22), so an out-of-scope artefact can't be
+  // reached by guessing its id.
   const artefact =
     (await deps.artefactRepo.findBySlug(ref)) ??
     (await deps.artefactRepo.findById(ref, scope));
+  return authorizeResolved(deps, artefact, ref, viewerId, passes);
+}
+
+// S44 — the anonymous form of the resolve above: by slug only (the capability
+// an owner hands out; an id is an internal, tenant-scoped key) and with no
+// viewer, then the same authorization.
+export async function resolveViewableArtefactBySlug(
+  deps: ArtefactResolveDeps,
+  slug: string,
+  passes?: PassLookup,
+) {
+  return authorizeResolved(deps, await deps.artefactRepo.findBySlug(slug), slug, null, passes);
+}
+
+async function authorizeResolved(
+  deps: ArtefactResolveDeps,
+  artefact: Artefact | null,
+  ref: string,
+  viewerId: string | null,
+  passes?: PassLookup,
+): Promise<Artefact> {
   if (!artefact) throw new ArtefactNotFound(ref);
   const verdict = await authorizeRead(deps, artefact, viewerId, { passes });
+  // r[impl hosting.link-gate.api-challenge]
   if (verdict === "challenge") throw new LinkGateChallenge(ref);
   if (verdict !== "granted") throw new ArtefactNotFound(ref);
   return artefact;
@@ -71,7 +99,7 @@ export async function resolveViewableArtefact(
 export interface OwnDataRef {
   ref: string; // artefact slug or id
   authorId: string; // the authenticated caller
-  scope: TenantScope; // the caller's tenant scope (S22/AH17)
+  scope: TenantScope; // the caller's tenant scope (S22, hosting.tenant.invisible-to-oss)
   passes?: PassLookup; // S32a — the request's link passes (none over MCP)
 }
 
@@ -98,8 +126,9 @@ export interface PutOwnDataOptions {
   ifUnmodifiedSince?: Date | null;
 }
 
-// PUT own entry — validate + upsert the caller's blob (AD1, AD2, AD8), pinned
-// to the payload it was written against (AD9).
+// PUT own entry — validate + upsert the caller's blob (data.entry.one-per-pair,
+// data.blob.bounded-opaque-json), pinned to the payload it was written against.
+// r[impl data.write.author-is-caller]
 export async function putOwnDataEntry(
   ref: OwnDataRef,
   blob: string,
@@ -117,6 +146,7 @@ export async function putOwnDataEntry(
     artefact.id,
     ref.authorId,
   );
+  // r[impl data.write.stale-pin-refused]
   const pin = options.ifUnmodifiedSince;
   if (
     pin !== undefined &&
@@ -132,7 +162,8 @@ export async function putOwnDataEntry(
     artefactId: artefact.id,
     authorId: ref.authorId,
     blob,
-    // AD9 — stamped here, so `PUT …/data/me` and `set_artefact_data` pin
+    // r[impl data.pin.stamped-on-write]
+    // Stamped here, so `PUT …/data/me` and `set_artefact_data` pin
     // identically. Advisory: nothing above reads it.
     authoredAgainstVersion: artefact.payloadHash,
     existing,

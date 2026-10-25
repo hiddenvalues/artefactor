@@ -4,7 +4,7 @@ import { createRendererApp } from "./app";
 import { parseRendererEnv, selfCheck } from "./env";
 import { PlaywrightThumbnailRenderer } from "./playwright-thumbnail-renderer";
 
-// S37 (AH29) — the isolated thumbnail renderer: the app's `ARTEFACTOR_ROLE=renderer`
+// S37 — the isolated thumbnail renderer: the app's `ARTEFACTOR_ROLE=renderer`
 // container, running untrusted artefact HTML in sandboxed Chromium and nothing
 // else. It has no database, no storage, no auth and no secrets — the self-check
 // below refuses to start a production renderer that can see any of them.

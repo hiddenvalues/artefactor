@@ -19,7 +19,8 @@ import {
   type LinkPasswordHasher,
 } from "./link-gate";
 
-// S32a — Link controls on public artefacts: password + expiry (AH22–AH24, AH31).
+// S32a — Link controls on public artefacts: password + expiry (the hosting.link-gate.*
+// requirements).
 
 const OWNER = "owner-1";
 const OTHER = "user-2";
@@ -60,37 +61,44 @@ describe("createArtefact — link gate (S32a)", () => {
   });
 });
 
-describe("evaluateLinkGate (AH22/AH23)", () => {
+describe("evaluateLinkGate", () => {
+  // r[verify hosting.link-gate.evaluation]
   it("is open with no gate", () => {
     expect(evaluateLinkGate(NO_LINK_GATE, NOW, null)).toBe("open");
   });
 
+  // r[verify hosting.link-gate.evaluation]
   it("is open with a future expiry and no password", () => {
     expect(evaluateLinkGate(gate({ expiresAt: FUTURE }), NOW, null)).toBe("open");
   });
 
+  // r[verify hosting.link-gate.evaluation]
   it("is expired past the expiry, even with a valid pass", () => {
     const g = gate({ expiresAt: PAST, passwordHash: "x", version: 3 });
     expect(evaluateLinkGate(g, NOW, { version: 3 })).toBe("expired");
     expect(evaluateLinkGate(gate({ expiresAt: PAST }), NOW, null)).toBe("expired");
   });
 
+  // r[verify hosting.link-gate.evaluation]
   it("is expired exactly at the expiry instant", () => {
     expect(evaluateLinkGate(gate({ expiresAt: NOW }), NOW, null)).toBe("expired");
   });
 
+  // r[verify hosting.link-gate.evaluation]
   it("challenges a password gate without a pass", () => {
     expect(evaluateLinkGate(gate({ passwordHash: "x", version: 1 }), NOW, null)).toBe(
       "challenge",
     );
   });
 
+  // r[verify hosting.link-gate.evaluation]
   it("opens with a pass at the current version", () => {
     expect(
       evaluateLinkGate(gate({ passwordHash: "x", version: 2 }), NOW, { version: 2 }),
     ).toBe("open");
   });
 
+  // r[verify hosting.link-gate.evaluation]
   it("challenges a pass with a stale version", () => {
     expect(
       evaluateLinkGate(gate({ passwordHash: "x", version: 2 }), NOW, { version: 1 }),
@@ -98,7 +106,7 @@ describe("evaluateLinkGate (AH22/AH23)", () => {
   });
 });
 
-describe("isLinkExpired (AH23)", () => {
+describe("isLinkExpired", () => {
   it("is true only for a top-level public artefact past its expiry", () => {
     const expired = gate({ expiresAt: PAST });
     expect(isLinkExpired(publicArtefact({ linkGate: expired }), NOW)).toBe(true);
@@ -109,7 +117,9 @@ describe("isLinkExpired (AH23)", () => {
   });
 });
 
-describe("setArtefactLinkGate (AH31)", () => {
+describe("setArtefactLinkGate", () => {
+  // r[verify hosting.link-gate.password-rules]
+  // r[verify hosting.artefact.updated-at-bumped+2]
   it("sets a password (hashed) and bumps the version and updatedAt", async () => {
     const a = await setArtefactLinkGate(
       publicArtefact(),
@@ -121,6 +131,7 @@ describe("setArtefactLinkGate (AH31)", () => {
     expect(a.visibility).toBe("public");
   });
 
+  // r[verify hosting.link-gate.password-rules]
   it("changing the password bumps the version again", async () => {
     const a = await setArtefactLinkGate(
       publicArtefact({ linkGate: gate({ passwordHash: "hashed:one-two-three", version: 4 }) }),
@@ -131,6 +142,7 @@ describe("setArtefactLinkGate (AH31)", () => {
     expect(a.linkGate.passwordHash).toBe("hashed:four-five-six");
   });
 
+  // r[verify hosting.link-gate.password-rules]
   it("clearing the password (null) bumps the version", async () => {
     const a = await setArtefactLinkGate(
       publicArtefact({ linkGate: gate({ passwordHash: "hashed:x", version: 4, expiresAt: FUTURE }) }),
@@ -140,6 +152,7 @@ describe("setArtefactLinkGate (AH31)", () => {
     expect(a.linkGate).toEqual({ passwordHash: null, expiresAt: FUTURE, version: 5 });
   });
 
+  // r[verify hosting.link-gate.password-rules]
   it("an expiry-only change keeps the version and the password", async () => {
     const a = await setArtefactLinkGate(
       publicArtefact({ linkGate: gate({ passwordHash: "hashed:x", version: 4 }) }),
@@ -158,7 +171,9 @@ describe("setArtefactLinkGate (AH31)", () => {
     expect(a.linkGate.expiresAt).toBeNull();
   });
 
-  it("refuses a non-owner as not found (AH8/AH9)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.authority.owner-only]
+  it("refuses a non-owner as not found", async () => {
     await expect(
       setArtefactLinkGate(publicArtefact(), { requesterId: OTHER, password: "long-enough", now: NOW }, hasher),
     ).rejects.toBeInstanceOf(ArtefactNotFound);
@@ -177,7 +192,8 @@ describe("setArtefactLinkGate (AH31)", () => {
     },
   );
 
-  it("refuses an archived artefact (AH7)", async () => {
+  // r[verify hosting.lifecycle.archived-frozen]
+  it("refuses an archived artefact", async () => {
     await expect(
       setArtefactLinkGate(
         archiveArtefact(publicArtefact()),
@@ -187,7 +203,8 @@ describe("setArtefactLinkGate (AH31)", () => {
     ).rejects.toBeInstanceOf(InvariantViolation);
   });
 
-  it("refuses a contained artefact (AH20)", async () => {
+  // r[verify hosting.link-gate.public-only]
+  it("refuses a contained artefact", async () => {
     await expect(
       setArtefactLinkGate(
         publicArtefact({ collectionId: "c1" }),
@@ -197,6 +214,7 @@ describe("setArtefactLinkGate (AH31)", () => {
     ).rejects.toBeInstanceOf(InvariantViolation);
   });
 
+  // r[verify hosting.link-gate.password-rules]
   it("refuses a 7-character password and one over 128", async () => {
     for (const password of ["1234567", "x".repeat(129)]) {
       await expect(
@@ -205,6 +223,7 @@ describe("setArtefactLinkGate (AH31)", () => {
     }
   });
 
+  // r[verify hosting.link-gate.password-rules]
   it("accepts an 8- and a 128-character password", async () => {
     for (const password of ["12345678", "x".repeat(128)]) {
       const a = await setArtefactLinkGate(
@@ -216,7 +235,8 @@ describe("setArtefactLinkGate (AH31)", () => {
     }
   });
 
-  it("refuses a past or present expiry (AH23)", async () => {
+  // r[verify hosting.link-gate.expiry-in-future]
+  it("refuses a past or present expiry", async () => {
     for (const expiresAt of [PAST, NOW]) {
       await expect(
         setArtefactLinkGate(publicArtefact(), { requesterId: OWNER, expiresAt, now: NOW }, hasher),
@@ -225,7 +245,23 @@ describe("setArtefactLinkGate (AH31)", () => {
   });
 });
 
-describe("clearArtefactLinkGate (AH31)", () => {
+describe("clearArtefactLinkGate", () => {
+  // r[verify hosting.artefact.updated-at-bumped+2]
+  it("leaves an unset gate as it is: the same artefact, the same version", () => {
+    const a = publicArtefact({ linkGate: gate({ version: 3 }) });
+    const cleared = clearArtefactLinkGate(a, { requesterId: OWNER, now: NOW });
+    expect(cleared).toBe(a);
+    expect(cleared.linkGate.version).toBe(3);
+  });
+
+  // r[verify hosting.link-gate.public-only]
+  it("still refuses an unset gate on a private artefact", () => {
+    expect(() =>
+      clearArtefactLinkGate(artefact(), { requesterId: OWNER, now: NOW }),
+    ).toThrow(InvariantViolation);
+  });
+
+  // r[verify hosting.artefact.updated-at-bumped+2]
   it("clears both halves and bumps the version", () => {
     const a = clearArtefactLinkGate(
       publicArtefact({ linkGate: gate({ passwordHash: "h", expiresAt: FUTURE, version: 2 }) }),
@@ -233,6 +269,7 @@ describe("clearArtefactLinkGate (AH31)", () => {
     );
     expect(a.linkGate).toEqual({ passwordHash: null, expiresAt: null, version: 3 });
     expect(a.visibility).toBe("public");
+    expect(a.updatedAt).toEqual(NOW);
   });
 
   it("refuses a non-owner as not found", () => {
@@ -248,26 +285,30 @@ describe("clearArtefactLinkGate (AH31)", () => {
   });
 });
 
-describe("tier changes and the gate (AH31)", () => {
+describe("tier changes and the gate", () => {
   const gated = () =>
     publicArtefact({ linkGate: gate({ passwordHash: "h", expiresAt: FUTURE, version: 2 }) });
 
+  // r[verify hosting.link-gate.cleared-leaving-public]
   it("public → authenticated clears the gate and bumps the version", () => {
     const a = shareArtefact(gated(), { tier: "authenticated", now: NOW });
     expect(a.linkGate).toEqual({ passwordHash: null, expiresAt: null, version: 3 });
   });
 
+  // r[verify hosting.link-gate.cleared-leaving-public]
   it("public → private clears the gate and bumps the version", () => {
     const a = unshareArtefact(gated(), { now: NOW });
     expect(a.linkGate).toEqual({ passwordHash: null, expiresAt: null, version: 3 });
     expect(a.publicSlug).toBe("slug1");
   });
 
+  // r[verify hosting.link-gate.cleared-leaving-public]
   it("public → public keeps the gate", () => {
     const a = shareArtefact(gated(), { tier: "public", now: NOW });
     expect(a.linkGate).toEqual(gated().linkGate);
   });
 
+  // r[verify hosting.link-gate.cleared-leaving-public]
   it("a change between non-public tiers leaves the gate alone", () => {
     const a = shareArtefact(artefact({ visibility: "selected", publicSlug: "s" }), {
       tier: "authenticated",
@@ -277,7 +318,7 @@ describe("tier changes and the gate (AH31)", () => {
   });
 });
 
-describe("authorizeArtefactRead (AH22–AH24)", () => {
+describe("authorizeArtefactRead", () => {
   const refuseAuthenticatedTier: AccessPolicy = { grantsAuthenticatedTier: () => false };
 
   async function read(
@@ -286,7 +327,7 @@ describe("authorizeArtefactRead (AH22–AH24)", () => {
     opts: { pass?: { version: number } | null; policy?: AccessPolicy; effective?: Artefact } = {},
   ) {
     return authorizeArtefactRead(
-      { artefact: a, effective: opts.effective ?? a, viewerId, pass: opts.pass ?? null, now: NOW },
+      { artefact: a, effective: opts.effective ?? a, gate: a.linkGate, viewerId, pass: opts.pass ?? null, now: NOW },
       opts.policy ?? defaultAccessPolicy,
     );
   }
@@ -294,44 +335,44 @@ describe("authorizeArtefactRead (AH22–AH24)", () => {
   const passworded = () => publicArtefact({ linkGate: gate({ passwordHash: "h", version: 1 }) });
   const expired = () => publicArtefact({ linkGate: gate({ expiresAt: PAST }) });
 
-  it("denies what the matrix denies before any gate (AH24)", async () => {
+  // r[verify hosting.link-gate.no-existence-leak]
+  it("denies what the matrix denies before any gate", async () => {
     const hidden = artefact({ visibility: "private", linkGate: gate({ passwordHash: "h", version: 1 }) });
     expect(await read(hidden, null)).toBe("sign-in");
     expect(await read(hidden, OTHER)).toBe("not-found");
   });
 
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("never gates the owner", async () => {
     expect(await read(passworded(), OWNER)).toBe("granted");
     expect(await read(expired(), OWNER)).toBe("granted");
   });
 
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("challenges the anonymous on a password gate and grants them with a current pass", async () => {
     expect(await read(passworded(), null)).toBe("challenge");
     expect(await read(passworded(), null, { pass: { version: 1 } })).toBe("granted");
     expect(await read(passworded(), null, { pass: { version: 0 } })).toBe("challenge");
   });
 
+  // r[verify hosting.link-gate.expiry-reads-as-private]
   it("treats an expired gate as private for the anonymous (sign-in)", async () => {
     expect(await read(expired(), null)).toBe("sign-in");
   });
 
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("OSS: a signed-in non-owner is admitted by the authenticated tier and never gated", async () => {
     expect(await read(passworded(), OTHER)).toBe("granted");
     expect(await read(expired(), OTHER)).toBe("granted");
   });
 
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("a signed-in user the policy refuses the authenticated tier is gated", async () => {
     expect(await read(passworded(), OTHER, { policy: refuseAuthenticatedTier })).toBe("challenge");
     expect(await read(expired(), OTHER, { policy: refuseAuthenticatedTier })).toBe("not-found");
   });
 
-  it("a contained artefact's own gate is dormant (AH20)", async () => {
-    const contained = passworded();
-    contained.collectionId = "c1";
-    // Effective access from a public root (S32b adds the root's own gate).
-    expect(await read(contained, null, { effective: publicArtefact() })).toBe("granted");
-  });
-
+  // r[verify hosting.link-gate.narrows-public-audience]
   it("a gate is consulted only when the effective tier is public", async () => {
     // A stale gate on a non-public row is never consulted.
     const authed = artefact({ visibility: "authenticated", publicSlug: "s", linkGate: gate({ expiresAt: PAST }) });

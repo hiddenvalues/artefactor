@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Badge } from "$lib/components/ui/badge";
 import { definePreview } from "../../design/preview";
-import { collection, galleryProps, library, noop, ownedProps, shared } from "../../design/fixtures";
+import { collection, library, noop, ownedProps, shared, sharedProps } from "../../design/fixtures";
 import { accessChips, kindChips, type AccessFilter, type Density, type KindFilter, type Sort } from "../browse";
+import type { HomeScope, HomeSort } from "../home";
 import {
   CollectionTile,
   EmptyState,
+  HomeControls,
   ItemList,
   KindChips,
   ScreenHeader,
@@ -15,7 +17,7 @@ import {
   ViewControls,
 } from "./Browse";
 
-// The listing screens' building blocks (dashboard, gallery, collection page).
+// The listing screens' building blocks (Home, the collection page).
 
 function Controls({ withAccess }: { withAccess: boolean }) {
   const [access, setAccess] = useState<AccessFilter>("all");
@@ -36,6 +38,32 @@ function Controls({ withAccess }: { withAccess: boolean }) {
 function Chips() {
   const [kind, setKind] = useState<KindFilter>("all");
   return <KindChips chips={kindChips(library)} value={kind} onChange={setKind} />;
+}
+
+// S47 — Home's filter and sort bar, at the width it is given (it wraps by container).
+function HomeBar({ width }: { width: string }) {
+  const [scope, setScope] = useState<HomeScope>("all");
+  const [kind, setKind] = useState<KindFilter>("all");
+  const [access, setAccess] = useState<AccessFilter>("all");
+  const [sort, setSort] = useState<HomeSort>("updated");
+  const [density, setDensity] = useState<Density>("grid");
+  return (
+    <div className={width}>
+      <HomeControls
+        scope={scope}
+        counts={{ all: library.length + 1, mine: library.length, shared: 1 }}
+        onScope={setScope}
+        kind={{ chips: kindChips(library), value: kind }}
+        onKind={setKind}
+        access={{ chips: accessChips(library), value: access }}
+        onAccess={setAccess}
+        sort={sort}
+        onSort={setSort}
+        density={density}
+        onDensity={setDensity}
+      />
+    </div>
+  );
 }
 
 const others = [shared()];
@@ -74,7 +102,7 @@ export default definePreview({
       name: "Item list — grid",
       render: () => (
         <div className="w-full">
-          <ItemList density="grid" owned={library.slice(0, 3)} others={others} ownedProps={(a) => ownedProps(a)} galleryProps={(g) => galleryProps(g)} />
+          <ItemList density="grid" owned={library.slice(0, 3)} others={others} ownedProps={(a) => ownedProps(a)} sharedProps={(g) => sharedProps(g, { showCollectionChip: false })} />
         </div>
       ),
     },
@@ -82,7 +110,7 @@ export default definePreview({
       name: "Item list — list",
       render: () => (
         <div className="w-full">
-          <ItemList density="list" owned={library.slice(0, 3)} others={others} ownedProps={(a) => ownedProps(a)} galleryProps={(g) => galleryProps(g)} />
+          <ItemList density="list" owned={library.slice(0, 3)} others={others} ownedProps={(a) => ownedProps(a)} sharedProps={(g) => sharedProps(g, { showCollectionChip: false })} />
         </div>
       ),
     },
@@ -102,5 +130,16 @@ export default definePreview({
         </div>
       ),
     },
+    {
+      name: "Empty state, clear filters",
+      render: () => (
+        <div className="w-full">
+          <EmptyState title="No matches" sub="No artefacts match your current filters." onClear={noop} />
+        </div>
+      ),
+    },
+    { name: "Home filter bar — wide", render: () => <HomeBar width="w-full" /> },
+    { name: "Home filter bar — narrower", render: () => <HomeBar width="w-[46rem] max-w-full" /> },
+    { name: "Home filter bar — narrowest", render: () => <HomeBar width="w-[27rem] max-w-full" /> },
   ],
 });

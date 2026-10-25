@@ -12,6 +12,10 @@
 //   - **Optional:** S19a
 //   - **Linear:** ALI-268
 //
+// An optional `Delivers` field lists the requirement ids (`src/specs/trace/`) the slice delivers
+// without defining them in its own section; its value may run on over continuation lines indented
+// two spaces.
+//
 // The heading starts at column 0; one indented by 1–3 spaces still renders as a heading, so it is
 // parsed but reported rather than silently skipped. Any other heading (`# Artefact Data`,
 // `### Out of scope`, …) is ignored, so a context file may keep prose sections.
@@ -44,6 +48,8 @@ export interface Slice {
   /** Non-blocking edges — recorded, never scheduled against. */
   optional: string[];
   linear: string | null;
+  /** Requirement ids the slice delivers without defining them in its section. */
+  delivers: string[];
   /** Whether any metadata field follows the heading, directly or after one blank line. */
   hasMetadata: boolean;
   /** Whether the heading is indented (1–3 spaces) instead of starting at column 0. */
@@ -57,7 +63,9 @@ export interface Slice {
 const SLICE_HEADING = /^### ([A-Z]{1,3}\d+[a-z]?) — (.+)$/;
 /** Up to three leading spaces, which CommonMark still renders as a heading (four is code). */
 const HEADING_INDENT = /^ {0,3}(?! )/;
-const METADATA_FIELD = /^- \*\*(Status|Depends on|Optional|Linear):\*\*\s*(.*)$/;
+const METADATA_FIELD = /^- \*\*(Status|Depends on|Optional|Linear|Delivers):\*\*\s*(.*)$/;
+/** A continuation line of the field before it: two spaces, then text. */
+const CONTINUATION = /^ {2}(?! )(.+)$/;
 const NONE = "—";
 
 const isSliceStatus = (s: string | null): s is SliceStatus =>
@@ -86,6 +94,7 @@ export function parseSliceDag(markdown: string, file = ""): Slice[] {
       hasDependsOn: false,
       optional: [],
       linear: null,
+      delivers: [],
       hasMetadata: false,
       indented: unindented !== lines[i],
       line: i + 1,
@@ -97,7 +106,15 @@ export function parseSliceDag(markdown: string, file = ""): Slice[] {
       const field = METADATA_FIELD.exec(lines[j]!);
       if (!field) break;
       slice.hasMetadata = true;
-      const value = field[2]!.trim();
+      let value = field[2]!.trim();
+      if (field[1] === "Delivers") {
+        for (let k = j + 1; k < lines.length; k++) {
+          const more = CONTINUATION.exec(lines[k]!);
+          if (!more) break;
+          value = `${value} ${more[1]!.trim()}`;
+          j = k;
+        }
+      }
       switch (field[1]) {
         case "Status":
           slice.status = value;
@@ -111,6 +128,9 @@ export function parseSliceDag(markdown: string, file = ""): Slice[] {
           break;
         case "Linear":
           slice.linear = value === "" || value === NONE ? null : value;
+          break;
+        case "Delivers":
+          slice.delivers = parseIdList(value);
           break;
       }
     }
@@ -474,7 +494,7 @@ export function nextFreeIds(catalog: SliceCatalog): string[] {
 
 const STATUS_SECTION = /^## Status\b/;
 const STATUS_MARKER = /\*\*(done|pending|specced|in progress|dropped|half done)\*\*/gi;
-const INDENTED_METADATA_FIELD = /^\s*- \*\*(Status|Depends on|Optional|Linear):\*\*/;
+const INDENTED_METADATA_FIELD = /^\s*- \*\*(Status|Depends on|Optional|Linear|Delivers):\*\*/;
 /** A CommonMark code fence: ≤ 3 spaces of indent, then 3+ backticks or tildes, then the rest. */
 const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const WHERE = "slice status lives in the slice DAG (docs/specs/fdd/slice-dag.md + slices/)";

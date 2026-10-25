@@ -21,7 +21,8 @@ function artefact(
   return { visibility, status, ownerId: OWNER, sharedWith, tenantId };
 }
 
-describe("canViewArtefact — access matrix (S6, AH8)", () => {
+// r[verify hosting.access.matrix]
+describe("canViewArtefact — access matrix (S6)", () => {
   it("public is viewable by anyone, including the unauthenticated", () => {
     expect(canViewArtefact(artefact("public"), null)).toBe(true);
     expect(canViewArtefact(artefact("public"), OTHER)).toBe(true);
@@ -34,7 +35,9 @@ describe("canViewArtefact — access matrix (S6, AH8)", () => {
     expect(canViewArtefact(artefact("authenticated"), OWNER)).toBe(true);
   });
 
-  it("selected is viewable by the owner and members only (AH8/13)", () => {
+  // r[verify hosting.access.matrix]
+  // r[verify hosting.access-list.retained]
+  it("selected is viewable by the owner and members only", () => {
     const a = artefact("selected", "active", [MEMBER]);
     expect(canViewArtefact(a, OWNER)).toBe(true); // owner always
     expect(canViewArtefact(a, MEMBER)).toBe(true); // granted member
@@ -42,7 +45,8 @@ describe("canViewArtefact — access matrix (S6, AH8)", () => {
     expect(canViewArtefact(a, null)).toBe(false); // anonymous
   });
 
-  it("selected with an empty access list is owner-only (AH13)", () => {
+  // r[verify hosting.access-list.retained]
+  it("selected with an empty access list is owner-only", () => {
     const a = artefact("selected", "active", []);
     expect(canViewArtefact(a, OWNER)).toBe(true);
     expect(canViewArtefact(a, OTHER)).toBe(false);
@@ -54,18 +58,20 @@ describe("canViewArtefact — access matrix (S6, AH8)", () => {
     expect(canViewArtefact(artefact("private"), OWNER)).toBe(true);
   });
 
-  it("archived is never viewable, owner included (AH7)", () => {
+  // r[verify hosting.lifecycle.archived-not-served]
+  it("archived is never viewable, owner included", () => {
     expect(canViewArtefact(artefact("public", "archived"), OWNER)).toBe(false);
     expect(canViewArtefact(artefact("public", "archived"), null)).toBe(false);
     expect(canViewArtefact(artefact("private", "archived"), OWNER)).toBe(false);
   });
 });
 
-// S22 part B (AH18) — the access decision is policy-decided, but only the
-// `authenticated` tier's meaning is overridable. Everything else — AH7, AH8's
-// per-tier semantics and no-leak uniformity, and the owner's view of their own
-// artefact — is fixed under any policy.
-describe("canViewArtefactUnder — AccessPolicy seam (S22, AH18)", () => {
+// S22 part B (hosting.access.policy-decided) — the access decision is policy-decided, but only the
+// `authenticated` tier's meaning is overridable. Everything else —
+// hosting.lifecycle.archived-frozen, hosting.access.matrix's per-tier semantics
+// and no-leak uniformity, and the owner's view of their own artefact — is fixed
+// under any policy.
+describe("canViewArtefactUnder — AccessPolicy seam (S22)", () => {
   // A stub multi-tenant policy: the `authenticated` tier is granted to a fixed
   // co-member list of one tenant (the EE ET3 shape). The owner is deliberately
   // NOT on the list, to prove owner view is fixed, not policy-granted.
@@ -77,6 +83,7 @@ describe("canViewArtefactUnder — AccessPolicy seam (S22, AH18)", () => {
   const denyAll: AccessPolicy = { grantsAuthenticatedTier: () => false };
   const allowAll: AccessPolicy = { grantsAuthenticatedTier: () => true };
 
+  // r[verify hosting.access.policy-decided]
   it("under the default policy, every decision equals the OSS matrix", async () => {
     const cases: [ViewableArtefact, string | null][] = [];
     for (const a of [
@@ -98,12 +105,14 @@ describe("canViewArtefactUnder — AccessPolicy seam (S22, AH18)", () => {
     }
   });
 
-  it("authenticated tier: the policy grants co-members and denies others (T3)", async () => {
+  // r[verify hosting.access.policy-decided]
+  it("authenticated tier: the policy grants co-members and denies others", async () => {
     const a = artefact("authenticated", "active", [], ORG_A);
     expect(await canViewArtefactUnder(coMemberPolicy, a, MEMBER)).toBe(true);
     expect(await canViewArtefactUnder(coMemberPolicy, a, OTHER)).toBe(false);
   });
 
+  // r[verify hosting.access.policy-decided]
   it("authenticated tier: a viewer who is co-member of a different tenant is denied", async () => {
     const elsewhere = artefact("authenticated", "active", [], "org-b");
     expect(await canViewArtefactUnder(coMemberPolicy, elsewhere, MEMBER)).toBe(
@@ -111,17 +120,25 @@ describe("canViewArtefactUnder — AccessPolicy seam (S22, AH18)", () => {
     );
   });
 
-  it("the owner's view of their own artefact is never policy-denied (AH9)", async () => {
+  // r[verify hosting.access.policy-asked-last]
+  // r[verify hosting.authority.owner-only]
+  // r[verify hosting.access.policy-decided]
+  it("the owner's view of their own artefact is never policy-denied", async () => {
     const a = artefact("authenticated", "active", [], ORG_A);
     expect(await canViewArtefactUnder(coMemberPolicy, a, OWNER)).toBe(true);
     expect(await canViewArtefactUnder(denyAll, a, OWNER)).toBe(true);
   });
 
-  it("the anonymous are never policy-granted the authenticated tier (AH8)", async () => {
+  // r[verify hosting.access.policy-asked-last]
+  // r[verify hosting.access.matrix]
+  // r[verify hosting.access.policy-decided]
+  it("the anonymous are never policy-granted the authenticated tier", async () => {
     const a = artefact("authenticated", "active", [], ORG_A);
     expect(await canViewArtefactUnder(allowAll, a, null)).toBe(false);
   });
 
+  // r[verify hosting.access.policy-asked-last]
+  // r[verify hosting.access.policy-decided]
   it("public/selected/private semantics are fixed — the policy is not consulted", async () => {
     const consulted: string[] = [];
     const spying: AccessPolicy = {
@@ -148,7 +165,10 @@ describe("canViewArtefactUnder — AccessPolicy seam (S22, AH18)", () => {
     expect(consulted).toEqual([]);
   });
 
-  it("archived is never viewable under any policy (AH7)", async () => {
+  // r[verify hosting.access.policy-asked-last]
+  // r[verify hosting.lifecycle.archived-not-served]
+  // r[verify hosting.access.policy-decided]
+  it("archived is never viewable under any policy", async () => {
     const a = artefact("authenticated", "archived", [], ORG_A);
     expect(await canViewArtefactUnder(allowAll, a, MEMBER)).toBe(false);
     expect(await canViewArtefactUnder(allowAll, a, OWNER)).toBe(false);

@@ -12,6 +12,7 @@
 // It references only the `localStorage`, `matchMedia` and `document` globals,
 // so a test can evaluate it with injected ones. It themes the host chrome only:
 // nothing here ever reaches an artefact's frame (S36).
+// r[impl platform.theme.boot-script]
 export const THEME_BOOT_JS = `(function(){
   var root = document.documentElement;
   var mq = matchMedia("(prefers-color-scheme: dark)");

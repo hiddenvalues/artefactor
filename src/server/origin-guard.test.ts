@@ -4,8 +4,8 @@ import type { ArtefactSummary } from "../shared/contracts";
 import { createOriginGuard } from "./middleware/origin-guard";
 import { framingFromEnv } from "./runtime/framing";
 
-// S36 (IA6) — cookie-authenticated state changes come only from the app origin.
-describe("origin guard (S36, IA6)", () => {
+// S36 — cookie-authenticated state changes come only from the app origin.
+describe("origin guard (S36)", () => {
   describe("the middleware", () => {
     const TRUSTED = ["https://app.example", "http://localhost:5273"];
     const app = new Hono();
@@ -15,6 +15,7 @@ describe("origin guard (S36, IA6)", () => {
     const send = (method: string, path: string, headers: Record<string, string> = {}) =>
       app.request(path, { method, headers });
 
+    // r[verify identity.origin.app-origin-only+2]
     it("refuses a state change from an untrusted or opaque Origin", async () => {
       for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
         expect((await send(method, "/api/x", { Origin: "null" })).status).toBe(403);
@@ -22,6 +23,7 @@ describe("origin guard (S36, IA6)", () => {
       }
     });
 
+    // r[verify identity.origin.app-origin-only+2]
     it("refuses a state change whose Sec-Fetch-Site isn't same-origin", async () => {
       for (const site of ["cross-site", "same-site", "none"]) {
         expect((await send("PUT", "/api/x", { "Sec-Fetch-Site": site })).status).toBe(403);
@@ -36,6 +38,7 @@ describe("origin guard (S36, IA6)", () => {
       expect(res.status).toBe(403);
     });
 
+    // r[verify identity.origin.exemptions]
     it("lets through a trusted origin, same-origin fetch metadata, or neither header", async () => {
       expect((await send("PUT", "/api/x", { Origin: "https://app.example" })).status).toBe(200);
       expect((await send("PUT", "/api/x", { Origin: "http://localhost:5273" })).status).toBe(200);
@@ -43,6 +46,7 @@ describe("origin guard (S36, IA6)", () => {
       expect((await send("PUT", "/api/x")).status).toBe(200);
     });
 
+    // r[verify identity.origin.exemptions]
     it("never checks a read", async () => {
       for (const method of ["GET", "HEAD", "OPTIONS"]) {
         const res = await send(method, "/api/x", { Origin: "null", "Sec-Fetch-Site": "cross-site" });
@@ -50,6 +54,7 @@ describe("origin guard (S36, IA6)", () => {
       }
     });
 
+    // r[verify identity.origin.exemptions]
     it("leaves /api/auth/* to BetterAuth", async () => {
       const res = await send("POST", "/api/auth/sign-in/email", {
         Origin: "null",
@@ -74,6 +79,7 @@ describe("origin guard (S36, IA6)", () => {
       ]);
     });
 
+    // r[verify identity.origin.app-origin-only+2]
     it("never include the content origin, even when listed", () => {
       const framing = framingFromEnv({
         ...base,
@@ -160,6 +166,7 @@ describe("origin guard (S36, IA6)", () => {
       expect(res.status).toBe(200);
     });
 
+    // r[verify identity.origin.exemptions]
     it("POST /mcp with Origin: null isn't blocked by it (bearer-only, not under /api)", async () => {
       const res = await app.request("/mcp", {
         method: "POST",

@@ -56,9 +56,9 @@ The specs are the source of truth and live in [`docs/specs/`](docs/specs/). Star
 
 ## Quick start
 
-Requires Node **26.4.0** (pinned in [`.nvmrc`](.nvmrc)) and pnpm 11+. Use that version for every
-command: `better-sqlite3` is a native addon compiled from source against the Node you install
-with, and a different Node then refuses to load it (ABI mismatch).
+Requires Node **26**, pinned to an exact version in [`.nvmrc`](.nvmrc), and pnpm 11+. Use that
+version for every command: `better-sqlite3` is a native addon compiled from source against the
+Node you install with, and a different Node then refuses to load it (ABI mismatch).
 
 ```bash
 pnpm install

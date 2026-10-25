@@ -75,6 +75,23 @@ describe("edit + archive/restore (S3, S7)", () => {
       expect(updated).toMatchObject({ title: "Renamed", kind: "slide-deck" });
     });
 
+    // r[verify hosting.artefact.updated-at-bumped+2]
+    // r[verify hosting.edit.fields-and-timestamp+2]
+    it("answers an empty edit with the artefact and saves nothing", async () => {
+      const a = await create(owner, "Untouched");
+      const { db } = await import("../infra/db/client");
+      const { DrizzleArtefactRepository } = await import("../infra/db/artefact-repository.drizzle");
+      const { SINGLETON_SCOPE } = await import("../domain/artefact/tenant-scope");
+      const repo = new DrizzleArtefactRepository(db);
+      const before = (await repo.findById(a.id, SINGLETON_SCOPE))!;
+      const res = await patch(a.id, {}, owner);
+      expect(res.status).toBe(200);
+      expect((await res.json()) as ArtefactSummary).toMatchObject({ id: a.id, title: "Untouched" });
+      const after = (await repo.findById(a.id, SINGLETON_SCOPE))!;
+      expect(after.revision).toBe(before.revision);
+      expect(after.updatedAt).toEqual(before.updatedAt);
+    });
+
     it("replaces the payload, served back by the owner raw view", async () => {
       const a = await create(owner, "WithPayload", "<h1>v1</h1>");
       expect((await patch(a.id, { payload: new File(["<h1>v2</h1>"], "b.html") }, owner)).status).toBe(200);
@@ -93,6 +110,8 @@ describe("edit + archive/restore (S3, S7)", () => {
   });
 
   describe("archive / restore (S7)", () => {
+    // r[verify hosting.lifecycle.archived-hidden-from-listings]
+    // r[verify hosting.lifecycle.archived-not-served]
     it("archives, hides from the active list + owner view, then restores", async () => {
       const a = await create(owner, "Lifecycle");
       // Share it so we can also assert the slug stops serving.
@@ -142,7 +161,8 @@ describe("edit + archive/restore (S3, S7)", () => {
     });
   });
 
-  describe("delete (S15, AH11)", () => {
+  // r[verify hosting.delete.archived-only]
+  describe("delete (S15)", () => {
     it("refuses to delete an active artefact (400) — must archive first", async () => {
       const a = await create(owner, "ActiveDelete");
       expect((await del(`/api/artefacts/${a.id}`, owner)).status).toBe(400);

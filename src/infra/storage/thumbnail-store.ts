@@ -11,9 +11,9 @@ function segment(value: string): string {
   return value;
 }
 
-// S35 (AH26) — filesystem thumbnails at `<root>/<artefactId>/<payloadHash>.webp`.
-// The root is a sibling of the payload root, never inside it, so a payload
-// retention policy (S19b) never has to tell the two apart.
+// S35 — filesystem thumbnails at `<root>/<artefactId>/<payloadHash>.webp`.
+// The root is configured beside the payload root (hosting.thumbnail.stored-beside-payloads).
+// r[impl hosting.thumbnail.file-layout]
 export class FilesystemThumbnailStore implements ThumbnailStore {
   constructor(private readonly root: string) {}
 

@@ -8,19 +8,27 @@ import type {
   CollectionSummary,
   CreateCollectionRequest,
   EditCollectionRequest,
+  InviteRequest,
   MeResponse,
+  MyViewsResponse,
+  OrganizationSettings,
   PublicConfigResponse,
+  RenameOrganizationRequest,
   SetLinkGateRequest,
+  SetSharingRequest,
   SetVisibilityRequest,
   SharedArtefactSummary,
   SharedCollectionSummary,
   SharedCollectionsResponse,
   SharedListResponse,
+  SwitchOrganizationRequest,
+  UpdateMeRequest,
   UserRef,
   UserSearchResponse,
 } from "../../shared/contracts";
 import type { ArtefactKind } from "../../domain/artefact/kind";
 import type { DataVisibility, Visibility } from "./format";
+import { shareLinkPath } from "../../shared/share-link";
 
 /** Thrown by every client call when the BFF responds non-2xx. `status` lets
  *  callers special-case 401 (no session) without string matching. */
@@ -55,6 +63,58 @@ export const api = {
     return fetch("/api/me").then(json<MeResponse>);
   },
 
+  // S53 — make another of your memberships the active org; answers a fresh /api/me.
+  switchOrganization(organizationId: string): Promise<MeResponse> {
+    const body: SwitchOrganizationRequest = { organizationId };
+    return fetch("/api/me/active-organization", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<MeResponse>);
+  },
+
+  // S57 — set your own name; answers a fresh /api/me.
+  updateMe(name: string): Promise<MeResponse> {
+    const body: UpdateMeRequest = { name };
+    return fetch("/api/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<MeResponse>);
+  },
+
+  // S58 — the active organization's settings; 404 without one (OSS).
+  organization(): Promise<OrganizationSettings> {
+    return fetch("/api/organization").then(json<OrganizationSettings>);
+  },
+
+  // S58 — each answers the active organization's fresh settings.
+  renameOrganization(name: string): Promise<OrganizationSettings> {
+    const body: RenameOrganizationRequest = { name };
+    return fetch("/api/organization", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<OrganizationSettings>);
+  },
+
+  // A refusal rejects with an `ApiError` whose message is its code
+  // (`invalid-email`, `outside-domains`, `already-member`, `already-invited`).
+  inviteToOrganization(email: string): Promise<OrganizationSettings> {
+    const body: InviteRequest = { email };
+    return fetch("/api/organization/invitations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(json<OrganizationSettings>);
+  },
+
+  revokeInvitation(id: string): Promise<OrganizationSettings> {
+    return fetch(`/api/organization/invitations/${encodeURIComponent(id)}`, { method: "DELETE" }).then(
+      json<OrganizationSettings>,
+    );
+  },
+
   listOwn(): Promise<ArtefactSummary[]> {
     return fetch("/api/artefacts")
       .then(json<ArtefactListResponse>)
@@ -71,6 +131,14 @@ export const api = {
     return fetch("/api/shared")
       .then(json<SharedListResponse>)
       .then((r) => r.artefacts);
+  },
+
+  // S47 — the caller's own views of what they can open now
+  // (views.mine.own-visible-only), newest first.
+  listMyViews(): Promise<MyViewsResponse["views"]> {
+    return fetch("/api/views/mine")
+      .then(json<MyViewsResponse>)
+      .then((r) => r.views);
   },
 
   // S4 — one owned artefact's summary (S35 polls it for a fresh thumbnail).
@@ -133,6 +201,15 @@ export const api = {
     return fetch(`/api/artefacts/${id}/link-gate`, { method: "DELETE" }).then(
       json<ArtefactSummary>,
     );
+  },
+
+  // S55 — the Manage access dialog's Done: every sharing setting in one save.
+  setSharing(id: string, request: SetSharingRequest): Promise<ArtefactSummary> {
+    return fetch(`/api/artefacts/${id}/sharing`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }).then(json<ArtefactSummary>);
   },
 
   // S41 — whether viewers may load each other's saved data (owner-only).
@@ -202,7 +279,7 @@ export const api = {
       .then((r) => r.collections);
   },
 
-  // S29 — eject an artefact from the caller's collection (CL13).
+  // S29 — eject an artefact from the caller's collection (collections.containment.co-owned).
   ejectArtefact(collectionId: string, artefactId: string): Promise<ArtefactSummary> {
     return fetch(
       `/api/collections/${collectionId}/artefacts/${encodeURIComponent(artefactId)}`,
@@ -234,6 +311,22 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     }).then(json<CollectionSummary>);
+  },
+
+  // S32b — change a public root's link protection, which its whole tree
+  // follows; `clearCollectionLinkGate` removes both halves.
+  setCollectionLinkGate(id: string, change: SetLinkGateRequest): Promise<CollectionSummary> {
+    return fetch(`/api/collections/${id}/link-gate`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(change),
+    }).then(json<CollectionSummary>);
+  },
+
+  clearCollectionLinkGate(id: string): Promise<CollectionSummary> {
+    return fetch(`/api/collections/${id}/link-gate`, { method: "DELETE" }).then(
+      json<CollectionSummary>,
+    );
   },
 
   getCollectionAccess(id: string): Promise<UserRef[]> {
@@ -310,12 +403,12 @@ export const api = {
 
 /** Absolute share URL for a shared artefact, or null while private. */
 export function shareUrl(a: ArtefactSummary): string | null {
-  return a.publicSlug ? `${location.origin}/a/${a.publicSlug}` : null;
+  return a.publicSlug ? location.origin + shareLinkPath(a.publicSlug) : null;
 }
 
 /** Whether the artefact is reachable by link right now — a slug exists and the
  *  tier it is actually served under (its own, or the collection tree root's,
- *  AH20) is not private. */
+ *  hosting.access.effective-from-tree-root) is not private. */
 export function isLinkShared(a: ArtefactSummary): boolean {
   return !!a.publicSlug && a.effectiveVisibility !== "private";
 }
@@ -323,5 +416,5 @@ export function isLinkShared(a: ArtefactSummary): boolean {
 /** Where "Open" points for an artefact you own: the hosted shell when it has a
  *  slug, otherwise the owner-only raw preview. */
 export function ownOpenUrl(a: ArtefactSummary): string {
-  return a.publicSlug ? `/a/${a.publicSlug}` : `/api/artefacts/${a.id}/raw`;
+  return a.publicSlug ? shareLinkPath(a.publicSlug) : `/api/artefacts/${a.id}/raw`;
 }

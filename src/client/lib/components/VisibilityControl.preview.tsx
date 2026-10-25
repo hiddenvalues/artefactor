@@ -4,32 +4,33 @@ import { gates, noop } from "../../design/fixtures";
 import type { DataVisibility, Visibility } from "../format";
 import { VisibilityControl } from "./VisibilityControl";
 
-// Live, so choosing a tier in the popover moves the trigger too.
+// Live, so choosing a tier in the popover moves the trigger too. The inherited
+// pill opens the "Access inherited" popover, previewed on its own (S64).
 function Example({
   initial,
-  variant = "block",
   withGate = false,
   usesStorage = false,
   note,
+  publicId = null,
 }: {
   initial: Visibility;
-  variant?: "block" | "pill";
   withGate?: boolean;
   usesStorage?: boolean;
   note?: string;
+  publicId?: string | null;
 }) {
   const [visibility, setVisibility] = useState(initial);
   const [data, setData] = useState<DataVisibility>("own");
   return (
     <VisibilityControl
       visibility={visibility}
-      variant={variant}
       onChoose={setVisibility}
       onManage={noop}
       note={note}
       usesStorage={usesStorage}
       dataVisibility={data}
       onChooseData={setData}
+      publicCollectionId={publicId}
       linkProtection={
         withGate ? { current: gates.password, onPublish: () => setVisibility("public"), onSave: noop } : undefined
       }
@@ -41,7 +42,7 @@ export default definePreview({
   title: "Visibility control",
   variants: [
     {
-      name: "Block (card) — each tier",
+      name: "Pill (row) — each tier",
       render: () => (
         <>
           <Example initial="private" />
@@ -51,23 +52,16 @@ export default definePreview({
         </>
       ),
     },
-    {
-      name: "Pill (row) — each tier",
-      render: () => (
-        <>
-          <Example variant="pill" initial="private" />
-          <Example variant="pill" initial="selected" />
-          <Example variant="pill" initial="authenticated" />
-          <Example variant="pill" initial="public" withGate />
-        </>
-      ),
-    },
     { name: "With saved data section", render: () => <Example initial="authenticated" usesStorage /> },
     { name: "With a note (collection header)", render: () => <Example initial="private" note="Everything inside inherits this." /> },
     {
-      name: "Inherited from a collection (read-only)",
+      name: "Collection header — public root with link protection",
+      render: () => <Example initial="public" withGate note="Everything inside inherits this." />,
+    },
+    {
+      name: "Collection header — public root with its public collection id",
       render: () => (
-        <VisibilityControl visibility="authenticated" onChoose={noop} inherited inheritedFrom="Research" onOpenCollection={noop} />
+        <Example initial="public" withGate publicId="Ab3dE6gH9jK" note="Everything inside inherits this." />
       ),
     },
   ],

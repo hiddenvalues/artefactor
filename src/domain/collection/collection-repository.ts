@@ -7,16 +7,22 @@ export interface ListCollectionsOptions {
 }
 
 // Port: persistence for the Collection aggregate. Scope-aware like the artefact
-// repository (S22 A2): reads never return rows outside the scope's tenant.
+// repository (S22 — Tenant scope + access-policy seam): reads never return rows outside the
+// scope's tenant.
 export interface CollectionRepository {
   // Persists the aggregate including its access list (`sharedWith`) — the
   // adapter syncs the membership set as part of the save, exactly as the
   // artefact adapter does for S16.
   save(collection: Collection): Promise<void>;
-  // Permanently remove a collection row (CL8; archived-only is enforced by the
+  // Permanently remove a collection row (collections.lifecycle.delete-cascades; archived-only is enforced by the
   // delete command). A no-op if the id does not exist.
   delete(id: string): Promise<void>;
   findById(id: string, scope: TenantScope): Promise<Collection | null>;
+  // S44 — resolve a root by its slug. **Not** scope-aware, like
+  // `ArtefactRepository.findBySlug` (hosting.slug.globally-unique): the slug is
+  // the cross-tenant address of a public tree, and the mint-time uniqueness
+  // check. Callers scope any further reads by the found row's own `tenantId`.
+  findBySlug(slug: string): Promise<Collection | null>;
   // The owner's collections, active-only by default; name-ordered is left to
   // the client (the whole list is small and tree-shaped anyway).
   listByOwner(
@@ -26,10 +32,10 @@ export interface CollectionRepository {
   ): Promise<Collection[]>;
   // Active **root** collections whose (visibility, sharedWith) grants the
   // viewer, excluding the viewer's own — the collection side of the
-  // effectively-shared composition (CL5): `authenticated`/`public` roots plus
+  // effectively-shared composition (collections.access.contained-own-tier-dormant): `authenticated`/`public` roots plus
   // `selected` roots the viewer is a member of. Returned with **empty
-  // `sharedWith`** — recipients never see the grantee list (CL11); a caller
-  // needing the real list (e.g. the CL12 contributor check) uses `findById`.
+  // `sharedWith`** — recipients never see the grantee list (collections.read.follows-root); a caller
+  // needing the real list (e.g. the collections.contributor.on-root-access-list contributor check) uses `findById`.
   listSharedRoots(viewerId: string, scope: TenantScope): Promise<Collection[]>;
   // Every active collection in the given trees (rootId ∈ rootIds) — expands
   // shared roots into the collection-id set their artefacts live under. Also

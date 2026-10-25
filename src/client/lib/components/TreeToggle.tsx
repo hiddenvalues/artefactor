@@ -1,4 +1,5 @@
 import { ChevronRight } from "lucide-react";
+import { Button } from "$lib/components/ui/button";
 import { cn } from "../utils";
 
 // The expand/collapse chevron of a collection-tree row, or the matching blank
@@ -15,16 +16,17 @@ export function TreeToggle({
   if (!hasChildren) return <span className="w-5 shrink-0" />;
   const label = expanded ? "Collapse" : "Expand";
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={onToggle}
       title={label}
       aria-label={label}
       aria-expanded={expanded}
-      className="flex h-7 w-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      className="h-7 w-5 cursor-pointer rounded-sm p-0 text-muted-foreground hover:bg-transparent hover:text-muted-foreground has-[>svg]:p-0 dark:hover:bg-transparent"
     >
       <ChevronRight className={cn("size-3 transition-transform", expanded && "rotate-90")} />
-    </button>
+    </Button>
   );
 }
 

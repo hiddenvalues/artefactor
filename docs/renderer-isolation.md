@@ -4,8 +4,9 @@ Artefactor draws a card thumbnail by **screenshotting the artefact** (S35). To d
 Chromium runs the uploader's JavaScript. This document is why that is not done in the app's
 container, what protects it instead, and how to check a deployment.
 
-The domain rule is **AH29** in [`specs/ddd/artefact-hosting.md`](specs/ddd/artefact-hosting.md);
-the slice is **S37 — Isolated thumbnail renderer**. The configuration that implements it is
+The domain rules are the `hosting.renderer.*` requirements in
+[`specs/ddd/artefact-hosting.md`](specs/ddd/artefact-hosting.md); the slice is **S37 — Isolated
+thumbnail renderer**. The configuration that implements it is
 [`../deploy/docker-compose.example.yml`](../deploy/docker-compose.example.yml) (app and renderer on
 one plain-Docker host), [`../deploy/docker-compose.renderer-vm.yml`](../deploy/docker-compose.renderer-vm.yml)
 (the renderer alone, on a VM of its own — the Coolify shape) and
@@ -208,14 +209,15 @@ double each time (0.1 s → 0.2 s → 0.4 s → … → 12.8 s), which is far wo
 a separate change (replicas, or a longer-lived renderer that gives up layer 3), not a tuning knob.
 
 While a renderer is draining or restarting, the app's request is refused or answered `503`; it
-retries for a minute (AH25), so a queued render simply waits for the next container.
+retries for a minute (`hosting.thumbnail.off-without-renderer`), so a queued render simply waits
+for the next container.
 
 ## If you do not run the renderer
 
 Leave `ARTEFACTOR_RENDERER_URL` unset. The app logs one line at startup, never renders, and every
-card shows its kind placeholder (AH25). Nothing else changes. That is also what happens if the
-renderer is down: the app retries for a minute, then pauses thumbnail work for five minutes and
-tries again — the artefacts themselves are untouched.
+card shows its kind placeholder (`hosting.thumbnail.off-without-renderer`). Nothing else changes.
+That is also what happens if the renderer is down: the app retries for a minute, then pauses
+thumbnail work for five minutes and tries again — the artefacts themselves are untouched.
 
 **Do not** point `ARTEFACTOR_RENDERER_URL` at a renderer that is not isolated as described here.
 An easier setup — the app's own container, no sandbox — is exactly what this slice removed.

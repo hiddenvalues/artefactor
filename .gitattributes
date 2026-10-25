@@ -1,0 +1,3 @@
+# The requirements lock (docs/specs/README.md *Requirements*) takes both sides of a merge, so
+# parallel CRs never conflict on it; `pnpm spec:bump` collapses any duplicated line left behind.
+docs/specs/requirements.lock merge=union

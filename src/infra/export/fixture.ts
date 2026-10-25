@@ -16,7 +16,7 @@ import * as schema from "../db/schema";
 const T = (s: string) => new Date(`2026-0${s}Z`);
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
-// Every value an export must never carry (DX2).
+// Every value an export must never carry (export.account.no-credentials).
 export const SECRETS = {
   passwordHash: "scrypt-account-password-SECRET-1",
   accountAccessToken: "account-access-token-SECRET-2",
@@ -30,9 +30,16 @@ export const SECRETS = {
   oauthAccessToken: "oauth-access-token-SECRET-10",
   oauthRefreshToken: "oauth-refresh-token-SECRET-11",
   consentScopes: "consent-scopes-SECRET-12",
+  jwksPrivateKey: "jwks-private-key-SECRET-13",
 } as const;
 
+// A data entry's blob as an artefact might save it: spacing, a newline and a
+// JSON escape that a parse-and-reserialise would all normalise away.
+export const RAW_BLOB = '{ "bob" : true,\n  "note": "caf\\u00e9" }';
+
 export const GATE_HASH = "scrypt$16384$8$1$c2FsdA$aGFzaA";
+// S32b — the gated collection root's hash.
+export const ROOT_GATE_HASH = "scrypt$16384$8$1$cm9vdA$cm9vdGhhc2g";
 
 const SHARED_HTML = "<!doctype html><title>same</title><p>identical payload</p>";
 
@@ -130,27 +137,37 @@ export async function seedDeployment(): Promise<SeededDeployment> {
       expiresAt: T("9-01T00:00:00.000"),
     })
     .run();
-  db.insert(schema.oauthApplication)
+  db.insert(schema.oauthClient)
     .values({
-      id: "app-1",
+      id: "client-1",
       name: "Claude",
       clientId: SECRETS.clientId,
       clientSecret: SECRETS.clientSecret,
-      redirectUrls: "https://claude.ai/cb",
-      type: "web",
+      redirectUris: JSON.stringify(["https://claude.ai/cb"]),
       userId: "u-alice",
+    })
+    .run();
+  db.insert(schema.oauthRefreshToken)
+    .values({
+      id: "ort-1",
+      token: SECRETS.oauthRefreshToken,
+      clientId: SECRETS.clientId,
+      userId: "u-alice",
+      expiresAt: T("9-01T00:00:00.000"),
+      createdAt: T("1-01T09:00:00.000"),
+      scopes: JSON.stringify(["openid", "offline_access"]),
     })
     .run();
   db.insert(schema.oauthAccessToken)
     .values({
       id: "oat-1",
-      accessToken: SECRETS.oauthAccessToken,
-      refreshToken: SECRETS.oauthRefreshToken,
-      accessTokenExpiresAt: T("9-01T00:00:00.000"),
-      refreshTokenExpiresAt: T("9-01T00:00:00.000"),
+      token: SECRETS.oauthAccessToken,
       clientId: SECRETS.clientId,
       userId: "u-alice",
-      scopes: "openid",
+      refreshId: "ort-1",
+      expiresAt: T("9-01T00:00:00.000"),
+      createdAt: T("1-01T09:00:00.000"),
+      scopes: JSON.stringify(["openid"]),
     })
     .run();
   db.insert(schema.oauthConsent)
@@ -158,22 +175,39 @@ export async function seedDeployment(): Promise<SeededDeployment> {
       id: "consent-1",
       clientId: SECRETS.clientId,
       userId: "u-alice",
-      scopes: SECRETS.consentScopes,
-      consentGiven: true,
+      scopes: JSON.stringify([SECRETS.consentScopes]),
+      createdAt: T("1-01T09:00:00.000"),
+      updatedAt: T("1-01T09:00:00.000"),
+    })
+    .run();
+  db.insert(schema.jwks)
+    .values({
+      id: "jwk-1",
+      publicKey: JSON.stringify({ kty: "OKP", crv: "Ed25519", x: "AAAA" }),
+      privateKey: SECRETS.jwksPrivateKey,
+      createdAt: T("1-01T09:00:00.000"),
     })
     .run();
 
   // A two-level tree whose child id sorts before its root, so "parents first"
-  // is observable. The root carries a `selected` access list.
+  // is observable. The root is public behind a link gate (S32b) and carries an
+  // access list (its contributors); the child is ungated.
   const collections = [
     {
       id: "c-z-root",
       ownerId: "u-alice",
       name: "Research",
+      // S74 — a described root beside an undescribed child.
+      description: "Customer research, by quarter",
       parentId: null,
       rootId: "c-z-root",
-      visibility: "selected" as const,
+      visibility: "public" as const,
+      // S44 — a shared root's retained slug.
+      publicSlug: "research-tree",
       status: "active" as const,
+      linkPasswordHash: ROOT_GATE_HASH,
+      linkExpiresAt: T("9-15T12:00:00.000"),
+      linkGateVersion: 4,
       createdAt: T("2-01T08:00:00.000"),
       updatedAt: T("2-02T08:00:00.000"),
       archivedAt: null,
@@ -182,10 +216,15 @@ export async function seedDeployment(): Promise<SeededDeployment> {
       id: "c-a-child",
       ownerId: "u-alice",
       name: "Interviews",
+      description: null,
       parentId: "c-z-root",
       rootId: "c-z-root",
       visibility: "private" as const,
+      publicSlug: null,
       status: "archived" as const,
+      linkPasswordHash: null,
+      linkExpiresAt: null,
+      linkGateVersion: 0,
       createdAt: T("2-03T08:00:00.000"),
       updatedAt: T("2-04T08:00:00.000"),
       archivedAt: T("2-04T08:00:00.000"),
@@ -287,7 +326,7 @@ export async function seedDeployment(): Promise<SeededDeployment> {
       id: "d-2",
       artefactId: "a-auth",
       authorId: "u-bob",
-      blob: '{"bob":true}',
+      blob: RAW_BLOB,
       authoredAgainstVersion: null,
       createdAt: T("4-03T12:00:00.000"),
       updatedAt: T("4-03T12:00:00.000"),
@@ -365,8 +404,12 @@ export async function seedDeployment(): Promise<SeededDeployment> {
       })),
       artefactAccess: artefactAccess.map((r) => ({ ...r, grantedAt: iso(r.grantedAt) })),
       // parents first: the root, then its child
-      collections: collections.map((c) => ({
+      collections: collections.map(({ linkPasswordHash, linkExpiresAt, linkGateVersion, ...c }) => ({
         ...c,
+        linkGate:
+          linkPasswordHash || linkExpiresAt
+            ? { passwordHash: linkPasswordHash, expiresAt: iso(linkExpiresAt), version: linkGateVersion }
+            : null,
         createdAt: iso(c.createdAt),
         updatedAt: iso(c.updatedAt),
         archivedAt: iso(c.archivedAt),

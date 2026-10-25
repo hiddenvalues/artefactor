@@ -9,8 +9,8 @@
 // viewer, or another author's data via S12) throws on write while seeded reads
 // still work. No `window.ARTEFACTOR` is exposed.
 //
-// S36 (AD10) — the artefact runs in a sandboxed, opaque-origin frame with no
-// session (AH28), so the shim never calls the API. It posts each change — the
+// S36 (data.shim.posts-never-fetches) — the artefact runs in a sandboxed, opaque-origin frame with no
+// session (`hosting.frame.no-cookies`), so the shim never calls the API. It posts each change — the
 // whole blob, debounced, and again on pagehide / visibilitychange when a change
 // is still unposted — to the host shell (`window.parent`, at the app origin).
 // The shell owns the S31 write discipline: the pin, no overlapping saves, and
@@ -42,6 +42,13 @@ export interface BootstrapContext {
 // The shim as inline JS (an IIFE). Kept free of server-only references so it can
 // be unit-tested by evaluating it with injected globals. References only
 // `window`, `document`, `setTimeout`, `clearTimeout`, `TextEncoder`.
+// r[impl hosting.frame.shim-posts-to-shell]
+// r[impl data.shim.posts-never-fetches]
+// r[impl data.shim.full-sync-api]
+// r[impl data.shim.keyspace-is-blob]
+// r[impl data.shim.quota-over-cap]
+// r[impl data.shim.read-only-throws]
+// r[impl data.shim.no-helper]
 export function bootstrapInnerJs(ctx: BootstrapContext): string {
   const cfg = {
     seed: ctx.seedBlob,
@@ -138,6 +145,7 @@ export function bootstrapScript(ctx: BootstrapContext): string {
 
 // Inject the bootstrap so it runs before any artefact script: right after the
 // opening <head> (or <html>), falling back to prepending it.
+// r[impl data.shim.injected-first]
 export function injectBootstrap(html: string, script: string): string {
   const head = html.match(/<head[^>]*>/i);
   if (head && head.index !== undefined) {
@@ -154,6 +162,7 @@ export function injectBootstrap(html: string, script: string): string {
 
 // Render a served artefact: inject the seeded localStorage bootstrap into its
 // trusted HTML.
+// r[impl platform.theme.frame-unthemed]
 export function renderArtefactHtml(
   payloadHtml: string,
   ctx: BootstrapContext,

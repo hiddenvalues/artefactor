@@ -13,11 +13,9 @@ export interface HealthResponse {
 }
 
 // Public (unauthenticated) BFF config the sign-in screen needs before a session
-// exists. `allowedEmailDomains` mirrors AUTH_ALLOWED_EMAIL_DOMAINS so the UI can
-// show which accounts may sign in without hardcoding domains in the client.
+// exists. It never names the allowed email domains.
 export interface PublicConfigResponse {
-  allowedEmailDomains: string[];
-  // S38 (IA7) — the sign-in methods this deployment actually accepts, and
+  // S38 — the sign-in methods this deployment actually accepts, and
   // whether account creation is open, so the sign-in screen renders what the
   // server will honour. Presentation signals only: the user-create hook and the
   // env guard remain the enforcement points.
@@ -27,11 +25,23 @@ export interface PublicConfigResponse {
   // S33a — what a superset adds to sign-in (e.g. magic link), injected into
   // `createApp`. A presentation signal like the method flags above.
   capabilities: Capabilities;
+  // S67 — the terms and privacy notice the sign-in screen links to; `null`
+  // where the deployment configures none.
+  legal: LegalLinks;
+}
+
+export interface LegalLinks {
+  termsUrl: string | null;
+  privacyUrl: string | null;
 }
 
 // S33a — the capabilities seam. OSS default: all off (`ossCapabilities`).
 export interface Capabilities {
   magicLinkSignIn: boolean;
+  // S48 — a superset offers link-first sign-up (then a set-password landing)
+  // and password reset; the endpoints exist only there.
+  verifiedSignUp: boolean;
+  passwordReset: boolean;
 }
 
 // S1 — Identity. The current authenticated identity, as returned by the
@@ -39,6 +49,65 @@ export interface Capabilities {
 export interface MeResponse {
   id: string;
   email: string;
+  name: string;
+  // S53 — present only when a superset supplies an organization context.
+  organizations?: OrganizationContext;
+}
+
+// S53 — the organization context a superset supplies; absent in OSS.
+export type OrgRole = "owner" | "admin" | "member";
+export interface OrgMembership {
+  id: string;
+  name: string;
+  role: OrgRole;
+}
+export interface OrganizationContext {
+  activeId: string;
+  memberships: OrgMembership[];
+}
+
+// S53 — `POST /api/me/active-organization`; answers a fresh `MeResponse`.
+export interface SwitchOrganizationRequest {
+  organizationId: string;
+}
+
+// S58 — `GET /api/organization`: the active org, as the Organization settings
+// screen shows it. Absent in OSS (every organization route answers 404).
+export interface OrgMember {
+  id: string;
+  name: string;
+  email: string;
+  role: OrgRole;
+}
+export interface OrgInvitation {
+  id: string;
+  email: string;
+  sentAt: string; // ISO-8601
+}
+export interface OrganizationSettings {
+  id: string;
+  name: string;
+  // The earliest-joined owner.
+  owner: { name: string; email: string };
+  // The caller's role in this org.
+  role: OrgRole;
+  // Owners first, then by joined date.
+  members: OrgMember[];
+  // Owner/admin only.
+  invitations?: OrgInvitation[];
+  // Owner/admin only; empty = no one can be invited.
+  inviteDomains?: string[];
+}
+// S58 — `PATCH /api/organization` and `POST /api/organization/invitations`.
+export interface RenameOrganizationRequest {
+  name: string;
+}
+export interface InviteRequest {
+  email: string;
+}
+
+// S57 — `PATCH /api/me`: the caller's own name; answers a fresh `MeResponse`.
+export interface UpdateMeRequest {
   name: string;
 }
 
@@ -51,27 +120,27 @@ export interface ArtefactSummary {
   title: string;
   kind: ArtefactKind;
   visibility: "private" | "selected" | "authenticated" | "public";
-  // S25 (AH20) — the tier the artefact is actually served under: its own when
-  // top-level, its collection tree root's when contained. The client renders
-  // the "Inherited" state from the pair (collectionId, effectiveVisibility).
+  // S25 (hosting.access.effective-from-tree-root) — the tier the artefact is actually served under:
+  // its own when top-level, its collection tree root's when contained. The client renders the
+  // "Inherited" state from the pair (collectionId, effectiveVisibility).
   effectiveVisibility: "private" | "selected" | "authenticated" | "public";
   collectionId: string | null;
   status: "active" | "archived";
   publicSlug: string | null;
   payloadBytes: number;
-  // AH16: whether the artefact persists data (uses localStorage). The client
-  // shows a small indicator for it in the dashboard/gallery card + row.
+  // hosting.uses-storage.chrome-only: whether the artefact persists data (uses localStorage). The
+  // client shows a small indicator for it in the dashboard/gallery card + row.
   usesStorage: boolean;
-  // S41 (AH30) — whether viewers may load each other's saved data (`shared`) or
-  // only their own (`own`; the owner always sees all). Per artefact.
+  // S41 (hosting.data-visibility.owner-set) — whether viewers may load each other's saved data
+  // (`shared`) or only their own (`own`; the owner always sees all). Per artefact.
   dataVisibility: "shared" | "own";
-  // S35 (AH25) — the card preview, `/api/artefacts/<id>/thumbnail?v=<hash>`, while
+  // S35 (hosting.thumbnail.summary-url) — the card preview, `/api/artefacts/<id>/thumbnail?v=<hash>`, while
   // the artefact is active and a render is recorded (the previous one stays until
   // the next lands); otherwise null and the card shows the kind placeholder.
   thumbnailUrl: string | null;
-  // S32a (AH31) — the link protection on a public artefact, for its owner only:
-  // present (null = none) on the owner's own summaries, absent on everyone
-  // else's. The password itself is never returned, only whether one is set.
+  // S32a (hosting.link-gate.owner-summary-only) — the link protection on a public artefact, for its
+  // owner only: present (null = none) on the owner's own summaries, absent on everyone else's. The
+  // password itself is never returned, only whether one is set.
   linkGate?: LinkGateSummary | null;
   createdAt: string;
   updatedAt: string;
@@ -109,8 +178,8 @@ export interface SharedListResponse {
 // on the access list managed via the S16 endpoints below.
 export interface SetVisibilityRequest {
   visibility: ArtefactSummary["visibility"];
-  // S32a (AH31) — link protection set atomically with the change to `public`;
-  // refused (400) with any other tier. Leaving `public` clears it.
+  // S32a (hosting.link-gate.public-only) — link protection set atomically with the change to
+  // `public`; refused (400) with any other tier. Leaving `public` clears it.
   linkGate?: { password?: string; expiresAt?: string };
 }
 
@@ -121,13 +190,24 @@ export interface SetLinkGateRequest {
   expiresAt?: string | null;
 }
 
-// S32a (AH22) — a read the link gate stops until the viewer unlocks it (403).
+// S55 — `PUT /api/artefacts/:id/sharing`: the Manage access dialog's Done.
+// Every part is saved together, or — when any part is refused — none is.
+// Answers the updated `ArtefactSummary`.
+export interface SetSharingRequest {
+  visibility: ArtefactSummary["visibility"]; // the target tier, always given
+  members?: string[]; // the full access list; omitted = unchanged
+  linkGate?: SetLinkGateRequest; // only with visibility "public"; omitted = unchanged
+  dataVisibility?: ArtefactSummary["dataVisibility"]; // omitted = unchanged
+}
+
+// S32a (hosting.link-gate.narrows-public-audience) — a read the link gate stops until the viewer
+// unlocks it (403).
 export interface LinkGateChallengeResponse {
   gate: "password";
 }
 
 // S41 — Owner-set data visibility. `own` narrows each non-owner viewer to their
-// own saved data; `shared` lets viewers load each other's (AD11).
+// own saved data; `shared` lets viewers load each other's (data.visibility.narrows-reads).
 export interface SetDataVisibilityRequest {
   dataVisibility: ArtefactSummary["dataVisibility"];
 }
@@ -173,7 +253,7 @@ export interface DataEntryResponse {
 export interface FrameTokenResponse {
   frameUrl: string;
   // The message channel of the document that frame URL loads: the shell saves a
-  // change only when the message carries it (AD10).
+  // change only when the message carries it (data.shell.channel-binds-document).
   channel: string;
   seedUpdatedAt: string | null;
 }
@@ -196,7 +276,7 @@ export interface DataAuthorsResponse {
 // S21 — Artefact Views ("who has viewed"). One viewer who has opened an artefact,
 // enriched (BFF-side) with their display identity so the host "viewed by" widget
 // can label them. Drives `GET /api/artefacts/:ref/viewers`. `viewedAt` is the
-// most recent open (latest view only, VT1). The list excludes the caller (VT4).
+// most recent open (latest view only). The list excludes the caller.
 export interface ArtefactViewerSummary {
   viewerId: string;
   name: string;
@@ -208,21 +288,58 @@ export interface ArtefactViewersResponse {
   viewers: ArtefactViewerSummary[];
 }
 
+// S47 — the caller's own views (views.mine.own-visible-only), newest first,
+// for Home's Recent row and Last viewed sort. Only artefacts the caller can open now.
+export interface MyViewsResponse {
+  views: { artefactId: string; viewedAt: string }[];
+}
+
 // S25–S27 — Artefact Collections + Bookmarks (ddd/artefact-collections.md).
 // A client-facing view of a Collection aggregate. Owner-only in v1 — these
 // shapes never travel to non-owners. `visibility` is meaningful on roots only
-// (CL4); nested collections render as "Inherited" from the root.
+// (collections.access.root-governs-tree); nested collections render as "Inherited" from the root.
 export interface CollectionSummary {
   id: string;
   ownerId: string;
   name: string;
+  // S74 — the owner's blurb, or null (collections.collection.description).
+  description: string | null;
   parentId: string | null;
   rootId: string;
   visibility: ArtefactSummary["visibility"];
   status: "active" | "archived";
+  // S32b — the link protection on a public root, which its whole tree follows:
+  // present (null = none) on the owner's own summaries, absent on a summary of
+  // a tree shared with the caller. Never the password itself.
+  linkGate?: LinkGateSummary | null;
+  // S44 — a root's public id, for the owner only: present on the owner's own
+  // summaries (the slug or null on a root, null on a non-root), absent on a
+  // summary of a tree shared with the caller.
+  publicSlug?: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+// S44 — `GET /api/public/collections/:slug`, the anonymous read of a public,
+// active, ungated root's tree (`collections.public-link.anonymous-projection`).
+// Names, descriptions and structure only: no id, owner, access list, gate or data.
+export interface PublicCollectionNode {
+  name: string;
+  description: string | null; // S74 — the owner's blurb, or null
+  children: PublicCollectionNode[]; // active sub-collections, by name
+  artefacts: PublicArtefactSummary[]; // active, slugged artefacts, by title
+}
+
+export interface PublicArtefactSummary {
+  title: string;
+  kind: ArtefactKind;
+  slug: string;
+  updatedAt: string;
+  // `/api/artefacts/<slug>/thumbnail?v=<hash>`; null while none is rendered.
+  thumbnailUrl: string | null;
+}
+
+export type PublicCollectionResponse = PublicCollectionNode; // the root
 
 export interface CollectionListResponse {
   collections: CollectionSummary[];
@@ -230,22 +347,30 @@ export interface CollectionListResponse {
 
 export interface CreateCollectionRequest {
   name: string;
+  description?: string | null;
   parentId?: string | null;
   visibility?: ArtefactSummary["visibility"];
 }
 
-// PATCH /api/collections/:id — rename and/or change access (roots only, CL4).
+// PATCH /api/collections/:id — rename, describe and/or change access (roots only, collections.access.set-on-root-only).
 export interface EditCollectionRequest {
   name?: string;
+  // S74 — a string sets it, null clears it, an absent key leaves it.
+  description?: string | null;
   visibility?: ArtefactSummary["visibility"];
+  // S32b — link protection set atomically with the root's change to `public`;
+  // refused (400) with any other tier. Leaving `public` clears it.
+  linkGate?: SetVisibilityRequest["linkGate"];
 }
+
+// S32b — `PUT /api/collections/:id/link-gate` takes a `SetLinkGateRequest`.
 
 // PUT /api/artefacts/:id/collection — move an artefact (null = top level).
 export interface MoveArtefactRequest {
   collectionId: string | null;
 }
 
-// Cascade counts (CL7/CL8/CL14) — drives the toast/confirm copy ("archived
+// Cascade counts (the collection lifecycle cascades, evictions included) — drives the toast/confirm copy ("archived
 // with N artefacts", "N artefacts and M sub-collections will be deleted",
 // "· K returned to their owners"). `artefacts` counts the collection owner's
 // own; `evicted` counts foreign artefacts returned to top level untouched.
@@ -261,15 +386,15 @@ export interface CollectionLifecycleResponse {
 }
 
 // GET /api/bookmarks — the caller's pins, resolved to live (non-archived)
-// targets (BM3). Collections before artefacts is a client concern.
+// targets (collections.bookmark.hidden-not-pruned). Collections before artefacts is a client concern.
 export interface BookmarksResponse {
   artefacts: ArtefactSummary[];
   collections: CollectionSummary[];
 }
 
 // S28 — `GET /api/shared/collections`: every node of every collection tree
-// whose root grants the signed-in caller (CL11). `canContribute` is the
-// per-tree CL12 decision, made server-side so the grantee list itself never
+// whose root grants the signed-in caller (collections.read.follows-root). `canContribute` is the
+// per-tree collections.contributor.on-root-access-list decision, made server-side so the grantee list itself never
 // travels; `owner` is the tree owner's display identity ("Shared by …").
 export interface SharedCollectionSummary extends CollectionSummary {
   canContribute: boolean;

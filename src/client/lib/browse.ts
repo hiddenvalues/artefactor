@@ -2,12 +2,13 @@ import type { ArtefactSummary } from "../../shared/contracts";
 import type { ArtefactKind } from "../../domain/artefact/kind";
 import { KIND_ORDER, KINDS, VIS, VIS_ORDER, type Visibility } from "./format";
 
-export const SORTS = ["updated", "title", "size"] as const;
+// S65 — no card or row shows a size, so there is no Size sort; a remembered
+// "size" falls back to the default on restore (`prefs.ts`).
+export const SORTS = ["updated", "title"] as const;
 export type Sort = (typeof SORTS)[number];
 export const SORT_LABELS: Record<Sort, string> = {
   updated: "Recently updated",
   title: "Title A–Z",
-  size: "Largest first",
 };
 export const DENSITIES = ["grid", "list"] as const;
 export type Density = (typeof DENSITIES)[number];
@@ -30,13 +31,13 @@ export function matchesQuery(title: string, query: string): boolean {
 export function sortList<T extends ArtefactSummary>(list: T[], sort: Sort): T[] {
   const a = [...list];
   if (sort === "title") a.sort((x, y) => x.title.localeCompare(y.title));
-  else if (sort === "size") a.sort((x, y) => y.payloadBytes - x.payloadBytes);
   else a.sort((x, y) => new Date(y.updatedAt).getTime() - new Date(x.updatedAt).getTime());
   return a;
 }
 
 /** Filter + sort a list. `withAccess: false` ignores the access filter (a
  *  collection page has one tier tree-wide). */
+// r[impl platform.search.filters-ignore-text]
 export function applyFilters<T extends ArtefactSummary>(list: T[], f: Filters, withAccess = true): T[] {
   return sortList(
     list
@@ -77,7 +78,8 @@ export function showCollectionSort(mine: ArtefactSummary[], theirs: ArtefactSumm
   return mine.length + theirs.length > 0;
 }
 
-// Access chips, mirroring kindChips but over the *effective* tiers (AH20).
+// Access chips, mirroring kindChips but over the *effective* tiers
+// (hosting.access.effective-from-tree-root).
 export function accessChips(base: ArtefactSummary[]): Chip<AccessFilter>[] {
   const chips: Chip<AccessFilter>[] = [{ key: "all", label: "All access", count: base.length }];
   for (const v of VIS_ORDER) {

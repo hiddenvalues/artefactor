@@ -52,6 +52,7 @@ export const EMPTY_RESULTS: SearchResults = { collections: [], artefacts: [] };
 
 const newestFirst = (a: HitBase, b: HitBase) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
 
+// r[impl platform.search.library-hits]
 export function searchLibrary(input: SearchInput, query: string): SearchResults {
   if (!query.trim()) return EMPTY_RESULTS;
   const nameOf = (id: string | null, fallback: string) => (id && input.collectionById.get(id)?.name) || fallback;
@@ -87,6 +88,7 @@ export function searchLibrary(input: SearchInput, query: string): SearchResults 
 
 /** `[before, match, after]` around the first case-insensitive match; the whole
  *  title first when there is none. */
+// r[impl platform.search.highlight]
 export function highlight(title: string, query: string): [string, string, string] {
   const q = query.trim().toLowerCase();
   const at = q ? title.toLowerCase().indexOf(q) : -1;

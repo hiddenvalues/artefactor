@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// S37 (AH29) — the renderer role and the app are kept apart by their import
+// S37 — the renderer role and the app are kept apart by their import
 // graphs: nothing the renderer loads may reach the app's env (secrets), the
 // database, payload/thumbnail storage or auth; nothing the app loads may reach
 // Chromium. Walks every transitive relative import from each source file.
@@ -59,7 +59,7 @@ function violations(dir: string, forbidden: (module: string) => boolean): string
   );
 }
 
-describe("renderer / app import boundary (S37, AH29)", () => {
+describe("renderer / app import boundary (S37)", () => {
   it("finds the modules it is meant to police (the walker works)", () => {
     const fromAdapters = reachable(join(ROOT, "src/server/adapters.ts"));
     expect(fromAdapters).toContain("src/server/env.ts");
@@ -67,6 +67,7 @@ describe("renderer / app import boundary (S37, AH29)", () => {
     expect(sourceFiles(join(ROOT, "src/renderer")).length).toBeGreaterThan(0);
   });
 
+  // r[verify hosting.renderer.holds-no-secrets]
   it("nothing under src/renderer/ reaches the server env, the database, storage or auth", () => {
     const forbidden = (m: string) =>
       m === "src/server/env.ts" ||
@@ -80,6 +81,7 @@ describe("renderer / app import boundary (S37, AH29)", () => {
     expect(violations("src/renderer", forbidden)).toEqual([]);
   });
 
+  // r[verify hosting.renderer.only-isolated-renders]
   it("nothing under src/server/ reaches playwright-core or the Playwright renderer", () => {
     const forbidden = (m: string) =>
       m === "playwright-core" || m.startsWith("playwright-core/") || /playwright-thumbnail-renderer/.test(m);

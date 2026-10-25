@@ -1,15 +1,24 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { COMPONENTS_DIR, missingPreviews, orphanPreviews, previewGroup, previewId } from "./registry";
+import {
+  COMPONENTS_DIR,
+  missingPreviews,
+  orphanPreviews,
+  previewGroup,
+  previewId,
+  SCREENS_DIR,
+  SCREENS_WITHOUT_PREVIEW,
+} from "./registry";
 
 // The design catalog (docs/design/README.md): every component under
 // src/client/lib/components has a sibling `*.preview.tsx` rendering its
 // variants and states, so the catalog and the Claude design sync never miss one.
+// S70 — so does every screen under src/client/screens, in the Templates group.
 
-/** Every file under the components directory, repo-relative with `/` separators. */
-function componentTree(): string[] {
-  return readdirSync(COMPONENTS_DIR, { recursive: true, withFileTypes: true })
+/** Every file under a directory, repo-relative with `/` separators. */
+function tree(dir: string): string[] {
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter((e) => e.isFile())
     .map((e) => relative(process.cwd(), join(e.parentPath, e.name)).split("\\").join("/"));
 }
@@ -49,10 +58,56 @@ describe("component preview coverage", () => {
     expect(previewGroup(`${base}/theme/ThemeSpecimen.preview.tsx`)).toBe("Theme");
   });
 
-  it("finds a preview for every component in the client as it stands", () => {
-    const tree = componentTree();
-    expect(tree.length).toBeGreaterThan(0);
-    expect(missingPreviews(tree)).toEqual([]);
-    expect(orphanPreviews(tree)).toEqual([]);
+  it("finds a preview for every component and screen in the client as it stands", () => {
+    for (const dir of [COMPONENTS_DIR, SCREENS_DIR]) {
+      const files = tree(dir);
+      expect(files.length, dir).toBeGreaterThan(0);
+      expect(missingPreviews(files), dir).toEqual([]);
+      expect(orphanPreviews(files), dir).toEqual([]);
+    }
+  });
+});
+
+describe("screen preview coverage", () => {
+  const screens = "src/client/screens";
+
+  // r[verify platform.design.screen-previews]
+  it("reports a screen with no sibling preview, and passes once it is added", () => {
+    expect(missingPreviews([`${screens}/Home.tsx`])).toEqual([`${screens}/Home.tsx`]);
+    expect(missingPreviews([`${screens}/Home.tsx`, `${screens}/Home.preview.tsx`])).toEqual([]);
+  });
+
+  // r[verify platform.design.screen-previews]
+  it("skips a screen listed without a preview, which says why", () => {
+    const [name, reason] = Object.entries(SCREENS_WITHOUT_PREVIEW)[0] ?? [];
+    expect(name).toBeDefined();
+    expect(reason?.trim()).not.toBe("");
+    expect(missingPreviews([`${screens}/${name}.tsx`])).toEqual([]);
+    // Only a screen: a component of the same name still needs its preview.
+    expect(missingPreviews([`src/client/lib/components/${name}.tsx`])).toEqual([`src/client/lib/components/${name}.tsx`]);
+  });
+
+  it("lists only screens that exist and still have no preview of their own", () => {
+    for (const name of Object.keys(SCREENS_WITHOUT_PREVIEW)) {
+      expect(existsSync(join(SCREENS_DIR, `${name}.tsx`)), name).toBe(true);
+      expect(existsSync(join(SCREENS_DIR, `${name}.preview.tsx`)), name).toBe(false);
+    }
+  });
+
+  it("exempts only the listed screen's own file, not a namesake elsewhere", () => {
+    const [name] = Object.keys(SCREENS_WITHOUT_PREVIEW);
+    expect(missingPreviews([`${screens}/org/${name}.tsx`])).toEqual([`${screens}/org/${name}.tsx`]);
+    const component = `src/client/lib/components/screens/${name}.tsx`;
+    expect(missingPreviews([component])).toEqual([component]);
+  });
+
+  // r[verify platform.design.screen-previews]
+  it("groups a screen preview under Templates while a component keeps its group", () => {
+    expect(previewGroup(`${screens}/Home.preview.tsx`)).toBe("Templates");
+    expect(previewGroup(`../screens/AccountScreen.preview.tsx`)).toBe("Templates");
+    expect(previewGroup(`src/client/lib/components/ArtefactCard.preview.tsx`)).toBe("App");
+    expect(previewGroup(`src/client/lib/components/ui/button.preview.tsx`)).toBe("UI");
+    expect(previewId(`${screens}/Home.preview.tsx`)).toBe("screen-home");
+    expect(previewId(`../screens/OAuthConsentScreen.preview.tsx`)).toBe("screen-oauth-consent-screen");
   });
 });

@@ -1,20 +1,29 @@
 import { betterAuth } from "better-auth";
 import { APIError } from "better-auth/api";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { mcp } from "better-auth/plugins";
 import { db } from "../infra/db/client";
 import {
   account,
+  jwks,
   oauthAccessToken,
-  oauthApplication,
+  oauthClient,
+  oauthClientAssertion,
+  oauthClientResource,
   oauthConsent,
+  oauthRefreshToken,
+  oauthResource,
   session,
   user,
   verification,
 } from "../infra/db/schema";
 import { authConfig, env } from "./env";
 import { CLIENT_IP_HEADER } from "./client-ip";
-import { isEmailDomainAllowed } from "../domain/identity/email-domain";
+import { authLog } from "./auth-log";
+import {
+  DOMAIN_NOT_ALLOWED_MESSAGE,
+  isEmailDomainAllowed,
+} from "../domain/identity/email-domain";
+import { mcpAuthPlugins } from "./mcp/auth-plugins";
 
 // S1 — Identity & Access. BetterAuth owns users, sessions, and credential
 // handling; it persists through the shared Drizzle/SQLite database. The domain
@@ -22,7 +31,7 @@ import { isEmailDomainAllowed } from "../domain/identity/email-domain";
 // docs/specs/ddd/identity-access.md).
 //
 // Two methods, both via BetterAuth, and which of them a deployment enables is
-// configuration, not a rule of the environment (S38 / IA7 — resolved once in
+// configuration, not a rule of the environment (S38 — resolved once in
 // env.ts as `authConfig`):
 //   - Google OAuth (social sign-in) — enabled when both credentials are set, the
 //     production default. Google verifies the email; the allowlist below then
@@ -37,13 +46,24 @@ export const auth = betterAuth({
   // The base URL origin is trusted implicitly; add the dev client origin so the
   // Vite SPA on :5273 can drive the auth API during development.
   trustedOrigins: env.AUTH_TRUSTED_ORIGINS,
-  // S42 (IA8) — the client address (rate limiter, stored `session.ipAddress`)
+  // S42 — the client address (rate limiter, stored `session.ipAddress`)
   // comes only from the header `createApp` sets, never from `X-Forwarded-For`.
+  // r[impl identity.client-ip.better-auth-header]
   advanced: { ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] } },
+  // S51 — BetterAuth's log prints what failed, never a value it was handed
+  // (a failed OAuth callback's error carries the `state`).
+  // r[impl identity.log.auth-log-app]
+  logger: { log: authLog },
   emailAndPassword: {
     // S38 — deployment configuration; see the module comment.
     enabled: authConfig.emailPasswordEnabled,
   },
+  // S57 — the email is read-only: BetterAuth's `change-email` stays off (its
+  // default, stated explicitly for this auth instance; a superset that builds
+  // its own instance keeps the default), and `update-user` refuses an email of
+  // its own accord.
+  // r[impl identity.account.email-read-only]
+  user: { changeEmail: { enabled: false } },
   socialProviders: authConfig.googleEnabled
     ? {
         google: {
@@ -55,15 +75,16 @@ export const auth = betterAuth({
         },
       }
     : undefined,
-  // IA invariant 4 (as amended by S38) — an Account may be created only when
+  // The sign-up gate (S38) — an Account may be created only when
   // sign-up is open **and** the email's domain is allowed. Enforced on the create
   // path so it covers *every* provider (Google and email+password); a refused
   // create can never sign in afterwards. It gates creation only: accounts that
   // already exist still sign in, and the MCP connector's OAuth flow authorises an
-  // existing Account rather than creating one (IA2).
+  // existing Account rather than creating one.
   databaseHooks: {
     user: {
       create: {
+        // r[impl identity.signup.gate]
         before: async (newUser) => {
           // The gate is checked first, so a closed deployment does not disclose
           // which domains it allows.
@@ -79,22 +100,17 @@ export const auth = betterAuth({
             )
           ) {
             throw new APIError("FORBIDDEN", {
-              message: `Sign-up is restricted to ${env.AUTH_ALLOWED_EMAIL_DOMAINS.join(
-                " and ",
-              )} accounts.`,
+              message: DOMAIN_NOT_ALLOWED_MESSAGE,
             });
           }
         },
       },
     },
   },
-  // S18 — programmatic access via a remote MCP server. The `mcp` plugin embeds
-  // an OIDC provider: it self-registers OAuth discovery (`.well-known/oauth-*`),
-  // dynamic client registration (`/mcp/register`), authorize/consent/token, and
-  // `getMcpSession` (bearer → Account) used to guard `POST /mcp`. `loginPage` is
-  // where an unauthenticated authorize request is sent to sign in — the SPA root.
-  // See docs/specs/ddd/identity-access.md "Programmatic access (MCP connector)".
-  plugins: [mcp({ loginPage: "/" })],
+  // S18/S63 — programmatic access via a remote MCP server: the OAuth provider
+  // and the `jwt` plugin, defined once for every deployment (`mcpAuthPlugins`).
+  // r[impl hosting.magic-link.no-oss-endpoint]
+  plugins: [...mcpAuthPlugins(env.BETTER_AUTH_URL)],
   database: drizzleAdapter(db, {
     provider: "sqlite",
     schema: {
@@ -102,9 +118,14 @@ export const auth = betterAuth({
       session,
       account,
       verification,
-      oauthApplication,
+      oauthClient,
+      oauthResource,
+      oauthClientResource,
+      oauthRefreshToken,
       oauthAccessToken,
       oauthConsent,
+      oauthClientAssertion,
+      jwks,
     },
   }),
 });

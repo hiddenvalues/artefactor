@@ -11,6 +11,7 @@ import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { PayloadStore } from "../../domain/artefact/ports";
 import type { DataRepository } from "../../domain/data/data-repository";
 import {
+  ArtefactConflict,
   ArtefactNotFound,
   LinkGateChallenge,
   InvariantViolation,
@@ -24,6 +25,24 @@ import {
   restoreArtefactCommand,
 } from "../artefacts/lifecycle.command";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
+import { loadOwnCollection } from "../collections/get-own-collection";
+import { moveArtefactCommand } from "../collections/move-artefact.command";
+import { listPlaceableCollections } from "../collections/placeable-collections.query";
+import {
+  createCollectionCommand,
+  editCollectionCommand,
+} from "../collections/collections.command";
+import {
+  archiveCollectionCommand,
+  restoreCollectionCommand,
+} from "../collections/lifecycle.command";
+import type { Collection } from "../../domain/collection/collection";
+import { chainToRoot } from "../../domain/collection/tree";
+import { toCollectionSummary } from "../routes/collections";
+import {
+  CollectionInvariantViolation,
+  CollectionNotFound,
+} from "../../domain/collection/errors";
 import { getOwnDataEntry, putOwnDataEntry } from "../data/own-data.command";
 import {
   getAuthorDataEntry,
@@ -42,6 +61,7 @@ import { toArtefactSummary } from "../routes/artefacts";
 import { loadAuthoringGuide } from "./authoring-guide";
 import { env } from "../env";
 import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
+import { shareLinkPath } from "../../shared/share-link";
 
 // S18 — the MCP tool surface. Each tool is a thin adapter over the existing
 // Hosting / Data application commands, attributed to the OAuth token's Account
@@ -51,8 +71,8 @@ import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
 
 export interface McpToolDeps {
   repo: ArtefactRepository;
-  // S25 (AH20) — summaries report the *effective* tier and link reachability,
-  // which for a contained artefact comes from its collection tree root.
+  // S25 (hosting.access.effective-from-tree-root) — summaries report the *effective* tier and link
+  // reachability, which for a contained artefact comes from its collection tree root.
   collectionRepo: CollectionRepository;
   payloadStore: PayloadStore;
   dataRepo: DataRepository;
@@ -64,13 +84,15 @@ export interface McpToolDeps {
 }
 
 // S30 — caps on what a read-back tool may return. An MCP result lands in the
-// model's context, but payloads are capped at 100 MB (AH2) and blobs at 5 MB
-// (AD8) — orders of magnitude more than a context can take. Each tool therefore
-// hard-errors above its cap, naming the real byte size and pointing at the GUI
-// download, rather than truncating: truncated HTML is unusable for editing and
-// truncated JSON is unparseable, and either invites the model to act on a
-// fragment as though it were whole. (Same shape of refusal as create_artefact's
-// base64-raster-image rule.)
+// model's context, but payloads are capped at 100 MB
+// (hosting.payload.size-bounds) and blobs at 5 MB (data.blob.bounded-opaque-json) — orders of magnitude
+// more than a context can take. Each tool therefore hard-errors above its cap,
+// naming the real byte size and pointing at the GUI download, rather than
+// truncating: truncated HTML is unusable for editing and truncated JSON is
+// unparseable, and either invites the model to act on a fragment as though it
+// were whole. (Same shape of refusal as create_artefact's base64-raster-image
+// rule.)
+// r[impl mcp.read.over-cap-refused+2]
 export const MAX_MCP_HTML_BYTES = 1024 * 1024; // 1 MB
 export const MAX_MCP_BLOB_BYTES = 256 * 1024; // 256 KB
 
@@ -113,7 +135,7 @@ function fail(message: string) {
 // Map an artefact to the summary the BFF returns, plus the shareable URL when it
 // is actually reachable by link (a slug exists and the **effective** tier is not
 // private — a contained artefact is served under its collection tree root's
-// access, AH20, and the slug 404s while effectively private).
+// access, hosting.access.effective-from-tree-root, and the slug 404s while effectively private).
 // S32a — `viewerId` is the token's Account: the owner's summaries carry
 // `linkGate` (never the hash), anyone else's never do.
 function makeSummarize(deps: McpToolDeps, viewerId: string) {
@@ -125,7 +147,7 @@ function makeSummarize(deps: McpToolDeps, viewerId: string) {
     const summary = toArtefactSummary(a, effVis, viewerId);
     const url =
       a.publicSlug && effVis !== "private"
-        ? `${env.BETTER_AUTH_URL}/a/${a.publicSlug}`
+        ? `${env.BETTER_AUTH_URL}${shareLinkPath(a.publicSlug)}`
         : null;
     return { ...summary, url };
   };
@@ -135,6 +157,8 @@ function makeSummarize(deps: McpToolDeps, viewerId: string) {
 // entry: an exact id, else a case-insensitive email among those authors only.
 // A registered user without an entry is therefore refused exactly like an
 // unknown value, so the tool is no email-existence probe.
+// r[impl mcp.authors.resolve-author]
+// r[impl mcp.authors.no-email-probe+2]
 async function resolveDataAuthor(
   refs: DataAuthorRef[],
   author: string,
@@ -156,14 +180,32 @@ async function resolveDataAuthor(
 }
 
 // Run a tool body, translating known domain errors into `isError` results.
+// r[impl mcp.tools.refusal-is-error-result]
 async function run<T>(body: () => Promise<T>) {
   try {
     return ok(await body());
   } catch (err) {
+    // S60 — the save lost the race on every retry; the model rereads and retries.
+    // r[impl mcp.tools.save-conflict]
+    if (err instanceof ArtefactConflict) {
+      return fail(
+        "The artefact changed while this was being saved. Read it again with get_artefact, then retry.",
+      );
+    }
+    // S75/S76 — one refusal for every collection argument the caller can't use (a move target,
+    // a parent, a write's id), echoing only the id, so it never tells whether the collection
+    // exists (collections.access.no-existence-leak).
+    // r[impl mcp.collections.target-refusal+2]
+    if (err instanceof CollectionNotFound) {
+      return fail(
+        `No collection '${err.message}' that you can use here. Call list_collections to find one: you can place an artefact into any listed collection, and create under or change only your own (own: true). Archived collections aren't listed: restore one by the id archive_collection returned.`,
+      );
+    }
     if (
       err instanceof ArtefactNotFound ||
       err instanceof LinkGateChallenge ||
       err instanceof InvariantViolation ||
+      err instanceof CollectionInvariantViolation ||
       err instanceof ResultTooLarge ||
       err instanceof ToolInputRejected
     ) {
@@ -173,6 +215,7 @@ async function run<T>(body: () => Promise<T>) {
   }
 }
 
+// r[impl mcp.tools.surface+4]
 export function registerArtefactTools(
   server: McpServer,
   userId: string,
@@ -193,6 +236,7 @@ export function registerArtefactTools(
   // author's call. We surface how many authors already hold data (`dataAuthorCount`)
   // so the model can warn and suggest bumping the storage-key version or
   // publishing a new artefact (v2) on a breaking change. See the authoring skill.
+  // r[impl mcp.tools.data-author-count]
   const withDataCount = async (a: Artefact) => ({
     ...(await summarize(a)),
     dataAuthorCount: (await dataRepo.listAuthorsByArtefact(a.id)).length,
@@ -203,7 +247,7 @@ export function registerArtefactTools(
     {
       title: "Create artefact",
       description:
-        "Publish a self-contained HTML artefact to Artefactor. Returns the new artefact (id, slug, share URL). Optionally set its visibility; default is private. The HTML must follow Artefactor's persistence contract so any data it saves survives — persist only through localStorage (which Artefactor hijacks to a server-side store). Do NOT use this for an artefact with embedded raster images (PNG/JPEG as base64 data: URIs or binary): base64 image bytes can't be sent reliably through a tool call and will be truncated/corrupted — instead offer the user SVG/CSS visuals (publishable here) or manual upload of the self-contained file. Call get_authoring_guide if unsure.",
+        "Publish a self-contained HTML artefact to Artefactor. Returns the new artefact (id, slug, url — the share link, null while private — and appUrl, the Artefactor web app where the owner opens it). Always leave visibility unset: create it private, verify the published result, then share it with set_visibility at the tier the user asked for — even when they asked for a shared tier up front. Never share just to get a link — give the user appUrl instead. The HTML must follow Artefactor's persistence contract so any data it saves survives — persist only through localStorage (which Artefactor hijacks to a server-side store). Do NOT use this for an artefact with embedded raster images (PNG/JPEG as base64 data: URIs or binary): base64 image bytes can't be sent reliably through a tool call and will be truncated/corrupted — instead offer the user SVG/CSS visuals (publishable here) or manual upload of the self-contained file. Call get_authoring_guide if unsure.",
       inputSchema: {
         title: z.string().min(1).describe("Human-readable title."),
         kind: z
@@ -217,12 +261,17 @@ export function registerArtefactTools(
           .enum(VISIBILITIES)
           .optional()
           .describe(
-            "private (owner only), authenticated (any signed-in user), public (anyone with the link), or selected. Default private.",
+            "private (owner only), authenticated (any signed-in user), public (anyone with the link), or selected. Default private. Leave it unset: create private, verify, then share with set_visibility — even when the user asked for a shared tier up front; public only when they asked for public.",
           ),
       },
     },
+    // r[impl mcp.tools.create-app-url]
     async ({ title, kind, html, visibility }) =>
       run(async () => {
+        const withAppUrl = async (a: Artefact) => ({
+          ...(await summarize(a)),
+          appUrl: `${env.BETTER_AUTH_URL}/`,
+        });
         const created = await createArtefactCommand(
           {
             ownerId: userId,
@@ -233,7 +282,7 @@ export function registerArtefactTools(
           },
           { repo, payloadStore, thumbnails },
         );
-        if (!visibility || visibility === "private") return summarize(created);
+        if (!visibility || visibility === "private") return withAppUrl(created);
         // Fold the initial share into create as one logical operation: if the
         // share fails, roll the just-created artefact back so the tool is
         // all-or-nothing. (Leaving an orphaned private artefact behind would make
@@ -243,7 +292,7 @@ export function registerArtefactTools(
             { artefactId: created.id, requesterId: userId, visibility, scope },
             { repo },
           );
-          return summarize(shared);
+          return withAppUrl(shared);
         } catch (err) {
           await repo.delete(created.id).catch(() => {});
           await payloadStore.delete(created.payloadRef).catch(() => {});
@@ -278,6 +327,7 @@ export function registerArtefactTools(
             scope,
             title,
             kind,
+            // r[impl mcp.tools.update-replaces-html]
             payload: html === undefined ? undefined : new TextEncoder().encode(html),
           },
           { repo, payloadStore, thumbnails },
@@ -329,7 +379,7 @@ export function registerArtefactTools(
   // and (B) updating one in place after losing the original from context. (B) is
   // a correctness problem, not a convenience: `update_artefact` replaces the HTML
   // and leaves every per-user data blob untouched, and the backend treats blobs
-  // as opaque (AD8), so it cannot migrate them — only the author's own HTML can.
+  // as opaque (data.blob.bounded-opaque-json), so it cannot migrate them — only the author's own HTML can.
   // Both tools are owner-scoped via `loadOwnActiveArtefact`, like every other
   // tool here: unknown / not yours / archived / out-of-scope → not found.
 
@@ -349,6 +399,7 @@ export function registerArtefactTools(
             `This artefact's HTML is ${a.payloadBytes} bytes, over the ${MAX_MCP_HTML_BYTES}-byte limit for a tool result. It is not truncated, because partial HTML cannot be edited safely — download the file from the Artefactor web app ("Download HTML" on the artefact) and work from that instead.`,
           );
         }
+        // r[impl mcp.read.html-exact]
         const html = new TextDecoder().decode(
           await payloadStore.get(a.payloadRef),
         );
@@ -383,12 +434,14 @@ export function registerArtefactTools(
       run(async () => {
         const a = await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
         // Through the same commands the BFF uses — returned verbatim, never
-        // summarised (AD8 opacity). Without `author`, the caller's OWN entry
-        // (AD2); with it (S40), any author's, as the host switcher loads it for
-        // the owner (AD4) — read-only, nothing here writes it (AD5).
+        // summarised (data.blob.bounded-opaque-json opacity). Without `author`, the caller's OWN entry
+        // (data.write.author-is-caller); with it (S40), any author's, as the host
+        // switcher loads it for the owner (data.read.follows-artefact-access) — read-only,
+        // nothing here writes it (data.write.own-context-only).
         let named: ({ id: string } & UserIdentity) | undefined;
         let entry;
         if (author === undefined) {
+          // r[impl mcp.read.own-entry-default]
           entry = await getOwnDataEntry(
             { ref: a.id, authorId: userId, scope },
             dataDeps,
@@ -404,6 +457,7 @@ export function registerArtefactTools(
         const bytes = entry
           ? new TextEncoder().encode(entry.blob).byteLength
           : 0;
+        // r[impl mcp.authors.over-cap-refused+2]
         if (bytes > MAX_MCP_BLOB_BYTES) {
           const whose =
             named && named.id !== userId
@@ -429,9 +483,10 @@ export function registerArtefactTools(
           updatedAt: entry?.updatedAt.toISOString() ?? null,
           dataAuthorCount: (await dataRepo.listAuthorsByArtefact(a.id)).length,
           schema,
-          // Two version notions, deliberately kept apart (AD9): the *mechanical*
+          // Two version notions, deliberately kept apart (data.pin.stamped-on-write): the *mechanical*
           // pin below is the payload hash the backend stamps on a write, while
           // the schema's own `version` is *semantic* and author-declared.
+          // r[impl mcp.read.version-pair+2]
           currentPayloadVersion: a.payloadHash,
           // Stamped by every `putOwnDataEntry` write (S19a). null ⇒ no entry, or
           // one written before the pin existed — unknown, treat as possibly
@@ -448,7 +503,7 @@ export function registerArtefactTools(
   // stored size, freshness and version pin per author — never a blob. The
   // entries themselves are fetched one at a time with `get_artefact_data`, since
   // 5 MB blobs × N authors cannot fit one tool result. Owner-scoped like every
-  // tool here, though AD4 would let any viewer read (the S31 follow-up).
+  // tool here, though data.read.follows-artefact-access would let any viewer read (the S31 follow-up).
   server.registerTool(
     "list_artefact_data_authors",
     {
@@ -467,6 +522,7 @@ export function registerArtefactTools(
         return {
           id: a.id,
           currentPayloadVersion: a.payloadHash,
+          // r[impl mcp.authors.listing+2]
           authors: [...refs]
             .sort((x, y) => y.updatedAt.getTime() - x.updatedAt.getTime())
             .map((r) => {
@@ -487,8 +543,8 @@ export function registerArtefactTools(
   // S31 — the write half of the read-modify-write loop. Not the dropped S17: the
   // agent reads the WHOLE blob, transforms it in the session, and writes the
   // WHOLE blob back through the same `putOwnDataEntry` as `PUT …/data/me`, which
-  // parses only to enforce AD8. The server still never interprets the blob. The
-  // author is always the token's user (AD2/AD3) — there is no way to name
+  // parses only to enforce data.blob.bounded-opaque-json. The server still never interprets the blob. The
+  // author is always the token's user (data.write.author-is-caller, data.write.requires-auth) — there is no way to name
   // another author's entry. Owner-scoped like the read tools, so the write never
   // reaches further than the read it depends on.
   server.registerTool(
@@ -519,11 +575,13 @@ export function registerArtefactTools(
         const a = await loadOwnActiveArtefact(repo, { id, ownerId: userId, scope });
         const bytes = new TextEncoder().encode(blob).byteLength;
         try {
+          // r[impl mcp.data-write.round-trip+2]
           const entry = await putOwnDataEntry(
             { ref: a.id, authorId: userId, scope },
             blob,
             { artefactRepo: repo, collectionRepo: deps.collectionRepo, dataRepo },
             {
+              // r[impl mcp.data-write.no-pin-unconditional+2]
               ifUnmodifiedSince:
                 if_unmodified_since === undefined
                   ? undefined
@@ -540,6 +598,7 @@ export function registerArtefactTools(
         } catch (err) {
           // The domain errors are phrased for the HTTP route; the model needs
           // the specifics to fix its input, so they are restated here.
+          // r[impl mcp.data-write.refusal-names-fix]
           if (err instanceof BlobTooLarge) {
             throw new ToolInputRejected(
               `The blob is ${bytes} bytes, over the ${MAX_BLOB_BYTES}-byte (5 MB) cap for saved data. Nothing was written.`,
@@ -565,7 +624,7 @@ export function registerArtefactTools(
     {
       title: "Set artefact visibility",
       description:
-        "Share or unshare an artefact. A shareable tier mints (and retains) a slug; private retains the slug but the link 404s. Changing a public artefact to any other tier clears its link protection (password and expiry). Link protection is set only in the Artefactor web app, never over this connector.",
+        "Only on the user's request: say who will be able to open it before sharing, and set public only when they asked for public. Share or unshare an artefact. A shareable tier mints (and retains) a slug; private retains the slug but the link 404s. Changing a public artefact to any other tier clears its link protection (password and expiry). Link protection is set only in the Artefactor web app, never over this connector.",
       inputSchema: {
         id: z.string().min(1),
         visibility: z.enum(VISIBILITIES),
@@ -581,8 +640,8 @@ export function registerArtefactTools(
       }),
   );
 
-  // S41 (AH30, AD11) — owner-set data visibility. Owner, active and in scope,
-  // like every other tool: anything else is not found.
+  // S41 (hosting.data-visibility.owner-set, data.visibility.narrows-reads) — owner-set data visibility. Owner, active and in
+  // scope, like every other tool: anything else is not found.
   server.registerTool(
     "set_data_visibility",
     {
@@ -639,6 +698,63 @@ export function registerArtefactTools(
       }),
   );
 
+  // S75 — placement. `list_collections` reads the targets `move_artefact` accepts; the move runs
+  // the app's own command, so ownership, contribution, tenant, lifecycle and slug minting hold
+  // exactly as on `PUT /api/artefacts/:id/collection`.
+  server.registerTool(
+    "list_collections",
+    {
+      title: "List collections",
+      description:
+        "List the collections you can place an artefact into: your own, and those of trees shared with you as a contributor. Each row has id, name, parentId, path (the names from the tree root down), own, and visibility — the tier an artefact placed there is served under. Use it to find the collection_id for move_artefact, and — among your own rows (own: true) — the parent_id for create_collection and the id for the other collection tools.",
+      inputSchema: {},
+    },
+    async () =>
+      run(async () => {
+        const rows = await listPlaceableCollections(userId, scope, {
+          collectionRepo: deps.collectionRepo,
+        });
+        return {
+          collections: rows.map(({ collection, path, own, visibility }) => ({
+            id: collection.id,
+            name: collection.name,
+            parentId: collection.parentId,
+            path,
+            own,
+            visibility,
+          })),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "move_artefact",
+    {
+      title: "Move artefact",
+      description:
+        "Put one of your active artefacts into a collection, move it to another, or take it back to top level with collection_id null. Find the collection_id with list_collections. A move changes how the artefact is served: inside a collection it takes the tree's visibility and link protection (password, expiry), at top level its own. So a move can SHARE it and mint its link (a collection whose visibility is not private), stop a working link (a private collection, or top level when its own tier is private), or add or drop link protection — tell the user before any of these. Returns the artefact's summary with its new collectionId and effectiveVisibility.",
+      inputSchema: {
+        id: z.string().min(1).describe("The artefact id."),
+        collection_id: z
+          .string()
+          .min(1)
+          .nullable()
+          .describe("The target collection's id, or null for top level."),
+      },
+    },
+    async ({ id, collection_id }) =>
+      run(async () => {
+        // r[impl mcp.collections.move-runs-command]
+        const moved = await moveArtefactCommand(
+          { artefactId: id, requesterId: userId, collectionId: collection_id, scope },
+          { artefactRepo: repo, collectionRepo: deps.collectionRepo },
+        );
+        return withDataCount(moved);
+      }),
+  );
+
+  registerCollectionWriteTools(server, userId, deps, scope);
+
   // S18 — the authoring skill, on demand. Clients that can use the connector but
   // can't load Agent Skills (e.g. Claude design) read the FULL contract here:
   // how to write HTML that persists (the localStorage rules, a template, the
@@ -656,6 +772,7 @@ export function registerArtefactTools(
       try {
         return {
           content: [
+            // r[impl mcp.guide.full-guide-tool]
             { type: "text" as const, text: await loadAuthoringGuide() },
           ],
         };
@@ -668,5 +785,197 @@ export function registerArtefactTools(
         );
       }
     },
+  );
+}
+
+// S76 — the agent builds and manages its own collection trees. Each tool runs the app's own
+// command for the token's Account, so ownership, tree shape, slug minting and back-fill and the
+// lifecycle cascades hold exactly as on the `/api/collections` routes. People, contributors, link
+// protection and permanent deletion have no tool: they stay in the web app.
+// r[impl mcp.collections.writes-run-commands]
+function registerCollectionWriteTools(
+  server: McpServer,
+  userId: string,
+  deps: McpToolDeps,
+  scope: TenantScope,
+): void {
+  const commandDeps = { collectionRepo: deps.collectionRepo, artefactRepo: deps.repo };
+
+  // The owner's summary plus the names from the tree root down, as `list_collections` gives them.
+  // `visibility` is the tier the collection is served under — its tree root's
+  // (collections.access.root-governs-tree) — never a nested row's unused stored one.
+  const summarize = async (collection: Collection) => {
+    const own = toCollectionSummary(collection, userId);
+    if (collection.parentId === null) return { ...own, path: [collection.name] };
+    const tree = await deps.collectionRepo.listByOwner(collection.ownerId, scope, {
+      includeArchived: true,
+    });
+    const ancestors = chainToRoot(tree, collection.parentId).reverse();
+    const root = ancestors[0];
+    return {
+      ...own,
+      ...(root ? { visibility: root.visibility } : {}),
+      path: [...ancestors.map((c) => c.name), collection.name],
+    };
+  };
+
+  // r[impl mcp.collections.archive-reports-cascade]
+  const withCascade = async (result: {
+    collection: Collection;
+    cascade: { collections: number; artefacts: number; evicted: number };
+  }) => ({ collection: await summarize(result.collection), cascade: result.cascade });
+
+  server.registerTool(
+    "create_collection",
+    {
+      title: "Create collection",
+      description:
+        "Create a collection you own: a top-level one, or one under parent_id — your own collection, found with list_collections. A top-level collection's visibility governs its whole tree and defaults to private; a shared tier mints its link. A nested one takes its root's tier, so visibility with parent_id is refused. \"selected\" shares with no one until the user adds people in the Artefactor web app. Returns the collection's summary with its path; its visibility is the tier it is served under (its tree root's).",
+      inputSchema: {
+        name: z.string().describe("The collection's name."),
+        parent_id: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Your own collection to create this under; omit for top level."),
+        visibility: z
+          .enum(VISIBILITIES)
+          .optional()
+          .describe("Top level only: the tier the whole tree is served under."),
+        description: z.string().optional().describe("An optional short description."),
+      },
+    },
+    async ({ name, parent_id, visibility, description }) =>
+      run(async () => {
+        // A nested collection takes its root's tier (collections.access.set-on-root-only): a tier
+        // given with a parent would be stored, unused, and reported back as if it applied.
+        if (parent_id !== undefined && visibility !== undefined) {
+          throw new ToolInputRejected(
+            "A nested collection takes its tree root's tier: omit visibility, or set the root's with set_collection_visibility.",
+          );
+        }
+        return summarize(
+          await createCollectionCommand(
+            {
+              requesterId: userId,
+              name,
+              description,
+              parentId: parent_id ?? null,
+              visibility,
+              scope,
+            },
+            commandDeps,
+          ),
+        );
+      }),
+  );
+
+  server.registerTool(
+    "update_collection",
+    {
+      title: "Update collection",
+      description:
+        "Rename a collection you own or change its description (a string sets it, null clears it). Give at least one. Visibility is set_collection_visibility's. Returns the collection's summary with its path; its visibility is the tier it is served under (its tree root's).",
+      inputSchema: {
+        id: z.string().min(1).describe("Your collection's id."),
+        name: z.string().optional(),
+        description: z.string().nullable().optional(),
+      },
+    },
+    async ({ id, name, description }) =>
+      run(async () => {
+        if (name === undefined && description === undefined) {
+          throw new ToolInputRejected("Nothing to update: give a name, a description, or both.");
+        }
+        return summarize(
+          await editCollectionCommand(
+            { collectionId: id, requesterId: userId, name, description, scope },
+            commandDeps,
+          ),
+        );
+      }),
+  );
+
+  server.registerTool(
+    "set_collection_visibility",
+    {
+      title: "Set collection visibility",
+      description:
+        "Set the tier of a top-level collection you own. It applies to the WHOLE tree: every artefact in it, at any depth, is served under it, so a shared tier shares them all and mints their links, and private stops every link working — tell the user before. A nested collection takes its tree root's tier: set the root's instead. \"selected\" shares with exactly the people the user has granted in the Artefactor web app, any granted earlier included, and with no one if none are. Leaving public clears the tree's link protection (password and expiry), which is set only in the Artefactor web app. Returns the collection's summary with its path; its visibility is the tier it is served under (its tree root's).",
+      inputSchema: {
+        id: z.string().min(1).describe("Your top-level collection's id."),
+        visibility: z.enum(VISIBILITIES),
+      },
+    },
+    async ({ id, visibility }) =>
+      run(async () =>
+        summarize(
+          // r[impl mcp.collections.web-app-only]
+          // The tier alone: a link gate is never passed, so the connector never sets one.
+          await editCollectionCommand(
+            { collectionId: id, requesterId: userId, visibility, scope },
+            commandDeps,
+          ),
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "archive_collection",
+    {
+      title: "Archive collection",
+      description:
+        "Archive a collection you own with everything under it: its sub-collections and your artefacts in them are archived too, and other users' artefacts in the tree are moved out to their own top level. Confirm with the user first. Restore with restore_collection and the id. Returns { collection, cascade: { collections, artefacts, evicted } }.",
+      inputSchema: { id: z.string().min(1).describe("Your collection's id.") },
+    },
+    async ({ id }) =>
+      run(async () =>
+        withCascade(
+          await archiveCollectionCommand(
+            { collectionId: id, requesterId: userId, scope },
+            commandDeps,
+          ),
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "restore_collection",
+    {
+      title: "Restore collection",
+      description:
+        "Restore an archived collection you own, with its sub-collections and your artefacts in them, by the id archive_collection returned (archived collections are not listed here). One inside a still-archived tree is refused: restore the archived ancestor the refusal names. Returns { collection, cascade: { collections, artefacts, evicted } }.",
+      inputSchema: { id: z.string().min(1).describe("Your archived collection's id.") },
+    },
+    async ({ id }) =>
+      run(async () => {
+        // A collection under an archived ancestor stays archived: restoring it alone would leave
+        // an active node inside an inert tree (collections.lifecycle.archived-inert), unlisted yet
+        // writable. Point at the topmost archived ancestor, whose restore brings this one back too.
+        const target = await loadOwnCollection(deps.collectionRepo, {
+          id,
+          ownerId: userId,
+          scope,
+        });
+        if (target.parentId !== null) {
+          const tree = await deps.collectionRepo.listByOwner(userId, scope, {
+            includeArchived: true,
+          });
+          const archivedAncestor = chainToRoot(tree, target.parentId)
+            .reverse()
+            .find((c) => c.status === "archived");
+          if (archivedAncestor) {
+            throw new ToolInputRejected(
+              `Collection '${id}' sits under an archived collection: restore '${archivedAncestor.id}' (${archivedAncestor.name}) instead, which restores this one with it. Nothing was restored.`,
+            );
+          }
+        }
+        return withCascade(
+          await restoreCollectionCommand(
+            { collectionId: id, requesterId: userId, scope },
+            commandDeps,
+          ),
+        );
+      }),
   );
 }

@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 **Where work stands:** slice status and dependencies live in the slice DAG — the catalog
 [`docs/specs/fdd/slice-dag.md`](docs/specs/fdd/slice-dag.md) and the per-context files it lists
 under `docs/specs/fdd/slices/` — the single, test-enforced source of truth (`pnpm spec:dag`
@@ -23,73 +21,49 @@ shape rather than a bounded context, so no spec governs them.
   defines repository/store **ports**. The primary TDD surface (tested against in-memory repos).
   Adapters live in `src/infra` (Drizzle in `db/`, filesystem payloads in `storage/`); the server
   is the composition root wiring routes → domain → adapters.
-- **Client** (`src/client`) is a Vite + React SPA on stock shadcn/ui — the human-facing app, not
-  a stub; shared BFF contracts in `src/shared`. Colours live in one tokens file
-  (`src/client/app.css`); `pnpm lint` bans inline styles and raw colours elsewhere.
+- **Client** (`src/client`) is a Vite + React SPA on stock shadcn/ui; shared BFF contracts in
+  `src/shared`, colour tokens in `src/client/app.css`, guarded by `pnpm lint`.
   → [`fdd/slices/platform.md`](docs/specs/fdd/slices/platform.md)
-- **Composition + enabler seams.** `createApp` takes the persistence adapter set
-  (`src/server/adapters.ts` is the OSS default: SQLite + filesystem), the BetterAuth instance, a
-  `TenantScopeResolver` and an `AccessPolicy` as injected dependencies — **enabler seams**: each
-  keeps OSS behaviour byte-identical while letting a closed superset extend the core without
-  forking it. Security-critical logic stays single-sourced: the access matrix
-  (`domain/artefact/access.ts`) is one table, and the policy decides only its one overridable
-  cell.
+- **Composition + enabler seams.** `createApp` takes the adapters (`src/server/adapters.ts`, the
+  OSS default), BetterAuth and the tenancy/access/organization seams as injected dependencies, so
+  a closed superset extends the core without forking it.
   → [`fdd/slices/platform.md`](docs/specs/fdd/slices/platform.md)
-- **Identity & Access** (`src/server/auth.ts`) — BetterAuth via its Drizzle adapter; the domain
-  owns no user or session aggregate, the BetterAuth user id *is* the `ownerId`.
+- **Identity & Access** (`src/server/auth.ts`) — BetterAuth; its user id *is* the `ownerId`.
   → [`ddd/identity-access.md`](docs/specs/ddd/identity-access.md),
   [`fdd/slices/identity-access.md`](docs/specs/fdd/slices/identity-access.md)
 - **Artefact Hosting** (`src/domain/artefact/`, `src/server/artefacts/`) — the core context: the
-  `Artefact` aggregate, the pure access matrix, and the commands and `/api/artefacts` routes that
-  create, edit, share, archive and export artefacts.
+  `Artefact` aggregate, the access matrix and the `/api/artefacts` routes.
   → [`ddd/artefact-hosting.md`](docs/specs/ddd/artefact-hosting.md),
   [`fdd/slices/artefact-hosting.md`](docs/specs/fdd/slices/artefact-hosting.md)
-- **Artefact Collections** — a nestable folder tree, owned by one user and never spanning owners;
-  its structure, access and lifecycle are owner-only, but the **root's** access list doubles as a
-  contributor list, so a contributor may place their own artefacts in the tree — and those
-  artefacts inherit the root's access at read time. Routes under `/api/collections`.
+- **Artefact Collections** — an owner's nestable folder tree, under `/api/collections`.
   → [`ddd/artefact-collections.md`](docs/specs/ddd/artefact-collections.md),
   [`fdd/slices/artefact-collections.md`](docs/specs/fdd/slices/artefact-collections.md)
-- **Artefact Data** (`src/domain/data/`, `src/server/data/`) — the `DataEntry` aggregate: one
-  **opaque** JSON blob per `(artefact, author)`, under `/api/artefacts/:ref/data/*`. The backend
-  never interprets it, so there is **no merge-patch**: agents read-modify-write their own entry
-  whole, and the artefact owns its own data-shape compatibility.
+- **Artefact Data** (`src/domain/data/`, `src/server/data/`) — one opaque JSON blob per
+  `(artefact, author)`, under `/api/artefacts/:ref/data/*`.
   → [`ddd/artefact-data.md`](docs/specs/ddd/artefact-data.md),
   [`fdd/slices/artefact-data.md`](docs/specs/fdd/slices/artefact-data.md)
 - **Artefact Views** — who has viewed an artefact, surfaced in the serving shell.
   → [`ddd/artefact-views.md`](docs/specs/ddd/artefact-views.md),
   [`fdd/slices/artefact-views.md`](docs/specs/fdd/slices/artefact-views.md)
-- **Serving runtime** (`src/server/runtime/`) — `/a/:slug` is a server-rendered host **shell**
-  wrapping the artefact in a **sandboxed, opaque-origin** `<iframe>` that carries no cookies
-  (a short-lived HMAC frame token authenticates it) and whose seeded `localStorage` shim posts
-  every change to the shell to be saved.
+- **Serving runtime** (`src/server/runtime/`) — `/a/:slug`: a host shell around a sandboxed,
+  cookieless `<iframe>` with a seeded `localStorage` shim.
   → [`ddd/artefact-hosting.md`](docs/specs/ddd/artefact-hosting.md),
   [`ddd/artefact-data.md`](docs/specs/ddd/artefact-data.md)
 - **Artefact thumbnails** (`src/server/thumbnails/`, `src/infra/render/`, `src/renderer/`) — a
-  derived WebP per artefact. A render runs the uploader's JavaScript, so Chromium never runs in
-  the app: `src/renderer/` is a **separate role from the same image**
-  (`ARTEFACTOR_ROLE=renderer`), reached over HTTP; unset `ARTEFACTOR_RENDERER_URL` and every card
-  keeps its kind placeholder.
+  derived WebP per artefact, rendered by an isolated renderer role (`ARTEFACTOR_ROLE=renderer`).
   → [`ddd/artefact-hosting.md`](docs/specs/ddd/artefact-hosting.md),
   [`docs/renderer-isolation.md`](docs/renderer-isolation.md)
-- **MCP connector** (`src/server/mcp/`) — `POST /mcp` behind an OAuth bearer from BetterAuth's
-  `mcp` plugin; its tools wrap the Hosting and Data commands, attributed to the token's Account,
-  and add no authority of their own. Connector-only clients (e.g. Claude design) **can't load the
-  `artefactor` Agent Skill**, so the server's `instructions` carry a compact persistence summary
-  and `get_authoring_guide` returns the full `skills/artefactor/SKILL.md` body —
-  `src/server/mcp/authoring-guide.ts` and the skill are kept in sync.
-  → [`fdd/slices/mcp-connector.md`](docs/specs/fdd/slices/mcp-connector.md)
-- **Deployment export** (`src/infra/export/`) — an operator CLI (`pnpm export:bundle`) that writes
-  the whole deployment as a versioned, verifiable **export bundle** from one read-only snapshot:
-  Accounts without credentials, artefacts + payloads, access lists, collections, data, views and
-  bookmarks. Its reader, `readBundle`, is the format's single definition and the contract the EE
-  importer consumes.
+- **MCP connector** (`src/server/mcp/`) — `POST /mcp` behind BetterAuth OAuth; its tools wrap the
+  Hosting and Data commands. `src/server/mcp/authoring-guide.ts` mirrors
+  `skills/artefactor/SKILL.md`.
+  → [`ddd/mcp-connector.md`](docs/specs/ddd/mcp-connector.md),
+  [`fdd/slices/mcp-connector.md`](docs/specs/fdd/slices/mcp-connector.md)
+- **Deployment export** (`src/infra/export/`) — `pnpm export:bundle` writes the deployment as a
+  verifiable export bundle; `readBundle` is the format's single definition.
   → [`ddd/deployment-export.md`](docs/specs/ddd/deployment-export.md),
   [`fdd/slices/platform.md`](docs/specs/fdd/slices/platform.md)
-- **Two publishing paths.** *Path A* — the MCP connector pushes HTML, but cannot carry base64
-  raster image bytes through a tool call. *Path B* — the **manual HTML upload** dialog in the
-  client, the supported way to publish an artefact that embeds raster images. Both run the same
-  create/edit commands, so invariants are identical.
+- **Two publishing paths** — the MCP connector (no raster image bytes) and the manual HTML upload
+  dialog; both run the same commands.
   → [`skills/artefactor/SKILL.md`](skills/artefactor/SKILL.md)
 
 ## What this is
@@ -128,8 +102,8 @@ code in sync in the same commit.
   (IA7, S38). Account **creation** is gated by `AUTH_ALLOW_SIGNUP` beside the domain allowlist —
   defaulting to closed exactly when production has the unverified email+password path open.
   Programmatic access is the **MCP connector**
-  (S18), authenticated by **OAuth** via BetterAuth's `mcp` plugin — there is **no API-key
-  credential** (the pinned better-auth has no api-key plugin; S8/S9 dropped). The domain treats
+  (S18), authenticated by **OAuth** via `@better-auth/mcp` — there is **no API-key
+  credential** (better-auth core ships no api-key plugin; S8/S9 dropped). The domain treats
   the BetterAuth user id as `ownerId` — no hand-rolled user/session aggregate.
 - **Ingestion:** manual HTML upload (authenticated UI) **and** the **MCP connector**
   (OAuth-authenticated, S18); both enforce identical invariants.
@@ -190,7 +164,10 @@ sync with implementation and tests at all times.
   (details: `docs/specs/README.md`).
 - **TDD (Test-Driven Development)** — every slice is built test-first. Unit tests encode
   the invariants and business logic from the DDD spec. A spec, its implementation, and
-  its tests must always agree.
+  its tests must always agree. A spec states each checkable rule as an `r[<id>]` requirement
+  marker; a test cites it with `// r[verify <id>]`, the one site that decides it with
+  `// r[impl <id>]`, and `pnpm test` fails when they drift (`docs/specs/README.md`
+  *Requirements*).
 
 Practical implication for any change: locate the governing DDD spec and FDD slice first.
 If a change would alter behavior, the spec and tests change together with the code — never
@@ -231,36 +208,57 @@ let them drift. If no spec covers the work, write/extend the spec before coding.
   bodies, commit messages), refer to a slice by its **full title** — e.g. "S31 — Agent edits
   data: `set_artefact_data` MCP tool", never "S31". The machine-parsed metadata fields and catalog
   cells keep bare ids.
+- **Reading code:** read in parts, never whole files — `grep -n` first, then `sed -n 'a,bp'` or
+  `Read` with `offset`/`limit`; never `cat` several files at once. Send "how does area X work"
+  questions to an Explore subagent. Change a file with `Edit`, not a whole-file `Write`. Read a
+  requirement with `pnpm spec:req <id>`, not its spec file.
 
 ## Commands
 
 ```bash
 pnpm dev                       # Vite (5273) + Hono (3000) together; Vite proxies /api,/health,/a/
+pnpm dev:seed [--reset]        # local demo DB: demo@example.com + maya@example.com, password artefactor-demo
+pnpm dev:local                 # pnpm dev behind portless: https://[<branch>.]artefactor.localhost, any free ports
 pnpm build                     # build:client (Vite → dist/client) + build:server (esbuild → dist/server)
 pnpm start                     # run the built server: node dist/server/index.js
 pnpm test                      # Vitest (domain unit tests)
+pnpm test:unit                 # every test but the browser suites (*.browser.test.ts) — CI's `unit` job
+pnpm test:browser              # only the *.browser.test.ts suites (real headless Chromium) — CI's `browser` job
 pnpm test <file> -t "name"     # run a single test by name
 pnpm check                     # tsc --noEmit (client, then server) — type safety
-pnpm lint                      # ESLint over src/client: no inline styles, no raw colours (S43); CI gate
+pnpm lint                      # ESLint over src/client: no inline styles, raw colours, palette classes, direct Radix or raw controls (S43, S49a, S49b); CI gate
 pnpm db:generate               # drizzle-kit: generate a migration from src/infra/db/schema.ts
 pnpm db:migrate                # apply migrations (tsx src/infra/db/migrate.ts)
 pnpm db:studio                 # drizzle studio
 pnpm export:bundle --out <dir>  # write the deployment's export bundle (S39); --verify <dir> checks one
 pnpm spec:dag [catalog]        # slice DAG → mermaid graph + build waves + next free id (default: core catalog)
+pnpm spec:trace [--untraced]   # requirement traceability report (coverage, verify/impl sites, stale refs); exits 1 on an error
+pnpm spec:bump [--editorial <id>]  # bump changed requirements (+N → +N+1) and rewrite docs/specs/requirements.lock
+pnpm spec:req [--refs] <id>…   # print requirements (version, file:line, body; --refs: verify/impl sites) without opening the spec
 pnpm lint:md                   # markdownlint-cli2 over every tracked .md (.markdownlint-cli2.jsonc); CI gate
 pnpm lint:md:fix               # apply markdownlint's auto-fixes (over-long prose lines still rewrap by hand)
+pnpm quiet -- <command…>       # run a command, log its output, print a ≤3 KB summary; keeps its exit code
 pnpm dev:renderer              # the isolated thumbnail renderer (S37), long-lived for local work
 pnpm exec playwright-core install chromium-headless-shell  # once, for the renderer + its browser tests
 
 # Identity (S1): regenerate BetterAuth's Drizzle tables after changing src/server/auth.ts
-# (e.g. the mcp/OIDC plugin tables added in S18), then re-run db:generate to emit the migration.
+# (e.g. the OAuth-provider tables of S18/S63), then re-run db:generate to emit the migration.
 pnpm dlx @better-auth/cli generate --config src/server/auth.ts --output src/infra/db/auth-schema.ts
 ```
+
+**Quiet output:** a tool result stays in an agent session's context for every later call, so
+run gates (`pnpm test`, `check`, `lint`, `spec:trace`, `build`) and large fetches (CI job logs)
+as `pnpm quiet -- <command…>`. On `exit=0` read nothing more. On a non-zero exit, `grep -n` the
+printed log for the failing check, then `sed -n` that range — never `cat` the log. Don't add
+`--summary-only` to a gate; it hides the tail a red run needs. Don't pipe it into `head` or
+`tail` either: the output is already short, and the pipe's exit code replaces the command's, so a
+red gate passes an `&&` chain. Flags: `src/dev/quiet.ts`.
 
 **Native deps:** pnpm 11 blocks dependency build scripts. After a fresh `pnpm install`, run
 **`pnpm approve-builds --all`** to compile `better-sqlite3` (no prebuilt for Node 26 — builds
 from source; needs `python3`/`make`/`g++`). The Dockerfile does this automatically. The project
-pins **Node 26.4.0** (`.nvmrc`); use it for every command so the native addon's ABI matches.
+pins **Node 26** to an exact version in `.nvmrc`; use it for every command so the native addon's
+ABI matches.
 
 **Docker:** multi-stage `Dockerfile` builds a single image with two roles, chosen by
 `ARTEFACTOR_ROLE` in `docker-entrypoint.sh`: `app` (the default — migrations, then the server) and

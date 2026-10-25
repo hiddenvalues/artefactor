@@ -1,5 +1,6 @@
 import { cpSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import Database from "better-sqlite3";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { BundleError } from "./format";
@@ -8,7 +9,7 @@ import { readBundle } from "./read-bundle";
 import { openSource, seedDeployment, type SeededDeployment } from "./fixture";
 
 // S39 — readBundle rejects every broken bundle, naming the failing check, and
-// tolerates what a later minor version may add (DX4, DX5).
+// tolerates what a later minor version may add.
 
 let seed: SeededDeployment;
 let good: string;
@@ -47,24 +48,28 @@ async function rejection(dir: string): Promise<BundleError> {
 }
 
 describe("readBundle (S39)", () => {
+  // r[verify export.reader.validates-bundle]
   it("accepts the bundle an export wrote", async () => {
     const bundle = await readBundle(good);
     expect(bundle.manifest.counts.artefacts).toBe(6);
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a missing manifest", async () => {
     const dir = copy();
     rmSync(join(dir, "manifest.json"));
     expect((await rejection(dir)).check).toBe("manifest");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a foreign format", async () => {
     const dir = copy();
     writeManifest(dir, { ...manifestOf(dir), format: "something-else" });
     expect((await rejection(dir)).check).toBe("manifest");
   });
 
-  it("rejects an unknown major version (DX5)", async () => {
+  // r[verify export.format.versioned+2]
+  it("rejects an unknown major version", async () => {
     const dir = copy();
     writeManifest(dir, { ...manifestOf(dir), version: "2.0" });
     const err = await rejection(dir);
@@ -72,6 +77,7 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain("2.0");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a record failing its schema", async () => {
     const dir = copy();
     const artefacts = lines(dir, "artefacts.jsonl");
@@ -82,18 +88,21 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain("artefacts.jsonl line 2");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a line that is not JSON", async () => {
     const dir = copy();
     writeFileSync(join(dir, "views.jsonl"), "{not json\n");
     expect((await rejection(dir)).check).toBe("schema");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a missing record file", async () => {
     const dir = copy();
     rmSync(join(dir, "views.jsonl"));
     expect((await rejection(dir)).check).toBe("schema");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a count that disagrees with the manifest", async () => {
     const dir = copy();
     const m = manifestOf(dir);
@@ -103,6 +112,7 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain("accounts");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a dangling reference: an access row for an unexported user", async () => {
     const dir = copy();
     const access = lines(dir, "artefact-access.jsonl");
@@ -115,6 +125,7 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain("u-ghost");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a dangling reference: a child collection whose parent is missing", async () => {
     const dir = copy();
     const collections = lines(dir, "collections.jsonl");
@@ -123,7 +134,8 @@ describe("readBundle (S39)", () => {
     expect((await rejection(dir)).check).toBe("reference");
   });
 
-  it("rejects a payload whose bytes don't hash to its name (DX4)", async () => {
+  // r[verify export.payload.reader-verifies]
+  it("rejects a payload whose bytes don't hash to its name", async () => {
     const dir = copy();
     const name = readdirSync(join(dir, "payloads"))[0]!;
     writeFileSync(join(dir, "payloads", name), "<p>tampered</p>");
@@ -132,7 +144,9 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain(name);
   });
 
-  it("rejects a payload that is a symbolic link, even to the right bytes (DX4)", async () => {
+  // r[verify export.reader.validates-bundle]
+  // r[verify export.format.self-contained]
+  it("rejects a payload that is a symbolic link, even to the right bytes", async () => {
     const dir = copy();
     const name = readdirSync(join(dir, "payloads"))[0]!;
     const outside = join(seed.dir, `outside-${n++}`);
@@ -143,7 +157,8 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain(name);
   });
 
-  it("rejects a payloads/ directory that is a symbolic link (DX4)", async () => {
+  // r[verify export.reader.validates-bundle]
+  it("rejects a payloads/ directory that is a symbolic link", async () => {
     const dir = copy();
     const outside = join(seed.dir, `outside-payloads-${n++}`);
     renameSync(join(dir, "payloads"), outside);
@@ -153,12 +168,15 @@ describe("readBundle (S39)", () => {
     expect(err.message).toContain("payloads/");
   });
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a missing payloads/ directory", async () => {
     const dir = copy();
     rmSync(join(dir, "payloads"), { recursive: true });
     expect((await rejection(dir)).check).toBe("payload");
   });
 
+  // r[verify export.reader.validates-bundle]
+  // r[verify export.format.self-contained]
   it.each(["manifest.json", "artefacts.jsonl"])(
     "rejects %s when it is a symbolic link, even to the right content",
     async (file) => {
@@ -171,13 +189,15 @@ describe("readBundle (S39)", () => {
     },
   );
 
+  // r[verify export.reader.validates-bundle]
   it("rejects a payload entry that is a directory, as a BundleError", async () => {
     const dir = copy();
     mkdirSync(join(dir, "payloads", "a".repeat(64)));
     expect((await rejection(dir)).check).toBe("payload");
   });
 
-  it("rejects an artefact whose payload file is missing (DX4)", async () => {
+  // r[verify export.reader.validates-bundle]
+  it("rejects an artefact whose payload file is missing", async () => {
     const dir = copy();
     const [artefact] = lines(dir, "artefacts.jsonl");
     rmSync(join(dir, "payloads", artefact.payloadHash));
@@ -186,7 +206,8 @@ describe("readBundle (S39)", () => {
     expect((await rejection(dir)).check).toBe("payload");
   });
 
-  it("accepts an unknown extra field and an unknown extra .jsonl under a known major (DX5)", async () => {
+  // r[verify export.format.versioned+2]
+  it("accepts an unknown extra field and an unknown extra .jsonl under a known major", async () => {
     const dir = copy();
     const artefacts = lines(dir, "artefacts.jsonl").map((a) => ({ ...a, futureField: { x: 1 } }));
     writeLines(dir, "artefacts.jsonl", artefacts);
@@ -206,6 +227,61 @@ describe("readBundle (S39)", () => {
     expect(read[0]).not.toHaveProperty("futureField");
   });
 
+  // r[verify export.collection.link-gate]
+  it("reads a 1.0 bundle, whose collections carry no linkGate, as ungated", async () => {
+    const dir = copy();
+    const collections = lines(dir, "collections.jsonl").map(({ linkGate: _gate, ...c }) => c);
+    writeLines(dir, "collections.jsonl", collections);
+    writeManifest(dir, { ...manifestOf(dir), version: "1.0" });
+    const bundle = await readBundle(dir);
+    const read = [];
+    for await (const c of bundle.collections()) read.push(c);
+    expect(read).toHaveLength(2);
+    for (const c of read) expect(c.linkGate).toBeNull();
+  });
+
+  // r[verify export.collection.public-slug]
+  it("reads a 1.1 bundle, whose collections carry no publicSlug, as slugless", async () => {
+    const dir = copy();
+    const collections = lines(dir, "collections.jsonl").map(({ publicSlug: _slug, ...c }) => c);
+    writeLines(dir, "collections.jsonl", collections);
+    writeManifest(dir, { ...manifestOf(dir), version: "1.1" });
+    const bundle = await readBundle(dir);
+    const read = [];
+    for await (const c of bundle.collections()) read.push(c);
+    expect(read).toHaveLength(2);
+    for (const c of read) expect(c.publicSlug).toBeNull();
+  });
+
+  // r[verify export.collection.public-slug]
+  it("reads a collection's publicSlug from a 1.2-or-later bundle", async () => {
+    const bundle = await readBundle(copy());
+    const read = [];
+    for await (const c of bundle.collections()) read.push(c);
+    expect(read.find((c) => c.id === "c-z-root")!.publicSlug).toBe("research-tree");
+  });
+
+  // r[verify export.collection.description]
+  it("reads a 1.2 bundle, whose collections carry no description, as undescribed", async () => {
+    const dir = copy();
+    const collections = lines(dir, "collections.jsonl").map(({ description: _d, ...c }) => c);
+    writeLines(dir, "collections.jsonl", collections);
+    writeManifest(dir, { ...manifestOf(dir), version: "1.2" });
+    const bundle = await readBundle(dir);
+    const read = [];
+    for await (const c of bundle.collections()) read.push(c);
+    expect(read).toHaveLength(2);
+    for (const c of read) expect(c.description).toBeNull();
+  });
+
+  // r[verify export.collection.description]
+  it("reads a 1.3 bundle's collection description", async () => {
+    const bundle = await readBundle(copy());
+    const read = [];
+    for await (const c of bundle.collections()) read.push(c);
+    expect(read.find((c) => c.id === "c-z-root")!.description).toBe("Customer research, by quarter");
+  });
+
   describe("a bundle changed after readBundle verified it", () => {
     async function drain<T>(it: AsyncIterable<T>): Promise<T[]> {
       const out: T[] = [];
@@ -213,11 +289,13 @@ describe("readBundle (S39)", () => {
       return out;
     }
 
+    // r[verify export.reader.records-re-proved]
     it("iterates an unchanged record file in full", async () => {
       const bundle = await readBundle(copy());
       expect(await drain(bundle.artefacts())).toHaveLength(6);
     });
 
+    // r[verify export.reader.records-re-proved]
     it("fails the iterator of a record file edited after verification", async () => {
       const dir = copy();
       const bundle = await readBundle(dir);
@@ -230,6 +308,44 @@ describe("readBundle (S39)", () => {
       expect((err as BundleError).message).toContain("artefacts.jsonl");
     });
 
+    // r[verify export.reader.import-all-or-nothing]
+    it("leaves no row written when an import inside one transaction throws mid-way", async () => {
+      const dir = copy();
+      const bundle = await readBundle(dir);
+      const artefacts = lines(dir, "artefacts.jsonl");
+      artefacts[artefacts.length - 1].title = "edited between verification and import";
+      writeLines(dir, "artefacts.jsonl", artefacts);
+
+      // A stand-in importer: one transaction, any throw aborts it.
+      const target = new Database(":memory:");
+      try {
+        target.exec("create table imported (id text primary key)");
+        const insert = target.prepare("insert into imported (id) values (?)");
+        let inserted = 0;
+        target.exec("begin");
+        const err = await (async () => {
+          for await (const a of bundle.artefacts()) {
+            insert.run(a.id);
+            inserted++;
+          }
+          target.exec("commit");
+        })().then(
+          () => undefined,
+          (e: unknown) => {
+            target.exec("rollback");
+            return e;
+          },
+        );
+        expect(err).toBeInstanceOf(BundleError);
+        expect((err as BundleError).check).toBe("changed");
+        expect(inserted).toBe(artefacts.length);
+        expect(target.prepare("select count(*) as n from imported").get()).toEqual({ n: 0 });
+      } finally {
+        target.close();
+      }
+    });
+
+    // r[verify export.reader.opens-once]
     it("fails the iterator of a record file replaced by a symlink after verification", async () => {
       const dir = copy();
       const bundle = await readBundle(dir);
@@ -240,6 +356,7 @@ describe("readBundle (S39)", () => {
       expect(err).toBeInstanceOf(BundleError);
     });
 
+    // r[verify export.reader.opens-once]
     it("fails, rather than hangs, on a record file swapped for a FIFO after verification", async () => {
       const dir = copy();
       const bundle = await readBundle(dir);
@@ -249,6 +366,7 @@ describe("readBundle (S39)", () => {
       expect(err).toBeInstanceOf(BundleError);
     }, 5000);
 
+    // r[verify export.reader.opens-once]
     it("readPayload fails, rather than hangs, on a payload swapped for a FIFO", async () => {
       const dir = copy();
       const bundle = await readBundle(dir);
@@ -260,6 +378,7 @@ describe("readBundle (S39)", () => {
       expect((err as BundleError).check).toBe("changed");
     }, 5000);
 
+    // r[verify export.reader.payload-re-proved]
     it("readPayload returns the verified bytes of a payload", async () => {
       const dir = copy();
       const bundle = await readBundle(dir);
@@ -268,6 +387,7 @@ describe("readBundle (S39)", () => {
       expect(Buffer.from(bytes).equals(readFileSync(bundle.payloadPath(first!.payloadHash)))).toBe(true);
     });
 
+    // r[verify export.reader.payload-re-proved]
     it("readPayload rejects a payload altered after verification", async () => {
       const dir = copy();
       const bundle = await readBundle(dir);
@@ -278,6 +398,7 @@ describe("readBundle (S39)", () => {
       expect((err as BundleError).check).toBe("changed");
     });
 
+    // r[verify export.reader.payload-re-proved]
     it("readPayload rejects a hash the bundle doesn't hold", async () => {
       const bundle = await readBundle(copy());
       const err = await bundle.readPayload("0".repeat(64)).catch((e: unknown) => e);

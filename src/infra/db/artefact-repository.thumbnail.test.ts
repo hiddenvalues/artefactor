@@ -9,7 +9,7 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 
-// S35 (AH26) — the thumbnail compare-and-set and the render sweep's system read,
+// S35 — the thumbnail compare-and-set and the render sweep's system read,
 // as one contract run against both ArtefactRepository adapters: the in-memory
 // double every command test uses, and the Drizzle/SQLite adapter production uses.
 
@@ -60,6 +60,7 @@ describe.each(adapters)("ArtefactRepository thumbnails — %s (S35)", (name, mak
     expect(found!.thumbnailHash).toBeNull();
   });
 
+  // r[verify hosting.thumbnail.recorded-by-compare-and-set]
   it("records a thumbnail only when the hash matches the current payload", async () => {
     await repo.save(artefact(id("cas"), "h1"));
 
@@ -70,6 +71,8 @@ describe.each(adapters)("ArtefactRepository thumbnails — %s (S35)", (name, mak
     expect((await repo.findById(id("cas"), SINGLETON_SCOPE))!.thumbnailHash).toBe("h1");
   });
 
+  // r[verify hosting.thumbnail.recorded-by-compare-and-set]
+  // r[verify hosting.artefact.updated-at-bumped+2]
   it("does not change updatedAt when recording", async () => {
     await repo.save(artefact(id("stamp"), "h1"));
     await repo.recordThumbnail(id("stamp"), "h1");
@@ -77,10 +80,12 @@ describe.each(adapters)("ArtefactRepository thumbnails — %s (S35)", (name, mak
     expect(found!.updatedAt).toEqual(CREATED);
   });
 
+  // r[verify hosting.thumbnail.recorded-by-compare-and-set]
   it("returns false for an unknown artefact", async () => {
     expect(await repo.recordThumbnail(id("missing"), "h1")).toBe(false);
   });
 
+  // r[verify hosting.thumbnail.recorded-by-compare-and-set]
   it("a save after a record never reverts thumbnailHash", async () => {
     await repo.save(artefact(id("revert"), "h1"));
     // The aggregate a concurrent edit loaded *before* the record landed.
@@ -94,12 +99,14 @@ describe.each(adapters)("ArtefactRepository thumbnails — %s (S35)", (name, mak
     expect(found!.thumbnailHash).toBe("h1");
   });
 
+  // r[verify hosting.thumbnail.recorded-by-compare-and-set]
   it("an aggregate carrying a thumbnailHash cannot write it through save", async () => {
     await repo.save({ ...artefact(id("forged"), "h1"), thumbnailHash: "h1" });
     const found = await repo.findById(id("forged"), SINGLETON_SCOPE);
     expect(found!.thumbnailHash).toBeNull();
   });
 
+  // r[verify hosting.thumbnail.sweep-is-system-read]
   it("lists active artefacts whose thumbnail is missing or stale, never fresh or archived ones", async () => {
     await repo.save(artefact(id("need-null"), "n1"));
 
@@ -118,7 +125,7 @@ describe.each(adapters)("ArtefactRepository thumbnails — %s (S35)", (name, mak
     const jobs = await repo.listNeedingThumbnail(1000);
     const mine = jobs.filter((j) => j.id.startsWith(id("need-")));
     expect(mine.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
-      // S37 (AH29) — the payload size rides along for the render input cap.
+      // S37 (hosting.renderer.input-cap) — the payload size rides along for the render input cap.
       { id: id("need-null"), payloadRef: `ref-${id("need-null")}`, payloadHash: "n1", thumbnailHash: null, payloadSize: 10 },
       { id: id("need-stale"), payloadRef: "ref-s2", payloadHash: "s2", thumbnailHash: "s1", payloadSize: 20 },
     ]);

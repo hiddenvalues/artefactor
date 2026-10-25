@@ -1,8 +1,8 @@
 import { DEFAULT_TENANT } from "./artefact";
 
-// S22 (AH17) — the tenant boundary a repository read may cross. A scope-aware
-// `ArtefactRepository` read never returns a row whose `tenantId` differs from
-// the scope's, and subordinate data/view/version reads inherit it (T2).
+// S22 (hosting.tenant.invisible-to-oss) — the tenant boundary a repository read may cross. A
+// scope-aware `ArtefactRepository` read never returns a row whose `tenantId` differs from the
+// scope's, and subordinate data/view/version reads inherit it.
 //
 // OSS is single-tenant *by being one deployment*, so every query uses the
 // `SINGLETON_SCOPE` and the filter is a no-op (all rows carry `DEFAULT_TENANT`)
@@ -13,16 +13,17 @@ import { DEFAULT_TENANT } from "./artefact";
 // one active org per request, and switching orgs re-scopes every query.
 //
 // `findBySlug` is intentionally **not** scope-aware: a slug is a globally-unique
-// capability (AH6) — the cross-tenant address used by public/link serving and
-// the mint-time uniqueness check — and the per-tier tenant decision for a
-// slug-served artefact belongs to the `AccessPolicy` seam (S22 part B / ET3),
-// not to the repository scope.
+// capability (hosting.slug.globally-unique) — the cross-tenant address used by
+// public/link serving and the mint-time uniqueness check — and the per-tier
+// tenant decision for a slug-served artefact belongs to the `AccessPolicy` seam
+// (S22 part B / ET3), not to the repository scope.
+// r[impl hosting.tenant.scope-excludes-other-tenants+2]
 export interface TenantScope {
   // The single tenant whose artefacts a scoped read may return. OSS: always
   // `DEFAULT_TENANT`.
   readonly tenantId: string;
 }
 
-// The OSS / single-tenant scope: every artefact shares `DEFAULT_TENANT`, so
-// scoping by it returns the same rows as an unscoped query (AH17 parity).
+// The OSS / single-tenant scope: every artefact shares `DEFAULT_TENANT`, so scoping by it returns
+// the same rows as an unscoped query (hosting.tenant.invisible-to-oss parity).
 export const SINGLETON_SCOPE: TenantScope = { tenantId: DEFAULT_TENANT };

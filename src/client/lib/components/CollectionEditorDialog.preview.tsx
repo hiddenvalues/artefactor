@@ -3,6 +3,9 @@ import { collection, noop } from "../../design/fixtures";
 import { Launcher } from "../../design/Launcher";
 import { CollectionEditorDialog } from "./CollectionEditorDialog";
 
+// 281 characters: the counter shows it over 280, and Save shows the inline error.
+const OVER_LIMIT = "Everything the design team publishes: tokens, type, icons and the components every screen is built from. ".repeat(3).slice(0, 281);
+
 export default definePreview({
   title: "Collection editor dialog",
   variants: [
@@ -23,11 +26,39 @@ export default definePreview({
       ),
     },
     {
-      name: "Rename & access",
+      name: "Edit details & access",
       render: () => (
-        <Launcher label="Open rename">
+        <Launcher label="Open edit">
           {(close) => (
             <CollectionEditorDialog editing={collection({ visibility: "authenticated" })} onClose={close} onSubmit={close} />
+          )}
+        </Launcher>
+      ),
+    },
+    {
+      name: "Edit, with a description",
+      render: () => (
+        <Launcher label="Open edit with description">
+          {(close) => (
+            <CollectionEditorDialog
+              editing={collection({ description: "Tokens, type and the components every screen is built from." })}
+              onClose={close}
+              onSubmit={close}
+            />
+          )}
+        </Launcher>
+      ),
+    },
+    {
+      name: "Description over the limit",
+      render: () => (
+        <Launcher label="Open over the limit">
+          {(close) => (
+            <CollectionEditorDialog
+              editing={collection({ description: OVER_LIMIT })}
+              onClose={close}
+              onSubmit={close}
+            />
           )}
         </Launcher>
       ),

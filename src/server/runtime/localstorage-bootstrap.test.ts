@@ -15,6 +15,7 @@ const baseCtx: BootstrapContext = {
 };
 
 describe("injectBootstrap", () => {
+  // r[verify data.shim.injected-first]
   it("inserts the script right after <head>, before existing scripts", () => {
     const html = "<html><head><title>t</title><script>app()</script></head><body></body></html>";
     const out = injectBootstrap(html, "<script>SHIM</script>");
@@ -22,6 +23,7 @@ describe("injectBootstrap", () => {
     expect(out.indexOf("SHIM")).toBeLessThan(out.indexOf("app()"));
   });
 
+  // r[verify data.shim.injected-first]
   it("falls back to <html>, then to prepending", () => {
     expect(injectBootstrap("<html><body>x</body></html>", "S")).toContain("<html>S");
     expect(injectBootstrap("<body>x</body>", "S")).toBe("S<body>x</body>");
@@ -38,8 +40,8 @@ describe("injectBootstrap", () => {
 });
 
 // Evaluate the shim IIFE with mocked browser globals to prove its behaviour. The
-// frame has no session (AH28), so `fetch` is injected only to prove it is never
-// called.
+// frame has no session (`hosting.frame.no-cookies`), so `fetch` is injected only
+// to prove it is never called.
 function runShim(ctx: BootstrapContext) {
   const listeners: Record<string, (e?: unknown) => void> = {};
   const parent = { postMessage: vi.fn() };
@@ -71,6 +73,8 @@ const changed = (blob: Record<string, string>) => [
 ];
 
 describe("localStorage shim (S13)", () => {
+  // r[verify data.shim.full-sync-api]
+  // r[verify data.shim.seeded-server-side]
   it("serves seeded reads synchronously", () => {
     const { ls } = runShim(baseCtx);
     expect(ls.getItem("greeting")).toBe("hi");
@@ -79,6 +83,19 @@ describe("localStorage shim (S13)", () => {
     expect(ls.key(0)).toBe("greeting");
   });
 
+  // r[verify data.shim.no-helper]
+  it("adds nothing to window but localStorage: no ARTEFACTOR helper", () => {
+    const { window } = runShim(baseCtx);
+    expect(Object.getOwnPropertyNames(window).sort()).toEqual([
+      "addEventListener",
+      "localStorage",
+      "parent",
+    ]);
+    expect(window.ARTEFACTOR).toBeUndefined();
+  });
+
+  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify data.shim.quota-over-cap]
   it("throws QuotaExceededError over the cap and reverts the write", () => {
     vi.useFakeTimers();
     const { ls, parent } = runShim({ ...baseCtx, maxBytes: 40 });
@@ -94,9 +111,12 @@ describe("localStorage shim (S13)", () => {
   });
 });
 
-// S36 (AD10) — the sandboxed frame has no session: the shim hands each change to
+// S36 — the sandboxed frame has no session: the shim hands each change to
 // the host shell, which owns the S31 write discipline.
 describe("localStorage shim — persists through the host shell (S36)", () => {
+  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify data.shim.posts-never-fetches]
+  // r[verify data.shim.keyspace-is-blob]
   it("posts the whole blob to the parent, at the app origin, once after the debounce", () => {
     vi.useFakeTimers();
     const { ls, parent, fetch } = runShim(baseCtx);
@@ -111,6 +131,7 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     vi.useRealTimers();
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
   it("posts removeItem and clear like any other change", () => {
     vi.useFakeTimers();
     const { ls, parent } = runShim(baseCtx);
@@ -125,6 +146,8 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     vi.useRealTimers();
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify data.shim.posts-never-fetches]
   it("an idle tab posts nothing, even when hidden or closed", () => {
     vi.useFakeTimers();
     const { parent, listeners, document, fetch } = runShim(baseCtx);
@@ -137,6 +160,8 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     vi.useRealTimers();
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify data.shim.writes-through-shell]
   it("posts an unposted change at once on pagehide, and not again after", () => {
     vi.useFakeTimers();
     const { ls, parent, listeners } = runShim(baseCtx);
@@ -149,6 +174,7 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     vi.useRealTimers();
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
   it("posts an unposted change when the page is hidden", () => {
     const { ls, parent, listeners, document } = runShim(baseCtx);
     ls.setItem("greeting", "bye");
@@ -157,6 +183,8 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     expect(parent.postMessage).toHaveBeenCalledWith(...changed({ greeting: "bye" }));
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify data.shim.read-only-throws]
   it("read-only context throws on write, still serves reads, and posts nothing", () => {
     vi.useFakeTimers();
     const { ls, parent, listeners } = runShim({ ...baseCtx, writable: false });
@@ -174,6 +202,7 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     vi.useRealTimers();
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
   it("carries the channel of the token that seeded it, so a navigated-to page can't forge a change", () => {
     vi.useFakeTimers();
     const { ls, parent } = runShim({ ...baseCtx, channel: "chan-xyz" });
@@ -186,6 +215,8 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
     vi.useRealTimers();
   });
 
+  // r[verify hosting.frame.shim-posts-to-shell]
+  // r[verify data.shim.posts-never-fetches]
   it("names no endpoint and no pin: the shell decides where and how a change is saved", () => {
     expect(bootstrapInnerJs(baseCtx)).not.toMatch(/fetch\(|\/api\/|If-Match/);
   });

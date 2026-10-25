@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { parseTrustedProxies, resolveClientIp } from "./client-ip";
 
-// S42 — Trusted-proxy client address (IA8): the client address is resolved once,
+// S42 — Trusted-proxy client address: the client address is resolved once,
 // and only a trusted proxy may name it.
 
+// r[verify identity.client-ip.trusted-set]
 describe("parseTrustedProxies (S42)", () => {
   it("unset and empty give the default set: loopback, private and link-local", () => {
     for (const value of [undefined, "", "  "]) {
@@ -33,6 +34,7 @@ describe("parseTrustedProxies (S42)", () => {
   });
 });
 
+// r[verify identity.client-ip.trusted-walk]
 describe("resolveClientIp under the default set (S42)", () => {
   const trusted = parseTrustedProxies(undefined);
 

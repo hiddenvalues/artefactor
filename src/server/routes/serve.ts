@@ -4,10 +4,11 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import { isLinkExpired, type LinkPasswordHasher } from "../../domain/artefact/link-gate";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import { ScryptLinkPasswordHasher } from "../../infra/crypto/link-password-hasher";
-import { authorizeRead } from "../link-gate/authorize";
+import { decideRead } from "../link-gate/authorize";
 import { createAttachLinkPasses, issuePass, linkPassesOf } from "../link-gate/passes";
 import { UnlockRateLimiter } from "../link-gate/rate-limit";
 import { renderUnlockPage } from "../runtime/unlock";
+import { shareLinkPath } from "../../shared/share-link";
 import type { DataRepository } from "../../domain/data/data-repository";
 import type { ViewRepository } from "../../domain/views/view-repository";
 import { recordArtefactView } from "../views/views.command";
@@ -21,13 +22,15 @@ import {
 
 export interface ServingDeps {
   repo: ArtefactRepository;
-  // AH20 — serving decides access on the *effective* tier (collection tree root).
+  // hosting.access.effective-from-tree-root — serving decides access on the *effective* tier
+  // (collection tree root).
   collectionRepo: CollectionRepository;
   dataRepo: DataRepository;
   viewRepo: ViewRepository;
   auth: AuthInstance;
-  // S22 (AH18) — serving is slug-addressed and tenant-global (AH6), so the
-  // per-tier tenant decision is the policy's. Default = the OSS matrix.
+  // S22 (hosting.access.policy-decided) — serving is slug-addressed and tenant-global
+  // (hosting.slug.globally-unique), so the per-tier tenant decision is the policy's. Default = the
+  // OSS matrix.
   accessPolicy?: AccessPolicy;
   // S36 — mints the shell's first frame URL (and places it on the content origin).
   framing: Framing;
@@ -44,11 +47,11 @@ export interface ServingDeps {
 // the slug and applies the access matrix against the current session; any deny
 // — unknown slug, archived, or wrong-tier viewer — is a flat 404 (or, for the
 // anonymous, a uniform sign-in redirect) so visibility is never leaked
-// (AH7/AH8).
+// (hosting.lifecycle.archived-not-served, hosting.access.no-existence-leak).
 //
-// S32a (AH22–AH24) — a public link's gate is checked after the matrix: a viewer
-// the public cell alone admits is shown the unlock page until they hold a pass
-// for the current password, and an expired gate is the private outcome.
+// S32a (the hosting.link-gate.* requirements) — a public link's gate is checked after the matrix: a
+// viewer the public cell alone admits is shown the unlock page until they hold a pass for the
+// current password, and an expired gate is the private outcome.
 export function createArtefactServingRoutes(deps: ServingDeps) {
   const app = new Hono<AuthEnv>();
   const accessPolicy = deps.accessPolicy ?? defaultAccessPolicy;
@@ -72,16 +75,16 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
     const viewerId = c.get("user")?.id ?? null;
     const passes = linkPassesOf(c);
 
-    // The matrix decides on the effective tier (AH20/CL5) — an artefact in a
-    // collection is served under its tree root's access — then the gate.
-    const verdict = artefact
-      ? await authorizeRead({ ...deps, accessPolicy }, artefact, viewerId, {
+    // The matrix decides on the effective tier (hosting.access.effective-from-tree-root, collections.access.contained-own-tier-dormant) — an
+    // artefact in a collection is served under its tree root's access — then the gate.
+    const decision = artefact
+      ? await decideRead({ ...deps, accessPolicy }, artefact, viewerId, {
           passes,
           now: new Date(deps.framing.now()),
         })
-      : viewerId === null
-        ? "sign-in"
-        : "not-found";
+      : null;
+    // r[impl hosting.access.no-existence-leak]
+    const verdict = decision?.verdict ?? (viewerId === null ? "sign-in" : "not-found");
     if (verdict === "challenge") return c.html(renderUnlockPage({ slug }));
     if (!artefact || verdict !== "granted") {
       // An anonymous visitor who can't (yet) see it — e.g. a "Members"
@@ -89,21 +92,25 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
       // their account yet — is sent to sign in and then bounced back to this
       // artefact, instead of a dead 404. The redirect is uniform across every
       // anonymous miss (unknown slug, private, members-only, archived), so it
-      // leaks no more than the old flat 404 did: an anonymous prober still
-      // can't distinguish an existing artefact from a missing one (AH8). An
-      // *authenticated* viewer who is denied stays a flat 404 — they already
-      // have an account, so a sign-in redirect would only loop.
+      // leaks no more than the old flat 404 did: an anonymous prober still can't
+      // distinguish an existing artefact from a missing one
+      // (hosting.access.no-existence-leak). An *authenticated* viewer who is
+      // denied stays a flat 404 — they already have an account, so a sign-in
+      // redirect would only loop.
       if (viewerId === null) {
+        // r[impl hosting.access.anonymous-sign-in-redirect]
         return c.redirect(`/?returnTo=${encodeURIComponent(c.req.path)}`, 302);
       }
       return c.notFound();
     }
 
     // S21 — record that a signed-in viewer opened this artefact (latest view
-    // only, VT1). Anonymous opens are never recorded (VT2). Best-effort: view
+    // only). Anonymous opens are never recorded. Best-effort: view
     // tracking must never break serving, so a store hiccup is swallowed.
+    // r[impl views.record.authenticated-only]
     if (viewerId !== null) {
       try {
+        // r[impl views.record.on-shell-serve]
         await recordArtefactView(artefact.id, viewerId, {
           viewRepo: deps.viewRepo,
         });
@@ -119,14 +126,15 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
     const own = viewerId
       ? await deps.dataRepo.findByArtefactAndAuthor(artefact.id, viewerId)
       : null;
-    const gate = passes(artefact.id)?.version;
+    // S32b — the pass is the gate holder's: the tree root's when contained.
+    const gate = passes(decision!.linkGate.holderId)?.version;
     const minted =
       viewerId || gate !== undefined
         ? mintFrame(deps.framing, "slug", slug, {
             artefactId: artefact.id,
             viewerId,
             authorId: null,
-            ...(gate !== undefined ? { gate } : {}),
+            ...(gate !== undefined ? { gate, gateHolder: decision!.linkGate.holderId } : {}),
           })
         : null;
     return c.html(
@@ -149,38 +157,45 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
     );
   });
 
-  // S32a — unlock a password-gated public link. Only a viewer the gate actually
-  // challenges gets anywhere: an open link redirects back to itself, anything
-  // the matrix denies (or an expired gate) is the shell's own deny (AH24). The
-  // password is verified in constant time; a match sets the holder's pass.
+  // S32a — unlock a password-gated public link. Only a viewer the gate actually challenges gets
+  // anywhere: an open link redirects back to itself, anything the matrix denies (or an expired
+  // gate) is the shell's own deny (hosting.link-gate.no-existence-leak). The password is verified
+  // in constant time; a match sets the holder's pass.
+  // r[impl hosting.link-gate.unlock-issues-pass+2]
   app.post("/:slug/unlock", async (c) => {
     const slug = c.req.param("slug");
     const artefact = await deps.repo.findBySlug(slug);
     const viewerId = c.get("user")?.id ?? null;
     const now = deps.framing.now();
-    const verdict = artefact
-      ? await authorizeRead({ ...deps, accessPolicy }, artefact, viewerId, {
+    const decision = artefact
+      ? await decideRead({ ...deps, accessPolicy }, artefact, viewerId, {
           now: new Date(now),
         })
-      : viewerId === null
-        ? "sign-in"
-        : "not-found";
-    const back = `/a/${encodeURIComponent(slug)}`;
+      : null;
+    const verdict = decision?.verdict ?? (viewerId === null ? "sign-in" : "not-found");
+    const back = shareLinkPath(slug);
     if (verdict === "granted") return c.redirect(back, 303);
-    if (!artefact || verdict !== "challenge" || artefact.linkGate.passwordHash === null) {
+    // S32b — the gate and its holder are the effective ones: a contained
+    // artefact unlocks its tree root's gate, and the pass opens the whole tree.
+    const { holderId, gate } = decision?.linkGate ?? { holderId: "", gate: null };
+    if (verdict !== "challenge" || gate?.passwordHash == null) {
       if (viewerId === null) return c.redirect(`/?returnTo=${encodeURIComponent(back)}`, 302);
       return c.notFound();
     }
 
-    if (!limiter.attempt(artefact.id, c.get("clientIp") ?? "unknown", now)) {
+    // r[impl identity.client-ip.unlock-limit+2]
+    // r[impl hosting.link-gate.unlock-limit-per-holder]
+    if (!limiter.attempt(holderId, c.get("clientIp") ?? "unknown", now)) {
+      // r[impl hosting.link-gate.unlock-rate-limited+2]
       return c.html(renderUnlockPage({ slug, error: "rate-limited" }), 429);
     }
     const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
     const password = typeof form.password === "string" ? form.password : "";
-    if (!(await hasher.verify(password, artefact.linkGate.passwordHash))) {
+    // r[impl hosting.link-gate.correct-password-yields-pass]
+    if (!(await hasher.verify(password, gate.passwordHash))) {
       return c.html(renderUnlockPage({ slug, error: "wrong" }), 401);
     }
-    issuePass(c, passKeys, artefact.id, artefact.linkGate);
+    issuePass(c, passKeys, holderId, gate);
     return c.redirect(back, 303);
   });
 

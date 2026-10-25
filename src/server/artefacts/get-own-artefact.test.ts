@@ -27,7 +27,9 @@ describe("loadOwnActiveArtefact (S4)", () => {
     expect(a.id).toBe("a1");
   });
 
-  it("rejects a non-owner as not-found (AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.authority.owner-only]
+  it("rejects a non-owner as not-found", async () => {
     await expect(
       loadOwnActiveArtefact(repo, { id: "a1", ownerId: "intruder", scope: SCOPE }),
     ).rejects.toBeInstanceOf(ArtefactNotFound);
@@ -39,7 +41,8 @@ describe("loadOwnActiveArtefact (S4)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  it("rejects an archived artefact as not-found, even for the owner (AH7)", async () => {
+  // r[verify hosting.lifecycle.archived-not-served]
+  it("rejects an archived artefact as not-found, even for the owner", async () => {
     await repo.save({
       ...createArtefact({
         id: "arch",

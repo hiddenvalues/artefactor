@@ -6,18 +6,19 @@ import type { TenantScope } from "../../domain/artefact/tenant-scope";
 
 export interface EffectivelySharedArtefact {
   artefact: Artefact;
-  // The tier the artefact is served under (AH20) — its own for a top-level
-  // artefact, the tree root's for a contained one.
+  // The tier the artefact is served under (hosting.access.effective-from-tree-root) — its own for a
+  // top-level artefact, the tree root's for a contained one.
   effectiveVisibility: Visibility;
 }
 
-// S14 under collections (AH20/CL5): "Shared with you" lists **effectively**
-// shared artefacts — *others'* artefacts the viewer can open. Three sources:
-// others' top-level artefacts whose own tier grants the viewer (the repo query,
-// dormancy excluded there); others' artefacts inside trees whose root grants
-// the viewer; and — with contributors (S29/CL12) — others' artefacts inside the
-// viewer's **own** trees. The viewer's own artefacts never appear (they live in
-// "Your artefacts"), including ones they contributed into someone else's tree.
+// S14 under collections (hosting.access.effective-from-tree-root, collections.access.contained-own-tier-dormant): "Shared with you" lists
+// **effectively** shared artefacts — *others'* artefacts the viewer can open. Three sources:
+// others' top-level artefacts whose own tier grants the viewer (the repo query, dormancy excluded
+// there); others' artefacts inside trees whose root grants the viewer; and — with contributors
+// (S29/collections.contributor.on-root-access-list) — others' artefacts inside the viewer's **own** trees. The viewer's own artefacts
+// never appear (they live in "Your artefacts"), including ones they contributed into someone else's
+// tree.
+// r[impl hosting.shared.lists-effectively-shared]
 export async function listEffectivelyShared(
   viewerId: string,
   scope: TenantScope,
@@ -31,7 +32,7 @@ export async function listEffectivelyShared(
   );
 
   // Trees granting the viewer: shared-to-them roots plus their own roots (the
-  // owner always views their tree — where contributors' artefacts live, CL13).
+  // owner always views their tree — where contributors' artefacts live, collections.containment.co-owned).
   const sharedRoots = await deps.collectionRepo.listSharedRoots(viewerId, scope);
   const ownRoots = (
     await deps.collectionRepo.listByOwner(viewerId, scope)

@@ -162,7 +162,7 @@ export function UploadDialog({
             <Label htmlFor="up-file" className="mb-2">
               HTML file {!isEdit && <span className="text-destructive">*</span>}
             </Label>
-            <input
+            <Input
               id="up-file"
               ref={fileInput}
               type="file"

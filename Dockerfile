@@ -55,8 +55,9 @@ ENV NODE_ENV=production \
 # S35/S37 — headless Chromium (plus its system libraries) for artefact card
 # thumbnails. Installed as root into PLAYWRIGHT_BROWSERS_PATH and left readable
 # by everyone, so the unprivileged renderer user can launch it. It is used
-# **only** by the renderer role (ARTEFACTOR_ROLE=renderer, AH29): the app role
-# never starts a browser, and points at the renderer with ARTEFACTOR_RENDERER_URL.
+# **only** by the renderer role (ARTEFACTOR_ROLE=renderer,
+# `hosting.renderer.only-isolated-renders`): the app role never starts a
+# browser, and points at the renderer with ARTEFACTOR_RENDERER_URL.
 # Without a renderer, cards show the kind placeholder.
 # This ~600 MB layer sits before every `COPY --from=build` and before
 # `ARG GIT_SHA`, and runs playwright-core from a bind mount of the `deps` stage
@@ -88,9 +89,10 @@ ENV GIT_SHA=${GIT_SHA}
 # The SQLite DB file, artefact payloads and thumbnails must live on a persistent
 # volume mounted at /data (Coolify: an explicit named volume); the entrypoint's
 # `chown -R /data` covers all three. Deliberately **no** `VOLUME` instruction
-# (S37, AH29): it would hand every container from this image — the renderer
+# (S37): it would hand every container from this image — the renderer
 # included — an anonymous writable volume that survives restarts, and a renderer
 # must carry no state at all.
+# r[impl hosting.renderer.image-declares-no-volume]
 EXPOSE 3000
 
 ENTRYPOINT ["./docker-entrypoint.sh"]

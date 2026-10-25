@@ -21,9 +21,9 @@ import {
 
 // S39 — read and verify an `artefactor-export` bundle (ddd/deployment-export.md).
 // `readBundle` validates the whole bundle before it returns — manifest, format
-// and major version (DX5), every record against its schema, counts, referential
-// closure and every payload's sha256 (DX4) — and rejects it with a BundleError
-// naming the failing check. The EE importer (EM1) reads bundles through this.
+// and major version, every record against its schema, counts, referential
+// closure and every payload's sha256 — and rejects it with a BundleError
+// naming the failing check. The EE importer reads bundles through this.
 //
 // What it hands back reads the bundle again, so it re-proves that the bytes are
 // the ones it verified: each record iterator re-hashes its file as it streams
@@ -41,6 +41,7 @@ export type Bundle = {
   payloadPath(hash: string): string;
 } & { [K in RecordKind]: () => AsyncIterable<RecordsByKind[K]> };
 
+// r[impl export.reader.validates-bundle]
 export async function readBundle(dir: string): Promise<Bundle> {
   const manifest = await readManifest(dir);
 
@@ -172,6 +173,7 @@ async function readManifest(dir: string): Promise<Manifest> {
   if (typeof head !== "object" || head === null || head.format !== FORMAT) {
     throw new BundleError("manifest", `${MANIFEST_FILE} does not name format "${FORMAT}"`);
   }
+  // r[impl export.format.versioned+2]
   const major = typeof head.version === "string" ? Number(head.version.split(".")[0]) : NaN;
   if (major !== SUPPORTED_MAJOR) {
     throw new BundleError(
@@ -189,6 +191,7 @@ async function readManifest(dir: string): Promise<Manifest> {
 // Every line of a record file, parsed and validated; `line` is 1-based. The
 // file's sha256 is computed as it streams: handed to `seen` once the file ends,
 // and compared with `expect` there (a mismatch throws `changed`).
+// r[impl export.reader.records-re-proved]
 async function* readRecords<K extends RecordKind>(
   dir: string,
   kind: K,
@@ -217,6 +220,9 @@ async function* readRecords<K extends RecordKind>(
   }
   const sha256 = hash.digest("hex");
   digest.seen?.(sha256);
+  // Thrown from inside the iteration, before it reports done, so a consumer's
+  // transaction aborts rather than commits what it already took.
+  // r[impl export.reader.import-all-or-nothing]
   if (digest.expect !== undefined && sha256 !== digest.expect) {
     throw new BundleError("changed", `${file} changed after readBundle verified it`);
   }
@@ -232,6 +238,7 @@ async function* records<K extends RecordKind>(
 
 // A payload's bytes, re-checked: still a regular file among the verified ones,
 // still hashing to its name.
+// r[impl export.reader.payload-re-proved]
 async function readPayload(dir: string, verified: Set<string>, hash: string): Promise<Uint8Array> {
   if (!verified.has(hash)) {
     throw new BundleError("payload", `${PAYLOAD_DIR}/${hash} is not a payload of this bundle`);
@@ -248,8 +255,9 @@ async function readPayload(dir: string, verified: Set<string>, hash: string): Pr
   }
 }
 
-// DX4 — each payload file hashes to its name, the manifest counts them, and
-// every artefact's payloadHash names one whose size matches its payloadBytes.
+// Each payload file hashes to its name, the manifest counts them, and every
+// artefact's payloadHash names one whose size matches its payloadBytes.
+// r[impl export.payload.reader-verifies]
 async function verifyPayloads(
   dir: string,
   manifest: Manifest,
@@ -292,7 +300,7 @@ async function verifyPayloads(
 
 // Every entry the reader opens must be what it claims, inside the bundle: a
 // regular file or a real directory, never a symlink (which could point at the
-// right bytes elsewhere and verify a bundle that doesn't carry them, DX4).
+// right bytes elsewhere and verify a bundle that doesn't carry them).
 async function assertEntry(
   path: string,
   kind: "file" | "directory",
@@ -314,9 +322,11 @@ async function assertEntry(
 // can be swapped in between the check and the read: O_NOFOLLOW refuses a
 // symlink, O_NONBLOCK keeps a FIFO from blocking the open, and the descriptor
 // must be a regular file. The caller reads from — and closes — the handle.
+// r[impl export.reader.opens-once]
 async function openFile(path: string, check: BundleCheck, label: string): Promise<FileHandle> {
   let handle: FileHandle;
   try {
+    // r[impl export.format.self-contained]
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;

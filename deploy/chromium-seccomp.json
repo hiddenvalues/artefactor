@@ -878,7 +878,7 @@
         "chroot"
       ],
       "action": "SCMP_ACT_ALLOW",
-      "comment": "S37 (AH29): Chromium unprivileged sandbox — create user/pid/net namespaces and chroot into an empty dir inside them. Docker's default profile allows these only to a container with CAP_SYS_ADMIN / CAP_SYS_CHROOT; the renderer has no capabilities at all (cap_drop: ALL, no-new-privileges), so without this rule Chromium refuses to start (\"No usable sandbox\")."
+      "comment": "S37 (hosting.renderer.sandbox-on): Chromium unprivileged sandbox — create user/pid/net namespaces and chroot into an empty dir inside them. Docker's default profile allows these only to a container with CAP_SYS_ADMIN / CAP_SYS_CHROOT; the renderer has no capabilities at all (cap_drop: ALL, no-new-privileges), so without this rule Chromium refuses to start (\"No usable sandbox\")."
     }
   ]
 }

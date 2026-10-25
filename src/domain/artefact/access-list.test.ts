@@ -18,7 +18,8 @@ function make(over: Partial<Artefact> = {}): Artefact {
   };
 }
 
-describe("grantAccess (S16, AH14)", () => {
+// r[verify hosting.access-list.owner-managed-set]
+describe("grantAccess (S16)", () => {
   it("adds a user to the access list and bumps updatedAt", () => {
     const t0 = new Date("2026-01-01T00:00:00Z");
     const t1 = new Date("2026-01-02T00:00:00Z");
@@ -35,23 +36,27 @@ describe("grantAccess (S16, AH14)", () => {
     expect(next.sharedWith).toEqual(["user-2"]);
   });
 
+  // r[verify hosting.access-list.owner-never-member]
   it("rejects granting the owner (they always have access)", () => {
     expect(() => grantAccess(make(), OWNER)).toThrow(InvariantViolation);
   });
 
-  it("cannot change access while archived (AH7)", () => {
+  // r[verify hosting.lifecycle.archived-frozen]
+  it("cannot change access while archived", () => {
     const a = make({ status: "archived" });
     expect(() => grantAccess(a, "user-2")).toThrow(InvariantViolation);
   });
 
-  it("retains the list independent of the visibility tier (AH13)", () => {
+  // r[verify hosting.access-list.retained]
+  it("retains the list independent of the visibility tier", () => {
     // Granting works at any tier — the list is only *consulted* under `selected`.
     const a = make({ visibility: "private" });
     expect(grantAccess(a, "user-2").sharedWith).toEqual(["user-2"]);
   });
 });
 
-describe("revokeAccess (S16, AH14)", () => {
+// r[verify hosting.access-list.owner-managed-set]
+describe("revokeAccess (S16)", () => {
   it("removes a user from the access list and bumps updatedAt", () => {
     const t1 = new Date("2026-01-02T00:00:00Z");
     const a = make({ sharedWith: ["user-2", "user-3"] });
@@ -67,7 +72,8 @@ describe("revokeAccess (S16, AH14)", () => {
     expect(next.sharedWith).toEqual(["user-2"]);
   });
 
-  it("cannot change access while archived (AH7)", () => {
+  // r[verify hosting.lifecycle.archived-frozen]
+  it("cannot change access while archived", () => {
     const a = make({ status: "archived", sharedWith: ["user-2"] });
     expect(() => revokeAccess(a, "user-2")).toThrow(InvariantViolation);
   });

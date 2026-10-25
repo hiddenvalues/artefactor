@@ -1,6 +1,12 @@
+# A dependency with a build script must be named here, or a fresh install
+# fails. `@appsignal/nodejs` (its native agent) and `protobufjs` (a version
+# check, not needed) come from the cloud's `ee/` package; in an install without
+# it, their entries name nothing and do nothing.
 allowBuilds:
+  '@appsignal/nodejs': true
   better-sqlite3: true
   esbuild: true
+  protobufjs: false
 onlyBuiltDependencies:
   - better-sqlite3
   - esbuild

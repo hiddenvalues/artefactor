@@ -11,7 +11,8 @@ import type {
 } from "../../domain/artefact/ports";
 
 // S35 — what the create / edit commands hand a render to. Synchronous and never
-// throwing, so a thumbnail can never block or fail the command (AH25). A durable
+// throwing, so a thumbnail can never block or fail the command
+// (hosting.thumbnail.never-blocks-command). A durable
 // queue (e.g. pg-boss) would keep this interface.
 export interface ThumbnailQueue {
   enqueue(job: ThumbnailJob): void;
@@ -28,7 +29,8 @@ export function thumbnailJobOf(a: Artefact): ThumbnailJob {
 }
 
 // Called by the commands after a successful save. Swallows anything a queue
-// implementation might throw despite its contract (AH25).
+// implementation might throw despite its contract; an absent queue is none.
+// r[impl hosting.thumbnail.never-blocks-command]
 export function enqueueThumbnail(queue: ThumbnailQueue | undefined, a: Artefact): void {
   try {
     queue?.enqueue(thumbnailJobOf(a));
@@ -37,9 +39,10 @@ export function enqueueThumbnail(queue: ThumbnailQueue | undefined, a: Artefact)
   }
 }
 
-// S37 (AH29) — the renderer for `ARTEFACTOR_RENDERER_URL`: the isolated renderer
+// S37 — the renderer for `ARTEFACTOR_RENDERER_URL`: the isolated renderer
 // at that URL, or none (placeholder mode) when it is unset. `make` is called
 // lazily so an unset URL never even constructs one.
+// r[impl hosting.renderer.only-isolated-renders]
 export function thumbnailRendererFor(
   url: string | undefined,
   make: (url: string) => ThumbnailRenderer,
@@ -66,7 +69,7 @@ const defaultLog = (message: string, err?: unknown) =>
     ? console.log(`[thumbnails] ${message}`)
     : console.warn(`[thumbnails] ${message}`, err);
 
-// S35 (AH25/AH26) — the in-process thumbnail queue and its single worker
+// S35 — the in-process thumbnail queue and its single worker
 // (concurrency 1). There is no job table: `start()` sweeps for artefacts whose
 // thumbnail is missing or stale, which both backfills and recovers whatever a
 // crash or restart dropped.
@@ -110,7 +113,11 @@ export class ThumbnailService implements ThumbnailQueue {
 
   // The startup sweep: enqueue every active artefact whose thumbnail is missing
   // or stale, page by page, until a read offers nothing not already attempted.
+  // r[impl hosting.thumbnail.startup-sweep]
   async start(): Promise<void> {
+    // The disabled path: no renderer configured logs one line and renders
+    // nothing; an unreachable one pauses the queue (`pause()` below).
+    // r[impl hosting.thumbnail.off-without-renderer]
     if (this.disabled) {
       this.log(
         "thumbnail rendering disabled (set ARTEFACTOR_RENDERER_URL to an isolated renderer to enable) — cards show the kind placeholder",
@@ -175,8 +182,10 @@ export class ThumbnailService implements ThumbnailQueue {
     const { renderer, payloadStore, thumbnailStore, repo } = this.deps;
     if (this.disabled || this.paused || !renderer) return;
     if (job.thumbnailHash === job.payloadHash) return;
+    // r[impl hosting.thumbnail.failed-hash-not-retried]
     if (this.failed.has(job.payloadHash)) return;
-    // AH29 — never sent to the renderer, so never even read.
+    // Over the render input cap: never sent to the renderer, so never even read.
+    // r[impl hosting.renderer.input-cap+2]
     if (job.payloadSize > MAX_RENDER_INPUT_BYTES) return;
 
     let html: Uint8Array;
@@ -188,6 +197,8 @@ export class ThumbnailService implements ThumbnailQueue {
 
     let image: Uint8Array;
     try {
+      // The stored payload bytes alone — no shell, no localStorage bootstrap, no saved data.
+      // r[impl hosting.thumbnail.pristine]
       image = await renderer.render(html);
     } catch (err) {
       if (err instanceof ThumbnailRendererUnavailable) {
@@ -201,11 +212,16 @@ export class ThumbnailService implements ThumbnailQueue {
 
     try {
       await thumbnailStore.put(job.id, job.payloadHash, image);
-      // AH26 — recorded only while the payload is still the one rendered.
+      // Recorded only while the payload is still the one rendered
+      // (hosting.thumbnail.recorded-by-compare-and-set).
       if (!(await repo.recordThumbnail(job.id, job.payloadHash))) {
+        // A lost compare-and-set: the render is superseded, so its file goes.
+        // r[impl hosting.thumbnail.lost-render-removed]
         await thumbnailStore.delete(job.id, job.payloadHash);
         return;
       }
+      // Only now, with the new render recorded, is the previous one deleted.
+      // r[impl hosting.thumbnail.previous-kept-until-replaced]
       await thumbnailStore.deleteAllExcept(job.id, job.payloadHash);
     } catch (err) {
       this.log(`could not store the thumbnail for artefact ${job.id}`, err);

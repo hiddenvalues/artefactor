@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ThumbnailRendererUnavailable } from "../../domain/artefact/errors";
 import { HttpThumbnailRenderer, ThumbnailRenderFailed } from "./http-thumbnail-renderer";
 
-// S37 (AH25/AH29) — the app's side of the isolated renderer: POST the stored
+// S37 — the app's side of the isolated renderer: POST the stored
 // payload bytes to `${url}/render`, map the renderer's answers onto the port's
 // two failure kinds (a failed render vs no renderer at all).
 
@@ -56,6 +56,7 @@ function fakeClock() {
 }
 
 describe("HttpThumbnailRenderer (S37)", () => {
+  // r[verify hosting.renderer.http-client-retries]
   it("POSTs the HTML bytes to /render and returns the image on 200", async () => {
     const seen: { method?: string; url?: string; type?: string; length?: string; body?: string } = {};
     const url = await stub((req, body, res) => {
@@ -91,6 +92,7 @@ describe("HttpThumbnailRenderer (S37)", () => {
     expect(paths).toEqual(["/render"]);
   });
 
+  // r[verify hosting.renderer.http-client-retries]
   it.each([422, 413])("maps %i to a render failure, not an unavailable renderer", async (status) => {
     const url = await stub((_r, _b, res) => res.writeHead(status).end());
     const err = await new HttpThumbnailRenderer(url).render(enc("<p>")).catch((e) => e);
@@ -98,6 +100,7 @@ describe("HttpThumbnailRenderer (S37)", () => {
     expect(err).not.toBeInstanceOf(ThumbnailRendererUnavailable);
   });
 
+  // r[verify hosting.renderer.http-client-retries]
   it("retries a 503, honouring Retry-After, until the renderer answers", async () => {
     let calls = 0;
     const url = await stub((_r, _b, res) => {
@@ -114,6 +117,7 @@ describe("HttpThumbnailRenderer (S37)", () => {
     expect(clock.slept).toEqual([3000, 3000]);
   });
 
+  // r[verify hosting.renderer.http-client-retries]
   it("retries a connection reset", async () => {
     let calls = 0;
     const url = await stub((req, _b, res) => {
@@ -128,6 +132,7 @@ describe("HttpThumbnailRenderer (S37)", () => {
     expect(calls).toBe(2);
   });
 
+  // r[verify hosting.renderer.http-client-retries]
   it("gives up as unavailable once connections are refused past the 60 s budget", async () => {
     const clock = fakeClock();
 
@@ -141,6 +146,7 @@ describe("HttpThumbnailRenderer (S37)", () => {
     expect(total).toBeLessThan(61_000);
   });
 
+  // r[verify hosting.renderer.http-client-retries]
   it("gives up as unavailable when the renderer keeps answering 503 past the budget", async () => {
     const url = await stub((_r, _b, res) => res.writeHead(503, { "retry-after": "10" }).end());
     const clock = fakeClock();
@@ -151,6 +157,7 @@ describe("HttpThumbnailRenderer (S37)", () => {
     expect(clock.now()).toBeLessThanOrEqual(60_000);
   });
 
+  // r[verify hosting.renderer.http-client-retries]
   it("maps no response within the request timeout to a render failure", async () => {
     const url = await stub(() => {
       /* never answers */
@@ -164,6 +171,7 @@ describe("HttpThumbnailRenderer (S37)", () => {
     expect(String(err.message)).toMatch(/timed out/);
   });
 
+  // r[verify hosting.renderer.http-client-retries]
   it("defaults to a 30 s request timeout and a 60 s retry budget", () => {
     const r = new HttpThumbnailRenderer("http://renderer:3001");
     expect(r.timeoutMs).toBe(30_000);

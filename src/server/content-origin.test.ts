@@ -3,7 +3,7 @@ import type { Hono } from "hono";
 import type { ArtefactSummary } from "../shared/contracts";
 import type { MintedFrame } from "../test/frame";
 
-// S36 (AH28) — with ARTEFACTOR_CONTENT_ORIGIN set, frames live only on that
+// S36 — with ARTEFACTOR_CONTENT_ORIGIN set, frames live only on that
 // separate domain, which answers nothing else but /health; the app host answers
 // no frame route. Set before the app (and its env) is imported.
 const CONTENT = "https://content.test";
@@ -56,6 +56,7 @@ describe("content origin (S36)", () => {
     return (await res.json()) as MintedFrame;
   }
 
+  // r[verify hosting.frame.urls-on-content-origin]
   it("the mint's frameUrl is absolute on the content origin, for slug and raw frames", async () => {
     expect((await mint(artefact.publicSlug!)).frameUrl).toMatch(
       new RegExp(`^${CONTENT}/a/${artefact.publicSlug}/frame\\?t=`),
@@ -65,12 +66,15 @@ describe("content origin (S36)", () => {
     );
   });
 
+  // r[verify hosting.frame.urls-on-content-origin]
   it("the shell's iframe src is absolute on the content origin", async () => {
     const body = await (await onApp(`/a/${artefact.publicSlug}`, { headers: { cookie } })).text();
     const cfg = JSON.parse(body.match(/var cfg = (\{"frameUrl".*?\});/)![1]!) as { frameUrl: string };
     expect(cfg.frameUrl.startsWith(`${CONTENT}/a/${artefact.publicSlug}/frame?t=`)).toBe(true);
   });
 
+  // r[verify hosting.frame.content-host-split+2]
+  // r[verify hosting.frame.urls-on-content-origin]
   it("the content host serves the frames, and the shim posts to the app origin", async () => {
     for (const ref of [artefact.publicSlug!, artefact.id]) {
       const res = await app.request((await mint(ref)).frameUrl);
@@ -81,10 +85,12 @@ describe("content origin (S36)", () => {
     }
   });
 
+  // r[verify hosting.frame.content-host-split+2]
   it("the content host serves /health", async () => {
     expect((await onContent("/health")).status).toBe(200);
   });
 
+  // r[verify hosting.frame.content-host-split+2]
   it("the content host answers nothing else", async () => {
     for (const path of [
       `/a/${artefact.publicSlug}`,
@@ -110,6 +116,7 @@ describe("content origin (S36)", () => {
     expect(auth.status).toBe(404);
   });
 
+  // r[verify hosting.frame.content-host-split+2]
   it("the app host answers no frame route", async () => {
     const { frameUrl } = await mint(artefact.publicSlug!);
     const { pathname, search } = new URL(frameUrl);
@@ -118,7 +125,8 @@ describe("content origin (S36)", () => {
     expect((await onApp(`${raw.pathname}${raw.search}`)).status).toBe(404);
   });
 
-  it("IA6: a state change with the content origin as Origin → 403", async () => {
+  // r[verify identity.origin.app-origin-only+2]
+  it("a state change with the content origin as Origin → 403", async () => {
     const res = await onApp(`/api/artefacts/${artefact.id}/visibility`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", cookie, Origin: CONTENT },

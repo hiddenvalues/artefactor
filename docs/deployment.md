@@ -7,7 +7,7 @@ HTTPS, and automatic deploys on every push to `main`."
 ```text
 push to main  (humlytech/artefactor)
   └─ GitHub Actions  (.github/workflows/deploy.yml)
-       ├─ gate: pnpm test + check + lint:md   (.github/workflows/ci.yml)
+       ├─ gate: test + check + lint + lint:md   (.github/workflows/ci.yml)
        ├─ docker build → push ghcr.io/humlytech/artefactor  (:latest + :<sha>)
        └─ curl Coolify deploy webhook
             └─ Coolify (your instance) → existing UpCloud VPS (se-sto1)
@@ -134,15 +134,15 @@ How much work this is depends on the **fork's visibility**:
      derived from it** — left at the default `80`, the BFF obediently binds `:80` and the
      health check on 3000 gets `Connection refused`. The giveaway in the deploy log is the
      startup line `Artefactor listening on http://localhost:80`.
-   - **Port mappings:** leave empty, and never publish `3000` on a public interface: only the
-     proxy should reach the app. The app takes its client address (the key of the
-     link-password rate limit and of BetterAuth's sign-in limit) from the socket peer, and reads
-     `X-Forwarded-For` only when that peer is a **trusted proxy** (IA8, S42). By default that is
-     loopback plus the private and link-local ranges, which is where Coolify's Traefik connects
-     from over the Docker network, so the default needs no setting, and a client reaching a
-     published `3000` from a public address is keyed on its own address, whatever header it
-     sends. Set `ARTEFACTOR_TRUSTED_PROXIES` (§5) only when the proxy reaches the app from a
-     public or otherwise non-private address, or a CDN sits in front of it.
+   - **Port mappings:** leave empty, and never publish `3000` on a public interface: only the proxy
+     should reach the app. The app takes its client address (the key of the link-password rate limit
+     and of BetterAuth's sign-in limit) from the socket peer, and reads `X-Forwarded-For` only when
+     that peer is a **trusted proxy** (`identity.client-ip.trusted-walk`, S42). By default that is
+     loopback plus the private and link-local ranges, which is where Coolify's Traefik connects from
+     over the Docker network, so the default needs no setting, and a client reaching a published
+     `3000` from a public address is keyed on its own address, whatever header it sends. Set
+     `ARTEFACTOR_TRUSTED_PROXIES` (§5) only when the proxy reaches the app from a public or
+     otherwise non-private address, or a CDN sits in front of it.
    - **Health check:** enable; path `/health`, port `3000`, expect `200`. (Unauthenticated by
      design — returns `{"status":"ok","uptime":…,"build":"<sha>"}`.) Coolify runs this probe
      **inside the container** with `curl`; the runtime image (Debian `bookworm-slim`, which
@@ -161,16 +161,18 @@ How much work this is depends on the **fork's visibility**:
    | Variable | Value | Notes |
    | --- | --- | --- |
    | `BETTER_AUTH_SECRET` | `openssl rand -hex 32` | **Secret. Required in prod** — the BFF refuses to boot with the dev placeholder. Rotating it signs everyone out. |
-   | `BETTER_AUTH_URL` | `https://<domain>` | Public base URL BetterAuth issues session cookies/callbacks against. |
+   | `BETTER_AUTH_URL` | `https://<domain>` | Public base URL BetterAuth issues session cookies/callbacks against, and the MCP connector's OAuth resource (`<url>/mcp`). Must be https (plain http only on localhost or a loopback address); a trailing slash is dropped. |
    | `GOOGLE_CLIENT_ID` | from the Google OAuth client | **Required in prod unless `AUTH_EMAIL_PASSWORD=true`** — production needs at least one sign-in method. See §5a. |
    | `GOOGLE_CLIENT_SECRET` | from the Google OAuth client | **Secret. Required in prod unless `AUTH_EMAIL_PASSWORD=true`.** See §5a. |
    | `AUTH_EMAIL_PASSWORD` | `true` / `false` (or `1` / `0`) | Optional. Enables email + password sign-in. Unset: on outside production, off in it. Set it to `true` to run production without a Google dependency — but read the callout below first: it is an **unverified** path. |
    | `AUTH_ALLOW_SIGNUP` | `true` / `false` (or `1` / `0`) | Optional. Gates account **creation**, for every provider. Unset: **closed** when production has email+password enabled, **open** otherwise. Empty counts as unset. |
    | `AUTH_ALLOWED_EMAIL_DOMAINS` | your org domain(s), e.g. `example.com,example.org` | **Set this in prod.** Comma-separated; account creation is restricted to these domains (every provider). The code default is `example.com` (dev only). |
+   | `LEGAL_TERMS_URL` | e.g. `/terms` or `https://example.com/terms` | Optional. The terms the sign-in screen links to ("By continuing you agree to the Terms …", in a new tab). An absolute http(s) URL or a path starting with a single `/`; anything else refuses to boot. Artefactor serves no legal pages: a path must be one your reverse proxy serves, or the link lands back on the sign-in screen. Unset or empty: not linked. |
+   | `LEGAL_PRIVACY_URL` | e.g. `/privacy` or `https://example.com/privacy` | Optional. The privacy notice the sign-in screen links to; same rules as `LEGAL_TERMS_URL`. Unset or empty: not linked. With both unset the screen shows no notice. |
    | `AUTH_TRUSTED_ORIGINS` | `https://<domain>` | Optional. The `BETTER_AUTH_URL` origin is trusted implicitly and the SPA is same-origin, so this is usually unnecessary — set it only if a separate origin must call the auth API. |
    | `ARTEFACTOR_RENDERER_URL` | `http://<renderer-private-ip>:3001` | Optional, and **only** once the isolated renderer VM of §9 is running and verified. Unset: no card thumbnails, everything else unchanged. Never point it at a renderer that is not isolated. |
    | `ARTEFACTOR_CONTENT_ORIGIN` | `https://<content-domain>` | Optional, defence in depth. `scheme://host[:port]`, no path: the origin artefact frames are served on, on a **separate registrable domain** from `<domain>`. See §5b. |
-   | `ARTEFACTOR_TRUSTED_PROXIES` | *(unset)* | Optional. Comma-separated CIDRs or addresses of the proxies allowed to name the client in `X-Forwarded-For` (IA8). Unset: loopback plus the private and link-local ranges. A value **replaces** that default, so list every hop to trust (e.g. your proxy's address plus a CDN's ranges); an invalid entry fails the boot. |
+   | `ARTEFACTOR_TRUSTED_PROXIES` | *(unset)* | Optional. Comma-separated CIDRs or addresses of the proxies allowed to name the client in `X-Forwarded-For` (`identity.client-ip.trusted-set`). Unset: loopback plus the private and link-local ranges. A value **replaces** that default, so list every hop to trust (e.g. your proxy's address plus a CDN's ranges); an invalid entry fails the boot. |
 
    Already baked into the image (no need to set): `NODE_ENV=production`, `PORT=3000`,
    `DATABASE_PATH=/data/artefactor.db`, `ARTEFACTOR_PAYLOAD_DIR=/data/payloads`,
@@ -213,31 +215,57 @@ Don't deploy yet — the image doesn't exist until the first workflow run (step 
 ## 5a. Google OAuth client (Google Cloud Console)
 
 Skip this section if the deployment runs on `AUTH_EMAIL_PASSWORD=true` alone. Otherwise create
-one OAuth client and reuse it for prod (and optionally local dev):
+one OAuth client and reuse it for prod (and optionally local dev). The console pages are under
+**Google Auth Platform** (the left-hand product menu, or `console.cloud.google.com/auth`); it
+replaced the older *APIs & Services → OAuth consent screen* and *Credentials* pages.
 
-1. **Google Cloud Console** → pick/create a project (ideally in your Workspace org).
-2. **APIs & Services → OAuth consent screen.** Fill app name + support email; no scopes beyond
-   the default email/profile/openid. Pick the **User type** by your Workspace layout:
+1. **Google Cloud Console** → pick/create a project. Any Google account works: a Workspace one
+   (the project then sits in the Workspace's organization) or a plain Google account on an
+   existing mailbox (*Use my current email address instead* at sign-up; the project sits under
+   *No organization*). No billing account is needed for an OAuth client.
+2. **Google Auth Platform → Overview → Get started** (the consent-screen wizard): app name,
+   user support email, **audience**, developer contact, then accept the User Data Policy. Pick
+   the audience by your Workspace layout:
    - **All allowed domains are in one Google Workspace** (multi-domain) → **Internal**
      (Workspace-only; the tightest setting).
-   - **They span separate Workspaces** → **Internal** would exclude whichever domain isn't the
-     project's Workspace. Use **External** instead — the server-side `AUTH_ALLOWED_EMAIL_DOMAINS`
-     allowlist is the real boundary, so External is safe here (only basic email/profile/openid
-     scopes, so no Google verification review is required).
-3. **APIs & Services → Credentials → + Create credentials → OAuth client ID:**
+   - **They span separate Workspaces**, or users are outside your Workspace → **Internal**
+     would exclude them. Use **External** instead — the server-side
+     `AUTH_ALLOWED_EMAIL_DOMAINS` allowlist gates **account creation** for every provider, so
+     External is safe here: a Google account outside the allowlist can authenticate at Google
+     but gets no Artefactor account. (Only basic email/profile/openid scopes, so no scope
+     verification review is required.)
+3. **Google Auth Platform → Clients → Create client:**
    - **Application type:** Web application.
    - **Authorized redirect URIs:**
      - `https://<domain>/api/auth/callback/google` (production)
      - `http://localhost:3000/api/auth/callback/google` (optional, for local dev)
 
-     The path is always `<BETTER_AUTH_URL>/api/auth/callback/google`.
-4. Create → copy the **Client ID** and **Client secret** into the `GOOGLE_CLIENT_ID` /
-   `GOOGLE_CLIENT_SECRET` env vars in §5.
+     The path is always `<BETTER_AUTH_URL>/api/auth/callback/google`. The URI's domain is added
+     to **Branding → Authorized domains** automatically.
+4. Create → the dialog shows the **Client ID** and, **once only**, the **Client secret**: store
+   them in your secret manager straight away (the secret can only be reset afterwards, not
+   re-read), then set the `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` env vars in §5.
+5. **External only — publish the app.** A new External app starts in **Testing**. Because
+   this client requests only the basic identity scopes, Google lets **any** Google account sign
+   in while in Testing — the **Audience → Test users** list (100 over the app's lifetime) only
+   restricts apps that request more — but every user passes a *this app is being tested*
+   warning first. So Testing is enough to prove the deployment, and `AUTH_ALLOWED_EMAIL_DOMAINS`
+   (not the test-user list) decides who gets an account. **Audience → Publish app** removes the
+   warning; it stays disabled until **Branding** carries the home page, a **privacy policy**
+   link and a **terms of service** link, each on an authorized domain and publicly reachable.
+   Publishing with only the basic scopes needs no scope verification review; showing your own
+   app name or logo on a published app's consent screen needs a separate **brand verification**
+   (Verification Center). Leave the logo out until you have time for that.
 
 > Internal consent restricts the OAuth app to the Workspace; the `AUTH_ALLOWED_EMAIL_DOMAINS`
 > allowlist is the independent, code-level boundary (and the one that distinguishes domains if
 > they're in separate Workspaces). Google's single-domain `hd` option isn't used because more
 > than one domain may be allowed.
+>
+> A user's own Workspace can also block the sign-in: with *third-party app access* set to block
+> unconfigured apps, its people see **Access blocked** on Google's screen before the deployment
+> is involved. Their Workspace admin allows the client ID under Google Admin → Security → API
+> controls → App access control.
 
 ## 5b. A separate content origin for artefact frames (optional)
 
@@ -299,7 +327,11 @@ manually at any time.
 The gate lives in [.github/workflows/ci.yml](../.github/workflows/ci.yml) and **also runs on
 every pull request** — one definition in both places, so the PR check and the deploy gate can't
 drift apart. (A deploy can still fail after a green PR if `main` moved since the PR was tested —
-the merged tree is what the deploy gate runs against.) To make the check actually block merging
+the merged tree is what the deploy gate runs against.) Its work runs as parallel jobs — `unit`
+(the tests, then the typecheck and lints) and `browser` (the real-Chromium suites) — behind one
+`gate` job that reports their result on a pull request. A pull request touching none of the
+browser suites' inputs skips `browser`; a deploy always runs everything, and fails when any of
+those jobs fails. To make the check actually block merging
 (not just report), require it once in branch protection: fork **Settings → Branches** (or
 Rulesets) → add a rule for `main` → **Require status checks to pass** → select **gate** (GitHub
 may display it as `ci / gate`).

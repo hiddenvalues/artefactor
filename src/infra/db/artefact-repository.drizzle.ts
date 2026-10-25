@@ -8,9 +8,13 @@ import type {
   ThumbnailJob,
 } from "../../domain/artefact/artefact-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
+import { ArtefactConflict } from "../../domain/artefact/errors";
 
 type Database = typeof Db;
 type ArtefactRow = typeof artefact.$inferSelect;
+// What a save writes through: the client itself, or a transaction opened on it (S60).
+type Executor = Pick<Database, "select" | "insert" | "update" | "delete">;
+export type AtomicRunner = <T>(fn: (tx: Executor) => Promise<T>) => Promise<T>;
 
 // Drizzle/SQLite adapter for the ArtefactRepository port. The aggregate maps
 // 1:1 onto the `artefact` row plus its `selected`-tier access list, which lives
@@ -18,26 +22,53 @@ type ArtefactRow = typeof artefact.$inferSelect;
 // lives on the filesystem (see infra/storage) — the row only carries ref +
 // bytes + hash.
 export class DrizzleArtefactRepository implements ArtefactRepository {
-  constructor(private readonly db: Database) {}
+  // S60 — `atomic` runs a save's guarded write and access-list sync as one unit on the executor it
+  // hands over. The default runs them on the client one after the other: better-sqlite3 refuses an
+  // async transaction callback. A deployment that can (Postgres) injects a transaction runner.
+  constructor(
+    private readonly db: Database,
+    private readonly atomic: AtomicRunner = (fn) => fn(db),
+  ) {}
 
-  // Upsert by id so the same port serves create (S2) and later mutations
-  // (edit/share/archive in S3/S5/S7), then reconcile the access list (S16).
-  // `thumbnail_hash` is inserted as NULL and left out of the update set (AH26):
-  // only recordThumbnail writes it, so a concurrent edit can't revert a render.
-  async save(a: Artefact): Promise<void> {
+  // A compare-and-set on `revision` (S60): revision 0 inserts the row, refusing an id that exists;
+  // revision n updates it only while the stored revision is still n. Either way the row is written
+  // at the next revision, and only then is the access list reconciled (S16), on the same executor
+  // — inside one transaction where `atomic` opens one, so a sync failure rolls the row back and a
+  // concurrent save waits on the row lock until both have committed. A conflicted save never
+  // reaches the sync, so it writes nothing. This code stays byte-identical to the Postgres mirror,
+  // which a parity check holds it to; only the wiring differs. `returning` (not an affected-row
+  // count) keeps it dialect-neutral. `thumbnail_hash` is inserted as NULL and left out of the
+  // update set (hosting.thumbnail.recorded-by-compare-and-set): only recordThumbnail writes it,
+  // so a concurrent edit can't revert a render.
+  // r[impl hosting.save.no-lost-update]
+  async save(a: Artefact): Promise<Artefact> {
     const { thumbnailHash: _never, ...row } = toRow(a);
-    await this.db
-      .insert(artefact)
-      .values({ ...row, thumbnailHash: null })
-      .onConflictDoUpdate({ target: artefact.id, set: row });
-    await this.syncAccessList(a.id, a.sharedWith);
+    const next = { ...row, revision: a.revision + 1 };
+    return this.atomic(async (tx) => {
+      const [saved] =
+        a.revision === 0
+          ? await tx
+              .insert(artefact)
+              .values({ ...next, thumbnailHash: null })
+              .onConflictDoNothing({ target: artefact.id })
+              .returning()
+          : await tx
+              .update(artefact)
+              .set(next)
+              .where(and(eq(artefact.id, a.id), eq(artefact.revision, a.revision)))
+              .returning();
+      if (!saved) throw new ArtefactConflict(a.id);
+      await syncAccessList(tx, a.id, a.sharedWith);
+      return toAggregate(saved, [...a.sharedWith]);
+    });
   }
 
-  // S35 (AH26) — compare-and-set against the current payload hash; `updated_at`
+  // S35 — compare-and-set against the current payload hash; `updated_at`
   // is deliberately not touched.
+  // r[impl hosting.thumbnail.recorded-by-compare-and-set]
   async recordThumbnail(id: string, renderedHash: string): Promise<boolean> {
     // `returning` (not the driver's affected-row count) keeps this dialect-neutral,
-    // so the Postgres mirror stays byte-identical (P3).
+    // so the Postgres mirror stays byte-identical.
     const recorded = await this.db
       .update(artefact)
       .set({ thumbnailHash: renderedHash })
@@ -46,9 +77,9 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
     return recorded.length > 0;
   }
 
-  // S35 (AH17 note) — the render sweep's system read: tenant-agnostic by design,
-  // internal only, and projecting just what the renderer needs (S37: plus the
-  // payload size, for the render input cap).
+  // S35 (hosting.thumbnail.sweep-is-system-read) — the render sweep's system read:
+  // tenant-agnostic by design, internal only, and projecting just what the renderer needs
+  // (S37: plus the payload size, for the render input cap).
   async listNeedingThumbnail(limit: number): Promise<ThumbnailJob[]> {
     return this.db
       .select({
@@ -71,15 +102,17 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
       .limit(limit);
   }
 
-  // Permanent delete (AH11). The data_entry and artefact_access FKs are ON
-  // DELETE CASCADE, so the artefact's data + grants are removed with it; the
-  // payload file is removed separately by the delete command.
+  // Permanent delete (hosting.delete.removes-everything). The data_entry and
+  // artefact_access FKs are ON DELETE CASCADE, so the artefact's data + grants
+  // are removed with it; the payload file is removed separately by the delete
+  // command.
   async delete(id: string): Promise<void> {
     await this.db.delete(artefact).where(eq(artefact.id, id));
   }
 
   async findById(id: string, scope: TenantScope): Promise<Artefact | null> {
-    // Tenant-scoped (S22/AH17, T2): a row in another tenant is invisible.
+    // Tenant-scoped (S22, hosting.tenant.invisible-to-oss): a row in another tenant is
+    // invisible.
     const [row] = await this.db
       .select()
       .from(artefact)
@@ -143,7 +176,8 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
           eq(artefact.status, "active"),
           ne(artefact.ownerId, viewerId),
           // Top-level only — a contained artefact's own tier is dormant
-          // (AH20/CL5); those flow in via the effectively-shared composition.
+          // (hosting.access.effective-from-tree-root, collections.access.contained-own-tier-dormant); those flow in via the
+          // effectively-shared composition.
           isNull(artefact.collectionId),
           or(
             inArray(artefact.visibility, ["authenticated", "public"]),
@@ -215,36 +249,39 @@ export class DrizzleArtefactRepository implements ArtefactRepository {
     return out;
   }
 
-  // Reconcile the persisted grant rows to match the aggregate's `sharedWith`
-  // (S16). Diffs add/remove so unchanged grants keep their `granted_at`.
-  private async syncAccessList(
-    artefactId: string,
-    want: readonly string[],
-  ): Promise<void> {
-    const current = await this.db
-      .select({ userId: artefactAccess.userId })
-      .from(artefactAccess)
-      .where(eq(artefactAccess.artefactId, artefactId));
-    const currentIds = new Set(current.map((r) => r.userId));
-    const wantSet = new Set(want);
-    const toRemove = [...currentIds].filter((id) => !wantSet.has(id));
-    const toAdd = want.filter((id) => !currentIds.has(id));
-    if (toRemove.length > 0) {
-      await this.db
-        .delete(artefactAccess)
-        .where(
-          and(
-            eq(artefactAccess.artefactId, artefactId),
-            inArray(artefactAccess.userId, toRemove),
-          ),
-        );
-    }
-    if (toAdd.length > 0) {
-      const now = new Date();
-      await this.db
-        .insert(artefactAccess)
-        .values(toAdd.map((userId) => ({ artefactId, userId, grantedAt: now })));
-    }
+}
+
+// Reconcile the persisted grant rows to match the aggregate's `sharedWith`
+// (S16), on the executor the save runs on (S60). Diffs add/remove so unchanged
+// grants keep their `granted_at`.
+async function syncAccessList(
+  tx: Executor,
+  artefactId: string,
+  want: readonly string[],
+): Promise<void> {
+  const current = await tx
+    .select({ userId: artefactAccess.userId })
+    .from(artefactAccess)
+    .where(eq(artefactAccess.artefactId, artefactId));
+  const currentIds = new Set(current.map((r) => r.userId));
+  const wantSet = new Set(want);
+  const toRemove = [...currentIds].filter((id) => !wantSet.has(id));
+  const toAdd = want.filter((id) => !currentIds.has(id));
+  if (toRemove.length > 0) {
+    await tx
+      .delete(artefactAccess)
+      .where(
+        and(
+          eq(artefactAccess.artefactId, artefactId),
+          inArray(artefactAccess.userId, toRemove),
+        ),
+      );
+  }
+  if (toAdd.length > 0) {
+    const now = new Date();
+    await tx
+      .insert(artefactAccess)
+      .values(toAdd.map((userId) => ({ artefactId, userId, grantedAt: now })));
   }
 }
 
@@ -271,6 +308,7 @@ function toRow(a: Artefact): ArtefactRow {
     createdAt: a.createdAt,
     updatedAt: a.updatedAt,
     archivedAt: a.archivedAt,
+    revision: a.revision,
   };
 }
 
@@ -300,5 +338,6 @@ function toAggregate(row: ArtefactRow, sharedWith: string[]): Artefact {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     archivedAt: row.archivedAt,
+    revision: row.revision,
   };
 }

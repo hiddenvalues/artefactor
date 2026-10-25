@@ -4,6 +4,19 @@
 #   - pull_request: every PR shows the gate before merge
 #   - workflow_call: deploy.yml runs the same gate before building the prod image
 #
+# The work runs as parallel jobs — unit (with the typecheck and both linters) and
+# browser — behind one `gate` job that reports their result on a pull request. A filter may only ever skip work safely: `browser`
+# is skipped only on a pull request whose changed files include none of its
+# inputs; every other run (every workflow_call) runs everything; and a skipped job
+# counts as passed, so `gate` never hangs pending.
+#
+# Every job carries a `timeout-minutes` of about three times its slowest run, and
+# the Playwright install steps 10 minutes of their own: a hung step fails the gate
+# in minutes instead of running to GitHub's 6-hour limit. apt, which those steps
+# call only when their `ldd` gate asks for it (see the browser job), also gets a
+# fail-fast config (30-second timeouts, 3 retries), so a stalled mirror errors and
+# retries instead of hanging.
+#
 # To make the gate BLOCK merges (not just report), require the "gate" status check in
 # branch protection for main: repo Settings → Branches (or Rulesets) → require status
 # checks → select "gate".
@@ -16,35 +29,176 @@ on:
   pull_request: {}
   workflow_call: {}
 
+# Checkout only — least privilege for the token. A workflow_call caller grants
+# the called workflow at most this, so no job may ask for more.
+permissions:
+  contents: read
+
 jobs:
-  gate:
+  # Which suites a pull request can affect. Off a pull request this job is
+  # skipped, and `browser` runs regardless.
+  changes:
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read # checkout only — least privilege for the token
+    timeout-minutes: 5
+    outputs:
+      browser: ${{ steps.filter.outputs.browser }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # Depth 2 holds the PR's merge commit and both its parents, so the diff
+      # needs no further fetch (and no credentials).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+          fetch-depth: 2
+      - id: base
+        run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+      # token: '' diffs with git against the merge commit's first parent (the PR's
+      # base) instead of the REST API, which would need `pull-requests: read`.
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          token: ''
+          base: ${{ steps.base.outputs.sha }}
+          # The browser suites' inputs: every src/ tree they reach (the server
+          # they boot is mostly domain code; src/test holds vitest's setup file),
+          # plus the shared ones — manifests, lockfile, tool configs, Node,
+          # workflows, and the root index.html + public/ the app build reads —
+          # which can break a browser test without touching src/ (#101 was a
+          # lockfile-only change).
+          filters: |
+            browser:
+              - 'src/client/**'
+              - 'src/renderer/**'
+              - 'src/server/**'
+              - 'src/shared/**'
+              - 'src/infra/**'
+              - 'src/domain/**'
+              - 'src/test/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'tsconfig*.json'
+              - 'vite*.config.ts'
+              - 'vitest.config.ts'
+              - '.nvmrc'
+              - '.github/workflows/**'
+              - 'index.html'
+              - 'public/**'
+
+  # Every test but the browser suites (*.browser.test.ts), then the typecheck and both
+  # linters — on this runner, not one of their own, to save a checkout and an install.
+  # Needs no Chromium.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         # version comes from devEngines.packageManager in package.json
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc # pinned Node 26 — matches the native better-sqlite3 ABI
           cache: pnpm
       # onlyBuiltDependencies (pnpm-workspace.yaml) lets install compile better-sqlite3
       # + esbuild from source — needed before tests run. ubuntu-latest ships the toolchain.
+      - id: install
+        run: pnpm install --frozen-lockfile
+      - run: pnpm test:unit
+      # A failed test doesn't hide a type or lint error: each check still runs once the
+      # install succeeded, and any failure fails the job.
+      - if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm check
+      - if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm lint
+      - if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: pnpm lint:md
+
+  # The suites that drive a real headless Chromium (*.browser.test.ts). They fail
+  # rather than skip under CI, so a job that lost its browser fails loudly.
+  # `!cancelled()` because `changes` is skipped off a pull request, which would
+  # otherwise skip this job with it.
+  browser:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.outputs.browser == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The browser build belongs to the installed playwright-core (the lockfile's),
+      # so its version keys the cache.
+      - id: playwright
+        run: echo "version=$(node -p "require('playwright-core/package.json').version")" >> "$GITHUB_OUTPUT"
+      - id: chromium-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-headless-shell
       # S35/S37 — the thumbnail renderer's isolation tests need a real headless
-      # Chromium; without one they would skip instead of guarding the sandbox.
-      - run: pnpm exec playwright-core install --with-deps chromium-headless-shell
-      # S37 (AH29) — those tests launch Chromium with its OS sandbox ON, which
+      # Chromium. The runner image already carries its OS libraries, so no step
+      # here calls apt unless one is missing: `install` fetches the browser (a
+      # no-op on a cache hit) without apt, and the gate below runs `install-deps`
+      # only when `ldd` reports a library `not found` — or finds no binary to
+      # check, failing safe. A real gap still installs; a browser that can't
+      # start still fails `pnpm test:browser`. When apt does run, its downloads
+      # fail fast; anything else (a dpkg lock wait) is bounded by the step limit.
+      - name: apt fails fast and retries
+        run: |
+          printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' \
+            | sudo tee /etc/apt/apt.conf.d/80-ci-fail-fast
+      - name: Get the browser
+        run: pnpm exec playwright-core install chromium-headless-shell
+        timeout-minutes: 10
+      - name: Install missing OS libraries
+        run: |
+          bin=$(find ~/.cache/ms-playwright -type f -name chrome-headless-shell -print -quit 2>/dev/null || true)
+          if [ -z "$bin" ]; then
+            echo "No chrome-headless-shell under ~/.cache/ms-playwright: installing the OS libraries."
+          elif ! libs=$(ldd "$bin" 2>&1); then
+            printf 'ldd failed on %s: installing the OS libraries.\n%s\n' "$bin" "$libs"
+          elif ! grep 'not found' <<<"$libs"; then
+            echo "OS libraries present for $bin: nothing to install."
+            exit 0
+          else
+            echo "Missing OS libraries (above) for $bin: installing them."
+          fi
+          pnpm exec playwright-core install-deps chromium-headless-shell
+        timeout-minutes: 10
+      # S37 — those tests launch Chromium with its OS sandbox ON, which
       # needs an unprivileged user namespace. Ubuntu 24.04 runners ship
       # kernel.apparmor_restrict_unprivileged_userns=1, which denies it to the
       # unconfined processes CI runs. Lifting it on the throwaway runner keeps the
       # tests honest; a real host uses the AppArmor profile instead (see
       # docs/renderer-isolation.md).
       - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: pnpm test
-      - run: pnpm check
-      - run: pnpm lint
-      - run: pnpm lint:md
+      - run: pnpm test:browser
+
+  # The one check branch protection requires. It runs on every pull request, and
+  # fails when any job failed or was cancelled; a skipped job (browser on a PR that
+  # touches none of its inputs) counts as passed. Under workflow_call nothing reads
+  # it: the caller job's result is this workflow's conclusion, which already fails
+  # when any job here fails.
+  gate:
+    needs: [changes, unit, browser]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              failure|cancelled) echo "::error::a gated job ended in '$result'"; exit 1 ;;
+            esac
+          done

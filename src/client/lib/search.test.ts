@@ -40,6 +40,7 @@ function coll(id: string, name: string, over: Partial<CollectionSummary> = {}): 
     id,
     ownerId: me,
     name,
+    description: null,
     parentId: null,
     rootId: over.parentId ? "root" : id,
     visibility: "private",
@@ -73,11 +74,13 @@ describe("searchLibrary (S46)", () => {
     collections: [coll("c1", "Roadmaps")],
   });
 
+  // r[verify platform.search.library-hits]
   it("returns empty groups for an empty or blank query", () => {
     expect(searchLibrary(lib, "")).toEqual({ collections: [], artefacts: [] });
     expect(searchLibrary(lib, "   ")).toEqual({ collections: [], artefacts: [] });
   });
 
+  // r[verify platform.search.library-hits]
   it("matches case-insensitively by title across own and shared artefacts and collections", () => {
     const r = searchLibrary(
       input({
@@ -94,6 +97,7 @@ describe("searchLibrary (S46)", () => {
     expect(r.collections.every((h) => h.kind === "collection")).toBe(true);
   });
 
+  // r[verify platform.search.library-hits]
   it("caps 4 matching collections and 7 matching artefacts at 3 and 5, most recently updated first", () => {
     const r = searchLibrary(
       input({
@@ -108,6 +112,7 @@ describe("searchLibrary (S46)", () => {
     expect(r.artefacts.map((h) => h.id)).toEqual(["a1", "a2", "a3", "a4", "a5"]);
   });
 
+  // r[verify platform.search.library-hits]
   describe("meta — where a hit lives, or who shared it", () => {
     const specs = coll("c-specs", "Specs");
     const sub = coll("c-sub", "Drafts", { parentId: "c-specs" });
@@ -143,12 +148,14 @@ describe("searchLibrary (S46)", () => {
 });
 
 describe("highlight (S46)", () => {
+  // r[verify platform.search.highlight]
   it("splits the first match out of the title", () => {
-    expect(highlight("Roadmap Q3", "map")).toEqual(["Road", "map", " Q3"]);
-    expect(highlight("Roadmap Q3", "ROAD")).toEqual(["", "Road", "map Q3"]);
+    expect(highlight("Roadmap draft", "map")).toEqual(["Road", "map", " draft"]);
+    expect(highlight("Roadmap draft", "ROAD")).toEqual(["", "Road", "map draft"]);
   });
 
+  // r[verify platform.search.highlight]
   it("returns the whole title when nothing matches", () => {
-    expect(highlight("Roadmap Q3", "zzz")).toEqual(["Roadmap Q3", "", ""]);
+    expect(highlight("Roadmap draft", "zzz")).toEqual(["Roadmap draft", "", ""]);
   });
 });

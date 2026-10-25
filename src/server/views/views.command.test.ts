@@ -40,8 +40,9 @@ describe("views commands (S21)", () => {
       }),
       { tier, newSlug: "slug1" },
     );
-    await artefactRepo.save({ ...a, ...over });
-    return a;
+    // Carry the stored revision (S60) so a test can save over the seed.
+    const { revision } = await artefactRepo.save({ ...a, ...over });
+    return { ...a, revision };
   }
 
   beforeEach(() => {
@@ -56,7 +57,8 @@ describe("views commands (S21)", () => {
     };
   });
 
-  it("records a view and lists it for another viewer (VT1)", async () => {
+  // r[verify views.entry.one-per-pair]
+  it("records a view and lists it for another viewer", async () => {
     await seed("authenticated");
     const at = new Date("2026-01-01T10:00:00Z");
     recordDeps.now = () => at;
@@ -66,7 +68,8 @@ describe("views commands (S21)", () => {
     expect(viewers).toEqual([{ viewerId: "viewer-2", viewedAt: at }]);
   });
 
-  it("keeps latest view only — a second view upserts, bumping viewedAt (VT1)", async () => {
+  // r[verify views.entry.one-per-pair]
+  it("keeps latest view only — a second view upserts, bumping viewedAt", async () => {
     await seed("authenticated");
     recordDeps.now = () => new Date("2026-01-01T10:00:00Z");
     await recordArtefactView("a1", "viewer-2", recordDeps);
@@ -78,7 +81,8 @@ describe("views commands (S21)", () => {
     expect(viewers).toEqual([{ viewerId: "viewer-2", viewedAt: later }]);
   });
 
-  it("excludes the requesting viewer from the list (VT4)", async () => {
+  // r[verify views.viewers.excludes-caller]
+  it("excludes the requesting viewer from the list", async () => {
     await seed("authenticated");
     await recordArtefactView("a1", OWNER, recordDeps);
     await recordArtefactView("a1", "viewer-2", recordDeps);
@@ -91,7 +95,9 @@ describe("views commands (S21)", () => {
     expect(asViewer.map((v) => v.viewerId)).toEqual([OWNER]);
   });
 
-  it("is not-found for an archived artefact (VT3, AH7)", async () => {
+  // r[verify hosting.lifecycle.archived-not-served]
+  // r[verify views.viewers.follows-artefact-access]
+  it("is not-found for an archived artefact", async () => {
     const shared = await seed("authenticated");
     await artefactRepo.save(archiveArtefact(shared));
     await expect(
@@ -99,7 +105,9 @@ describe("views commands (S21)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  it("is not-found when a non-owner targets a private artefact (VT4/AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify views.viewers.follows-artefact-access]
+  it("is not-found when a non-owner targets a private artefact", async () => {
     const shared = await seed("public");
     await artefactRepo.save({ ...shared, visibility: "private" });
     await expect(

@@ -8,9 +8,12 @@ import type {
 
 // Filesystem-backed payload store. Trusted HTML payloads (≤ 100 MB) are written
 // as opaque files named by a generated ref; the artefact row keeps ref+bytes+hash.
+// r[impl hosting.payload.on-filesystem]
 export class FilesystemPayloadStore implements PayloadStore {
   constructor(private readonly root: string) {}
 
+  // Every put mints a fresh ref, identical bytes included: no two artefacts share a file.
+  // r[impl hosting.payload.ref-owned-by-one-artefact]
   async put(content: Uint8Array): Promise<StoredPayload> {
     await mkdir(this.root, { recursive: true });
     const ref = randomUUID();

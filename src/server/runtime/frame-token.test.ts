@@ -7,7 +7,7 @@ import {
   type FrameTokenClaims,
 } from "./frame-token";
 
-// S36 (AD10) — the frame token: what authenticates a sandboxed frame instead of
+// S36 — the frame token: what authenticates a sandboxed frame instead of
 // the session cookie it can no longer read.
 describe("frame token (S36)", () => {
   const SECRET = "test-secret-at-least-32-characters-long";
@@ -20,16 +20,20 @@ describe("frame token (S36)", () => {
     exp: NOW + FRAME_TOKEN_TTL_MS,
   };
 
+  // r[verify data.frame-token.signed-claims]
   it("lives five minutes", () => {
     expect(FRAME_TOKEN_TTL_MS).toBe(5 * 60 * 1000);
   });
 
+  // r[verify hosting.frame.token-signed]
+  // r[verify data.frame-token.signed-claims]
   it("round-trips the claims through sign → verify", () => {
     const token = signFrameToken(claims, SECRET);
     expect(token).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(verifyFrameToken(token, SECRET, NOW)).toEqual({ status: "valid", claims });
   });
 
+  // r[verify hosting.frame.token-signed]
   it("round-trips a raw token's tenant and an anonymous-free own context", () => {
     const raw: FrameTokenClaims = {
       artefactId: "a1",
@@ -45,6 +49,7 @@ describe("frame token (S36)", () => {
     });
   });
 
+  // r[verify hosting.frame.token-signed]
   it("rejects a tampered payload", () => {
     const [payload, sig] = signFrameToken(claims, SECRET).split(".");
     const forged = Buffer.from(
@@ -54,6 +59,7 @@ describe("frame token (S36)", () => {
     expect(verifyFrameToken(`${forged}.${sig}`, SECRET, NOW)).toEqual({ status: "invalid" });
   });
 
+  // r[verify hosting.frame.token-signed]
   it("rejects a tampered signature", () => {
     const token = signFrameToken(claims, SECRET);
     const at = token.indexOf(".") + 5;
@@ -61,6 +67,7 @@ describe("frame token (S36)", () => {
     expect(verifyFrameToken(flipped, SECRET, NOW)).toEqual({ status: "invalid" });
   });
 
+  // r[verify hosting.frame.token-signed]
   it("rejects a non-canonical encoding of the right signature", () => {
     const token = signFrameToken(claims, SECRET);
     // A 32-byte MAC's last base64url character carries two unused bits: setting
@@ -74,17 +81,20 @@ describe("frame token (S36)", () => {
     expect(verifyFrameToken(variant, SECRET, NOW)).toEqual({ status: "invalid" });
   });
 
+  // r[verify hosting.frame.token-signed]
   it("rejects a token signed with another secret", () => {
     const token = signFrameToken(claims, "another-secret-of-sufficient-length!!");
     expect(verifyFrameToken(token, SECRET, NOW)).toEqual({ status: "invalid" });
   });
 
+  // r[verify hosting.frame.token-signed]
   it("rejects garbage", () => {
     for (const t of ["", "abc", "a.b.c", ".", "x."]) {
       expect(verifyFrameToken(t, SECRET, NOW)).toEqual({ status: "invalid" });
     }
   });
 
+  // r[verify hosting.frame.token-signed]
   it("reports a signed token past its exp as expired, not invalid", () => {
     const token = signFrameToken({ ...claims, exp: NOW - 1 }, SECRET);
     expect(verifyFrameToken(token, SECRET, NOW)).toEqual({ status: "expired", claims: { ...claims, exp: NOW - 1 } });
@@ -95,11 +105,13 @@ describe("frame token (S36)", () => {
   describe("frame channel", () => {
     const token = signFrameToken(claims, SECRET);
 
+    // r[verify data.shell.channel-binds-document]
     it("is derived from the token, deterministically", () => {
       expect(frameChannel(token, SECRET)).toBe(frameChannel(token, SECRET));
       expect(frameChannel(token, SECRET)).toMatch(/^[A-Za-z0-9_-]{16,}$/);
     });
 
+    // r[verify data.shell.channel-binds-document]
     it("differs per token and per secret, and is not the token or its signature", () => {
       const other = signFrameToken({ ...claims, exp: claims.exp + 1 }, SECRET);
       const channel = frameChannel(token, SECRET);
@@ -109,6 +121,7 @@ describe("frame token (S36)", () => {
     });
   });
 
+  // r[verify data.frame-token.signed-claims]
   it("never signs with the raw secret itself (a derived key)", async () => {
     const { createHmac } = await import("node:crypto");
     const [payload, sig] = signFrameToken(claims, SECRET).split(".");

@@ -67,10 +67,12 @@ describe("shared with you (S14)", () => {
     await publish(bob, "Bob public", "public");
   });
 
+  // r[verify hosting.listing.signed-in-only+2]
   it("requires a signed-in user (not anonymous)", async () => {
     expect((await shared()).status).toBe(401);
   });
 
+  // r[verify hosting.shared.others-shared+2]
   it("lists others' shared artefacts, excluding the viewer's own and others' private", async () => {
     const res = await shared(bob);
     expect(res.status).toBe(200);
@@ -93,8 +95,16 @@ describe("shared with you (S14)", () => {
           a.publicSlug !== null,
       ),
     ).toBe(true);
+    // Each carries its visibility and slug.
+    expect(
+      Object.fromEntries(artefacts.map((a) => [a.title, [a.visibility, typeof a.publicSlug]])),
+    ).toEqual({
+      "Alice authenticated": ["authenticated", "string"],
+      "Alice public": ["public", "string"],
+    });
   });
 
+  // r[verify hosting.shared.others-shared+2]
   it("attributes each shared artefact to its owner's display identity", async () => {
     const res = await shared(bob);
     const { artefacts } = (await res.json()) as {

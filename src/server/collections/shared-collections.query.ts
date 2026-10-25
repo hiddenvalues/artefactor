@@ -3,8 +3,8 @@ import type { CollectionRepository } from "../../domain/collection/collection-re
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import { canContributeToTree } from "../../domain/collection/collection-access";
 
-// S28 — the collection trees shared *to* a viewer (CL11): every node of every
-// tree whose root grants them, with the per-tree contributor flag (CL12). The
+// S28 — the collection trees shared *to* a viewer (collections.read.follows-root): every node of every
+// tree whose root grants them, with the per-tree contributor flag (collections.contributor.on-root-access-list). The
 // nodes are returned with **empty `sharedWith`** (recipients never see the
 // grantee list); the contributor decision is made here against the fully-loaded
 // root and shipped as a boolean instead.

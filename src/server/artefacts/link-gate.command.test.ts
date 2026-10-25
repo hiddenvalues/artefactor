@@ -7,8 +7,8 @@ import { SINGLETON_SCOPE as SCOPE } from "../../domain/artefact/tenant-scope";
 import { ArtefactNotFound, InvariantViolation } from "../../domain/artefact/errors";
 import type { LinkPasswordHasher } from "../../domain/artefact/link-gate";
 
-// S32a (AH31) — the application commands behind the BFF's link-gate routes and
-// the gate input on `PUT …/visibility`.
+// S32a (hosting.link-gate.public-only) — the application commands behind the BFF's link-gate routes
+// and the gate input on `PUT …/visibility`.
 
 const OWNER = "owner-1";
 const NOW = new Date("2026-06-01T12:00:00Z");
@@ -39,6 +39,7 @@ describe("setArtefactVisibilityCommand with a link gate (S32a)", () => {
     );
   });
 
+  // r[verify hosting.link-gate.public-only]
   it("private → public with a gate sets tier and gate atomically", async () => {
     const a = await setArtefactVisibilityCommand(
       {
@@ -55,6 +56,7 @@ describe("setArtefactVisibilityCommand with a link gate (S32a)", () => {
     expect((await repo.findById("a1", SCOPE))!.linkGate).toEqual(a.linkGate);
   });
 
+  // r[verify hosting.link-gate.public-only]
   it("refuses a gate with a non-public tier, changing nothing", async () => {
     await expect(
       setArtefactVisibilityCommand(
@@ -71,6 +73,7 @@ describe("setArtefactVisibilityCommand with a link gate (S32a)", () => {
     expect((await repo.findById("a1", SCOPE))!.visibility).toBe("private");
   });
 
+  // r[verify hosting.link-gate.password-rules]
   it("refuses a bad gate without sharing the artefact", async () => {
     await expect(
       setArtefactVisibilityCommand(
@@ -124,6 +127,21 @@ describe("setLinkGateCommand / clearLinkGateCommand (S32a)", () => {
     expect((await repo.findById("a1", SCOPE))!.linkGate).toEqual(a.linkGate);
   });
 
+  // r[verify hosting.artefact.updated-at-bumped+2]
+  it("clearing an unset gate saves nothing and answers the artefact", async () => {
+    const before = (await repo.findById("a1", SCOPE))!;
+    const a = await clearLinkGateCommand(
+      { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+      { ...deps(repo), now: () => new Date("2030-01-01T00:00:00Z") },
+    );
+    expect(a).toEqual(before);
+    const after = (await repo.findById("a1", SCOPE))!;
+    expect(after.revision).toBe(before.revision);
+    expect(after.updatedAt).toEqual(before.updatedAt);
+    expect(after.linkGate.version).toBe(before.linkGate.version);
+  });
+
+  // r[verify hosting.link-gate.public-only]
   it("refuses an unknown or foreign artefact as not found", async () => {
     await expect(
       setLinkGateCommand({ artefactId: "nope", requesterId: OWNER, scope: SCOPE, password: "correct-horse" }, deps(repo)),

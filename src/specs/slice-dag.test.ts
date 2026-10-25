@@ -70,7 +70,33 @@ describe("parseSliceDag", () => {
 
   it("treats `—` as no dependencies, and omitted Optional / Linear as empty", () => {
     const [slice] = parseSliceDag(dag(section("S0", "done", "—")));
-    expect(slice).toMatchObject({ dependsOn: [], optional: [], linear: null });
+    expect(slice).toMatchObject({ dependsOn: [], optional: [], linear: null, delivers: [] });
+  });
+
+  // r[verify platform.trace.coverage]
+  it("reads the requirement ids a Delivers field lists, across indented continuation lines", () => {
+    const [slice, next] = parseSliceDag(
+      dag(
+        [
+          "### S31 — Title",
+          "",
+          "- **Status:** done",
+          "- **Depends on:** —",
+          "- **Delivers:** data.entry.owner-writes-only, data.entry.opaque-blob,",
+          "  data.entry.size-cap",
+          "- **Linear:** ALI-268",
+          "",
+          "  An indented paragraph after the block is not a continuation.",
+          "",
+        ].join("\n"),
+        section("S32", "specced"),
+      ),
+    );
+    expect(slice).toMatchObject({
+      delivers: ["data.entry.owner-writes-only", "data.entry.opaque-blob", "data.entry.size-cap"],
+      linear: "ALI-268",
+    });
+    expect(next).toMatchObject({ id: "S32", delivers: [] });
   });
 
   it("accepts suffixed and multi-letter ids (S19a, S34b, E1, ET2, EQ3, EP1)", () => {
@@ -297,6 +323,7 @@ describe("checkClaudeMd", () => {
       "- **Depends on:** S31",
       "  - **Optional:** S19a",
       "- **Linear:** ALI-999",
+      "- **Delivers:** data.entry.opaque-blob",
     ].join("\n");
     expect(checkClaudeMd(pasted)).toEqual([
       expect.stringMatching(/line 3: slice heading/),
@@ -304,6 +331,7 @@ describe("checkClaudeMd", () => {
       expect.stringMatching(/line 5: slice metadata field/),
       expect.stringMatching(/line 6: slice metadata field/),
       expect.stringMatching(/line 7: slice metadata field/),
+      expect.stringMatching(/line 8: slice metadata field/),
     ]);
   });
 
@@ -692,12 +720,31 @@ describe("the real specs", () => {
     expect(validateSliceDag(coreDag)).toEqual([]);
   });
 
-  // S44 is allocated to ALI-394, not yet on main; S45 — App dark mode with a UI toggle and
-  // S46 — Top bar: global search, tabs move out sit past it.
-  it("loads exactly the core slices S0–S43, S45, S46 plus S34b (S19, S32 and S33 each split into a + b)", () => {
-    const expected = Array.from({ length: 44 }, (_, n) => `S${n}`)
+  // Past S48: S49a — Design-system lint: token colours and wrapped Radix only and S49b —
+  // Design-system lint: library controls only, then S50 — Secrets stay out of the request log,
+  // S51 — BetterAuth's log prints no credential, S52, S53, S54 — Artefact card: one access
+  // row, collection row and share-link footer, S55 — Manage access dialog: one draft, saved
+  // atomically, S56 — Artefact row: the card's content and actions on one row, S57 —
+  // Account screen: change your name, S58 — Organization settings screen and its
+  // administration seam, S59 — Every screen gets a real URL, S60 — Save concurrency: a save
+  // never overwrites a newer artefact, S61 — Back and Forward wait for the data a screen needs,
+  // S62 — Artefact card: one card for every artefact, kind by the title, access on the bottom edge,
+  // S63 — MCP connector on better-auth 1.7: OAuth provider with a consent screen, S64 — Access
+  // inherited popover: the share link at the top, S65 — Artefact row: a leaner meta line, the
+  // card's inherited icon and the viewer's Share, S66 — Artefact opens without flicker: the
+  // shell holds until the frame has loaded, S67 — Legal links on the sign-in screen, S68 —
+  // Design docs in three layers: foundations, components, templates, S69 — App shell as a
+  // slotted layout component, S70 — Built screens in the design catalog, S71 — OAuth consent
+  // screen previews its states, S72 — Host shell chrome loads nothing from another origin,
+  // S73 — Public collections for an external site: cross-origin read and sign-in/sign-up URLs,
+  // S74 — Collection description, S75 — Agent places an artefact in a collection, S76 — Agent
+  // manages collections over MCP, S77 — Logo: the gem jar mark, S78 — Agent keeps an artefact
+  // private and verifies it before calling it done, S79 — Database refuses a payload ref shared
+  // by two artefacts, and S80 — Account menu as its own component.
+  it("loads exactly the core slices S0–S48, S49a, S49b, S50, S51, S52, S53, S54, S55, S56, S57, S58, S59, S60, S61, S62, S63, S64, S65, S66, S67, S68, S69, S70, S71, S72, S73, S74, S75, S76, S77, S78, S79, S80 plus S34b (S19, S32 and S33 each split into a + b)", () => {
+    const expected = Array.from({ length: 49 }, (_, n) => `S${n}`)
       .flatMap((id) => (id === "S19" || id === "S32" || id === "S33" ? [`${id}a`, `${id}b`] : [id]))
-      .concat("S34b", "S45", "S46");
+      .concat("S34b", "S49a", "S49b", "S50", "S51", "S52", "S53", "S54", "S55", "S56", "S57", "S58", "S59", "S60", "S61", "S62", "S63", "S64", "S65", "S66", "S67", "S68", "S69", "S70", "S71", "S72", "S73", "S74", "S75", "S76", "S77", "S78", "S79", "S80");
     expect(coreDag.map((s) => s.id).sort()).toEqual(expected.sort());
   });
 

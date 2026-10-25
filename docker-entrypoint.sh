@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# One image, two roles (S37, AH29).
+# One image, two roles (S37).
 #
 # renderer: the isolated thumbnail renderer. It renders untrusted artefact HTML
 #   in sandboxed Chromium and must therefore be as empty as possible — no /data,
@@ -13,6 +13,7 @@ set -e
 #   ran as root — then drops privileges via gosu. /data holds the SQLite DB, the
 #   artefact payloads and their thumbnails (S35).
 case "${ARTEFACTOR_ROLE:-app}" in
+  # r[impl hosting.renderer.entrypoint-roles]
   renderer)
     if [ "$(id -u)" = "0" ]; then
       echo "refusing to run the renderer as root: give the container an unprivileged user" >&2

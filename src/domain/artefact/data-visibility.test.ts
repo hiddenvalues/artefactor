@@ -1,14 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   archiveArtefact,
   createArtefact,
   setDataVisibility,
 } from "./artefact";
-import { canLoadAuthorData } from "./access";
+import { canLoadAuthorData, canViewArtefact, type ViewableArtefact } from "./access";
 import { ArtefactNotFound, InvariantViolation } from "./errors";
-import type { DataVisibility } from "./visibility";
+import type { DataVisibility, Visibility } from "./visibility";
 
-// S41 — Owner-set data visibility: shared or own-only (AH30, AD11).
+// S41 — Owner-set data visibility: shared or own-only (hosting.data-visibility.owner-set, data.visibility.narrows-reads).
 
 const OWNER = "owner-1";
 const VIEWER = "viewer-2";
@@ -25,13 +25,15 @@ const base = {
   now: CREATED,
 };
 
-describe("createArtefact — dataVisibility (AH30)", () => {
+describe("createArtefact — dataVisibility", () => {
+  // r[verify hosting.data-visibility.new-default-own]
   it("defaults a new artefact to own-only", () => {
     expect(createArtefact(base).dataVisibility).toBe("own");
   });
 });
 
-describe("setDataVisibility (AH30)", () => {
+describe("setDataVisibility", () => {
+  // r[verify hosting.data-visibility.owner-set]
   it("lets the owner flip it, bumping updatedAt", () => {
     const a = createArtefact(base);
     const shared = setDataVisibility(a, OWNER, "shared", { now: LATER });
@@ -39,6 +41,7 @@ describe("setDataVisibility (AH30)", () => {
     expect(shared.updatedAt).toEqual(LATER);
   });
 
+  // r[verify hosting.data-visibility.owner-set]
   it("is a no-op when the value is unchanged", () => {
     const a = createArtefact(base);
     const same = setDataVisibility(a, OWNER, "own", { now: LATER });
@@ -46,18 +49,50 @@ describe("setDataVisibility (AH30)", () => {
     expect(same.updatedAt).toEqual(CREATED);
   });
 
-  it("refuses a non-owner as not found (AH8/AH9)", () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.authority.owner-only]
+  // r[verify hosting.data-visibility.owner-set]
+  it("refuses a non-owner as not found", () => {
     const a = createArtefact(base);
     expect(() => setDataVisibility(a, VIEWER, "shared")).toThrow(ArtefactNotFound);
   });
 
-  it("is blocked while archived (AH7)", () => {
+  // r[verify hosting.lifecycle.archived-frozen]
+  // r[verify hosting.data-visibility.owner-set]
+  it("is blocked while archived", () => {
     const a = archiveArtefact(createArtefact(base));
     expect(() => setDataVisibility(a, OWNER, "shared")).toThrow(InvariantViolation);
   });
+
+  // r[verify hosting.data-visibility.owner-set]
+  it("is set on the artefact itself while it sits in a collection", () => {
+    const contained = { ...createArtefact(base), collectionId: "c1" };
+    const shared = setDataVisibility(contained, OWNER, "shared", { now: LATER });
+    expect(shared.dataVisibility).toBe("shared");
+    expect(shared.collectionId).toBe("c1");
+  });
 });
 
-describe("canLoadAuthorData (AD11)", () => {
+describe("dataVisibility and viewing", () => {
+  // r[verify hosting.data-visibility.never-gates-viewing]
+  it("is not among the fields the access matrix reads", () => {
+    expectTypeOf<ViewableArtefact>().not.toHaveProperty("dataVisibility");
+  });
+
+  // r[verify hosting.data-visibility.never-gates-viewing]
+  it("leaves every view decision the same under own and shared", () => {
+    const tiers: Visibility[] = ["private", "authenticated", "selected", "public"];
+    for (const visibility of tiers)
+      for (const viewer of [OWNER, VIEWER, null]) {
+        const a = { ...createArtefact(base), visibility, sharedWith: [VIEWER] };
+        const own = { ...a, dataVisibility: "own" as const };
+        const shared = { ...a, dataVisibility: "shared" as const };
+        expect(canViewArtefact(own, viewer), `${visibility} ${viewer}`).toBe(canViewArtefact(shared, viewer));
+      }
+  });
+});
+
+describe("canLoadAuthorData", () => {
   function artefact(dataVisibility: DataVisibility) {
     return { ownerId: OWNER, dataVisibility };
   }
@@ -90,6 +125,7 @@ describe("canLoadAuthorData (AD11)", () => {
     },
   );
 
+  // r[verify data.visibility.narrows-reads]
   it("is false only for (own, non-owner or anonymous, foreign author)", () => {
     const denied = cases.filter(([, , , , , ok]) => !ok);
     expect(denied.map(([vis, who, which]) => `${vis}/${who}/${which}`).sort()).toEqual(
@@ -101,6 +137,7 @@ describe("canLoadAuthorData (AD11)", () => {
     );
   });
 
+  // r[verify data.visibility.narrows-reads]
   it("never treats an anonymous viewer's author as their own", () => {
     expect(canLoadAuthorData(artefact("own"), null, OTHER)).toBe(false);
   });

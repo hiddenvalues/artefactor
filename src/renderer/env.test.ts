@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { parseRendererEnv, selfCheck } from "./env";
 
-// S37 (AH29) — the renderer role's own configuration, and the production
+// S37 — the renderer role's own configuration, and the production
 // self-check that refuses to run a renderer that could see secrets, storage or
 // the database, or that runs as root.
 
 const nobody = { uid: 1000, exists: () => false };
 
 describe("renderer env (S37)", () => {
+  // r[verify hosting.renderer.env-parses-without-secrets]
   it("parses with no secrets set, to the defaults", () => {
     expect(parseRendererEnv({})).toEqual({
       NODE_ENV: "development",
@@ -38,13 +39,17 @@ describe("renderer env (S37)", () => {
   });
 });
 
-describe("renderer startup self-check (S37, AH29)", () => {
+describe("renderer startup self-check (S37)", () => {
   const prod = parseRendererEnv({ NODE_ENV: "production" });
 
+  // r[verify hosting.renderer.env-parses-without-secrets]
+  // r[verify hosting.renderer.holds-no-secrets]
   it("passes in production with nothing to leak, as a non-root user", () => {
     expect(selfCheck(prod, { NODE_ENV: "production" }, nobody)).toBeNull();
   });
 
+  // r[verify hosting.renderer.env-parses-without-secrets]
+  // r[verify hosting.renderer.holds-no-secrets]
   it.each(["BETTER_AUTH_SECRET", "GOOGLE_CLIENT_SECRET", "DATABASE_URL"])(
     "fails in production when %s is set, naming it",
     (name) => {
@@ -52,6 +57,8 @@ describe("renderer startup self-check (S37, AH29)", () => {
     },
   );
 
+  // r[verify hosting.renderer.env-parses-without-secrets]
+  // r[verify hosting.renderer.holds-no-secrets]
   it("fails in production when the DATABASE_PATH directory exists", () => {
     const exists = (p: string) => p === "/data";
     expect(selfCheck(prod, { DATABASE_PATH: "/data/artefactor.db" }, { uid: 1000, exists })).toMatch(
@@ -59,6 +66,8 @@ describe("renderer startup self-check (S37, AH29)", () => {
     );
   });
 
+  // r[verify hosting.renderer.env-parses-without-secrets]
+  // r[verify hosting.renderer.holds-no-secrets]
   it.each(["ARTEFACTOR_PAYLOAD_DIR", "ARTEFACTOR_THUMBNAIL_DIR"])(
     "fails in production when the %s directory exists",
     (name) => {
@@ -67,6 +76,8 @@ describe("renderer startup self-check (S37, AH29)", () => {
     },
   );
 
+  // r[verify hosting.renderer.env-parses-without-secrets]
+  // r[verify hosting.renderer.holds-no-secrets]
   it("passes when those paths are configured (the image bakes them in) but absent", () => {
     const raw = {
       DATABASE_PATH: "/data/artefactor.db",
@@ -76,10 +87,13 @@ describe("renderer startup self-check (S37, AH29)", () => {
     expect(selfCheck(prod, raw, nobody)).toBeNull();
   });
 
+  // r[verify hosting.renderer.env-parses-without-secrets]
+  // r[verify hosting.renderer.holds-no-secrets]
   it("fails in production when running as uid 0", () => {
     expect(selfCheck(prod, {}, { uid: 0, exists: () => false })).toMatch(/root|uid 0/);
   });
 
+  // r[verify hosting.renderer.env-parses-without-secrets]
   it("passes in development whatever is set", () => {
     const dev = parseRendererEnv({ NODE_ENV: "development" });
     const raw = { BETTER_AUTH_SECRET: "x", DATABASE_PATH: "/data/artefactor.db" };

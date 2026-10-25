@@ -50,4 +50,9 @@ describe("markdown lint config", () => {
     expect(await ruleIds("## Slices\n\n### S1 — Title\n\n- **Status:** done")).toEqual([]);
     expect(await ruleIds("## Slices\n\n### S1 — Title\n- **Status:** done")).toContain("MD022");
   });
+
+  // r[verify platform.trace.marker-syntax]
+  it("accepts a line-only requirement marker directly above its body", async () => {
+    expect(await ruleIds("r[hosting.access.no-existence-leak]\nThe rule, stated.\n\nr[x.y+2]\nAnother.")).toEqual([]);
+  });
 });

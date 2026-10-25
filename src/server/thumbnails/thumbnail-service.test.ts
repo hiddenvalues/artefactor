@@ -17,7 +17,7 @@ import type {
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 import { ThumbnailService, thumbnailJobOf } from "./thumbnail-service";
 
-// S35 (AH25/AH26) — the in-process render queue + worker.
+// S35 — the in-process render queue + worker.
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -101,8 +101,7 @@ describe("ThumbnailService (S35)", () => {
       payload: { ref: `ref-${hash}`, bytes, hash },
     });
     payloads.live.set(a.payloadRef, enc(html));
-    await repo.save(a);
-    return a;
+    return repo.save(a);
   }
 
   // The edit command's persisted effect: a new payload file + saved aggregate
@@ -114,8 +113,7 @@ describe("ThumbnailService (S35)", () => {
     });
     payloads.live.set(edited.payloadRef, enc(html));
     payloads.live.delete(current.payloadRef);
-    await repo.save(edited);
-    return edited;
+    return repo.save(edited);
   }
 
   const stored = async (id: string) => (await repo.findById(id, SINGLETON_SCOPE))!;
@@ -129,6 +127,7 @@ describe("ThumbnailService (S35)", () => {
     service = make();
   });
 
+  // r[verify hosting.thumbnail.sweep-is-system-read]
   it("a job carries the artefact's payload size (S37)", async () => {
     const a = await seed("a1", "<h1>one</h1>", "h1", 1234);
     expect(thumbnailJobOf(a)).toEqual({
@@ -140,6 +139,7 @@ describe("ThumbnailService (S35)", () => {
     });
   });
 
+  // r[verify hosting.thumbnail.pristine]
   it("renders the stored payload, stores the image and records its hash", async () => {
     const a = await seed("a1", "<h1>one</h1>");
 
@@ -151,6 +151,7 @@ describe("ThumbnailService (S35)", () => {
     expect(dec((await thumbs.get("a1", a.payloadHash))!)).toBe("webp(<h1>one</h1>)");
   });
 
+  // r[verify hosting.thumbnail.never-blocks-command]
   it("enqueue returns before rendering and never throws", async () => {
     const a = await seed("a1", "<h1>one</h1>");
     renderer.hold();
@@ -196,6 +197,8 @@ describe("ThumbnailService (S35)", () => {
     expect(logs).toEqual([]);
   });
 
+  // r[verify hosting.thumbnail.recorded-by-compare-and-set]
+  // r[verify hosting.thumbnail.lost-render-removed]
   it("discards a render that finishes after the payload changed, and the newer render wins", async () => {
     const a = await seed("a1", "<p>v1</p>");
     renderer.hold();
@@ -212,6 +215,7 @@ describe("ThumbnailService (S35)", () => {
     expect(thumbs.hashesOf("a1")).toEqual([v2.payloadHash]);
   });
 
+  // r[verify hosting.thumbnail.lost-render-removed]
   it("removes a lost render's file even when no newer render follows", async () => {
     const a = await seed("a1", "<p>v1</p>");
     renderer.hold();
@@ -226,6 +230,7 @@ describe("ThumbnailService (S35)", () => {
     expect(thumbs.hashesOf("a1")).toEqual([]);
   });
 
+  // r[verify hosting.thumbnail.previous-kept-until-replaced]
   it("keeps serving the previous thumbnail until a re-render lands, then deletes it", async () => {
     const a = await seed("a1", "<p>v1</p>");
     service.enqueue(thumbnailJobOf(a));
@@ -243,6 +248,8 @@ describe("ThumbnailService (S35)", () => {
     expect(thumbs.hashesOf("a1")).toEqual([v2.payloadHash]);
   });
 
+  // r[verify hosting.thumbnail.never-blocks-command]
+  // r[verify hosting.thumbnail.failed-hash-not-retried]
   it("leaves thumbnailHash unchanged on a render failure and never retries that hash", async () => {
     const a = await seed("a1", "<p>v1</p>");
     renderer.failWith = new Error("page crashed");
@@ -258,6 +265,7 @@ describe("ThumbnailService (S35)", () => {
     expect(logs).toHaveLength(1);
   });
 
+  // r[verify hosting.thumbnail.failed-hash-not-retried]
   it("a failed hash does not block a later payload of the same artefact", async () => {
     const a = await seed("a1", "<p>v1</p>");
     renderer.failWith = new Error("page crashed");
@@ -272,6 +280,7 @@ describe("ThumbnailService (S35)", () => {
     expect((await stored("a1")).thumbnailHash).toBe(v2.payloadHash);
   });
 
+  // r[verify hosting.thumbnail.startup-sweep]
   it("start() renders active artefacts that are missing or stale, never archived or fresh ones", async () => {
     await seed("missing", "<p>missing</p>");
     const stale = await seed("stale", "<p>s1</p>");
@@ -287,6 +296,7 @@ describe("ThumbnailService (S35)", () => {
     expect(renderer.calls.sort()).toEqual(["<p>missing</p>", "<p>s2</p>"]);
   });
 
+  // r[verify hosting.thumbnail.startup-sweep]
   it("start() pages through more artefacts than one sweep read returns", async () => {
     service = new ThumbnailService({
       repo,
@@ -303,6 +313,7 @@ describe("ThumbnailService (S35)", () => {
     expect(renderer.calls).toHaveLength(5);
   });
 
+  // r[verify hosting.thumbnail.startup-sweep]
   it("start() terminates when some artefacts can never be rendered", async () => {
     service = new ThumbnailService({
       repo,
@@ -320,6 +331,7 @@ describe("ThumbnailService (S35)", () => {
     expect(renderer.calls).toEqual(["<p>1</p>"]);
   });
 
+  // r[verify hosting.thumbnail.startup-sweep]
   it("start() reads past artefacts that stay stale to reach the rest", async () => {
     service = new ThumbnailService({
       repo,
@@ -345,7 +357,8 @@ describe("ThumbnailService (S35)", () => {
     expect((await stored("a2")).thumbnailHash).toBe("h-<p>fine</p>");
   });
 
-  describe("the render input cap (S37, AH29)", () => {
+  describe("the render input cap (S37)", () => {
+    // r[verify hosting.renderer.input-cap+2]
     it("skips a payload over MAX_RENDER_INPUT_BYTES without reading it or calling the renderer", async () => {
       const a = await seed("big", "<p>big</p>", "h-big", MAX_RENDER_INPUT_BYTES + 1);
       const read = vi.spyOn(payloads, "get");
@@ -358,6 +371,27 @@ describe("ThumbnailService (S35)", () => {
       expect((await stored("big")).thumbnailHash).toBeNull();
     });
 
+    // r[verify hosting.renderer.input-cap+2]
+    it("keeps the previous thumbnail when an edit takes the payload over the cap", async () => {
+      const a = await seed("grown", "<p>small</p>");
+      service.enqueue(thumbnailJobOf(a));
+      await service.idle();
+      expect((await stored("grown")).thumbnailHash).toBe("h-<p>small</p>");
+
+      const current = await stored("grown");
+      const edited = await repo.save(
+        editArtefact(current, { payload: { ref: "ref-h-big", bytes: MAX_RENDER_INPUT_BYTES + 1, hash: "h-big" } }),
+      );
+      payloads.live.set(edited.payloadRef, enc("<p>big</p>"));
+      service.enqueue(thumbnailJobOf(edited));
+      await service.idle();
+
+      expect(renderer.calls).toEqual(["<p>small</p>"]);
+      expect((await stored("grown")).thumbnailHash).toBe("h-<p>small</p>");
+      expect(await thumbs.get("grown", "h-<p>small</p>")).not.toBeNull();
+    });
+
+    // r[verify hosting.renderer.input-cap+2]
     it("renders a payload of exactly MAX_RENDER_INPUT_BYTES", async () => {
       const a = await seed("edge", "<p>edge</p>", "h-edge", MAX_RENDER_INPUT_BYTES);
 
@@ -367,6 +401,7 @@ describe("ThumbnailService (S35)", () => {
       expect((await stored("edge")).thumbnailHash).toBe(a.payloadHash);
     });
 
+    // r[verify hosting.renderer.input-cap+2]
     it("start() reads past an oversized artefact to reach the rest", async () => {
       service = new ThumbnailService({
         repo,
@@ -385,7 +420,8 @@ describe("ThumbnailService (S35)", () => {
     });
   });
 
-  describe("disabled or unavailable renderer (AH25)", () => {
+  describe("disabled or unavailable renderer", () => {
+    // r[verify hosting.thumbnail.off-without-renderer]
     it("with no renderer: start() logs once and nothing is ever rendered", async () => {
       service = make(null);
       const a = await seed("a1", "<p>v1</p>");
@@ -402,9 +438,11 @@ describe("ThumbnailService (S35)", () => {
       vi.useRealTimers();
     });
 
-    // S37 (AH25/AH29) — an unreachable renderer pauses the queue instead of
+    // S37 — an unreachable renderer pauses the queue instead of
     // disabling it for the process: pending is cleared, enqueues are dropped, and
     // after `resumeAfterMs` the sweep picks up whatever is still stale.
+    // r[verify hosting.thumbnail.off-without-renderer]
+    // r[verify hosting.thumbnail.never-blocks-command]
     it("when the renderer is unavailable: logs once, clears pending, and resumes with a sweep", async () => {
       vi.useFakeTimers();
       service = make(renderer, 60_000);

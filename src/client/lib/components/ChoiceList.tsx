@@ -20,6 +20,7 @@ export function ChoiceList<T extends string>({
   onChoose,
   bordered = false,
   className,
+  "aria-label": ariaLabel,
 }: {
   choices: readonly Choice<T>[];
   value: T | undefined;
@@ -27,6 +28,8 @@ export function ChoiceList<T extends string>({
   // The collection editor's roomier variant: each choice in its own box.
   bordered?: boolean;
   className?: string;
+  // The radiogroup's accessible name, when no visible label is tied to it.
+  "aria-label"?: string;
 }) {
   const id = useId();
   const arrowing = useRef(false);
@@ -53,6 +56,7 @@ export function ChoiceList<T extends string>({
       }}
       onKeyDown={onKeyDown}
       onPointerDown={() => (arrowing.current = false)}
+      aria-label={ariaLabel}
       className={cn(bordered ? "gap-1.5" : "gap-0.5", className)}
     >
       {choices.map((c) => {

@@ -18,8 +18,8 @@ export interface PassKeys {
 }
 
 // Attach the request's pass lookup; runs beside the session middleware on the
-// `/api` and `/a` routers. Frames never read cookies (AH28): a frame token
-// carries the version its pass proved instead.
+// `/api` and `/a` routers. Frames never read cookies (`hosting.frame.no-cookies`):
+// a frame token carries the version its pass proved instead.
 export function createAttachLinkPasses(keys: PassKeys) {
   return createMiddleware<AuthEnv>(async (c, next) => {
     c.set("linkPasses", (holderId) => {
@@ -34,8 +34,8 @@ export function linkPassesOf(c: Context<AuthEnv>): PassLookup {
   return c.get("linkPasses") ?? NO_PASSES;
 }
 
-// The API's answer to a `LinkGateChallenge` (AH22): the viewer is admitted but
-// must unlock the link first.
+// The API's answer to a `LinkGateChallenge` (hosting.link-gate.narrows-public-audience): the viewer
+// is admitted but must unlock the link first.
 export function linkGateChallenged(c: Context) {
   return c.json<LinkGateChallengeResponse>({ gate: "password" }, 403);
 }

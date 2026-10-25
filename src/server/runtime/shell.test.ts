@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  FRAME_HOLD_MAX_MS,
   renderHostShell,
   shellFrameJs,
   type HostShellContext,
@@ -27,6 +30,7 @@ const ctx: HostShellContext = {
 };
 
 describe("host shell — sandboxed frame (S36)", () => {
+  // r[verify hosting.frame.sandboxed]
   it("frames the artefact with exactly the sandbox flags, never same-origin", () => {
     const html = renderHostShell(ctx);
     const iframe = html.match(/<iframe[^>]*>/)![0];
@@ -59,21 +63,26 @@ describe("host shell — theme (S45)", () => {
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
   const rule = (selector: string) => head.match(new RegExp(`${esc(selector)}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
 
+  // r[verify platform.theme.shell-markup]
   it("inlines the theme boot script in its head, before the style", () => {
     const at = head.indexOf(THEME_BOOT_JS);
     expect(at).toBeGreaterThan(-1);
     expect(at).toBeLessThan(head.indexOf("<style>"));
   });
 
+  // r[verify platform.theme.shell-markup]
   it("carries no hex or rgb colour literal in its markup and CSS", () => {
     expect(withoutScripts).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
   });
 
-  it("declares the Mint garden tokens in :root and in .dark", () => {
+  it("declares the Ruby tokens in :root and in .dark", () => {
+    expect(SHELL_TOKENS.light.background).toBe("oklch(1 0 0)");
+    expect(SHELL_TOKENS.dark.background).toBe("oklch(0.17 0.004 340)");
     expect(rule(":root")).toContain(`--background: ${SHELL_TOKENS.light.background};`);
     expect(rule(".dark")).toContain(`--background: ${SHELL_TOKENS.dark.background};`);
   });
 
+  // r[verify platform.theme.shell-markup]
   it("strokes the kind icon with var(--kind) and emits the kind colour for both modes", () => {
     const form = KIND_PRESENTATION.form;
     expect(html).toMatch(/<svg[^>]*stroke="var\(--kind\)"/);
@@ -84,6 +93,7 @@ describe("host shell — theme (S45)", () => {
     expect(rule(".dark")).toContain(`--kind-tint: ${form.darkTint};`);
   });
 
+  // r[verify platform.theme.frame-unthemed]
   it("puts nothing theme-related on the frame", () => {
     const iframe = html.match(/<iframe[^>]*>/)![0];
     expect(iframe).not.toMatch(/theme|dark|color-scheme/i);
@@ -133,7 +143,41 @@ function runShell(
 ) {
   const listeners: Record<string, (e?: unknown) => void> = {};
   const contentWindow = { name: "frame" };
-  const frame = { src: "", contentWindow };
+  // The frame's own listeners, and which were attached when its src was first set.
+  const frameListeners: Record<string, Array<() => void>> = {};
+  let listenedAtFirstSrc: string[] | null = null;
+  // Pending timers when its src was first set (meaningful under fake timers).
+  let timersAtFirstSrc: number | null = null;
+  const attrs: Record<string, string> = { "aria-busy": "true" };
+  let src = "";
+  const frame = {
+    contentWindow,
+    get src() { return src; },
+    set src(v: string) {
+      if (listenedAtFirstSrc === null) {
+        listenedAtFirstSrc = Object.keys(frameListeners);
+        timersAtFirstSrc = vi.isFakeTimers() ? vi.getTimerCount() : null;
+      }
+      src = v;
+    },
+    addEventListener: (ev: string, cb: () => void, opts?: { once?: boolean }) => {
+      const list = (frameListeners[ev] ??= []);
+      const wrapped = opts?.once
+        ? () => { list.splice(list.indexOf(wrapped), 1); cb(); }
+        : cb;
+      list.push(wrapped);
+    },
+    getAttribute: (name: string) => attrs[name] ?? null,
+    removeAttribute: (name: string) => { delete attrs[name]; },
+  };
+  const rootClasses = new Set(["ae-hold"]);
+  const documentElement = {
+    classList: {
+      add: (c: string) => rootClasses.add(c),
+      remove: (c: string) => rootClasses.delete(c),
+      contains: (c: string) => rootClasses.has(c),
+    },
+  };
   const conflict = { hidden: true };
   const reloadListeners: Record<string, () => void> = {};
   const reload = { addEventListener: (ev: string, cb: () => void) => (reloadListeners[ev] = cb) };
@@ -145,7 +189,7 @@ function runShell(
   const window = {
     addEventListener: (ev: string, cb: (e?: unknown) => void) => (listeners[ev] = cb),
   };
-  const document = { getElementById: (id: string) => elements[id] ?? null };
+  const document = { documentElement, getElementById: (id: string) => elements[id] ?? null };
   let n = 0;
   const fetch = vi.fn((url: string, init: RequestInit) => Promise.resolve(respond(url, init, ++n)));
   const api = new Function(
@@ -164,18 +208,26 @@ function runShell(
   return {
     api, fetch, frame, conflict, listeners, contentWindow, fromFrame, changed, puts, mints,
     clickReload: () => reloadListeners["click"]!(),
+    frameLoaded: () => [...(frameListeners["load"] ?? [])].forEach((cb) => cb()),
+    held: () => rootClasses.has("ae-hold"),
+    busy: () => attrs["aria-busy"] === "true",
+    listenedAtFirstSrc: () => listenedAtFirstSrc,
+    timersAtFirstSrc: () => timersAtFirstSrc,
+    raiseHold: () => { rootClasses.add("ae-hold"); attrs["aria-busy"] = "true"; },
   };
 }
 
 const headersOf = (init: RequestInit) => (init.headers ?? {}) as Record<string, string>;
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-describe("host shell — persistence through the shell (S36, AD10)", () => {
+describe("host shell — persistence through the shell (S36)", () => {
   it("loads the frame URL it was rendered with", () => {
     expect(runShell(frameCfg).frame.src).toBe(frameCfg.frameUrl);
     expect(runShell({ ...frameCfg, viewerId: null }).frame.src).toBe(frameCfg.frameUrl);
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.saves-only-own-frame]
   it("ignores a data-changed message that doesn't come from its frame's window", async () => {
     const s = runShell(frameCfg);
     s.listeners["message"]!({
@@ -194,6 +246,9 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shim.writes-through-shell]
+  // r[verify data.shell.writes-pinned]
   it("from its frame in the viewer's own context: one PUT to the fixed endpoint, pinned with If-Match", async () => {
     const s = runShell(frameCfg);
     s.changed({ a: "1" });
@@ -206,6 +261,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(headersOf(init)["If-Match"]).toBe('"2026-09-12T09:00:00.000Z"');
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.writes-pinned]
   it("with no seeded entry, pins the write to 'none exists' (If-None-Match: *)", async () => {
     const s = runShell({ ...frameCfg, seedUpdatedAt: null });
     s.changed({ a: "1" });
@@ -218,6 +275,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
   // S36 — `event.source` names the browsing context, not the document: the
   // sandboxed frame may navigate itself, and what it navigates to keeps the same
   // window. Only the document the shell's own frame URL loaded knows the channel.
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.channel-binds-document]
   it("ignores a change that carries no channel, or another document's", async () => {
     const s = runShell(frameCfg);
     s.fromFrame({ type: "artefactor:data-changed", blob: '{"a":"1"}' });
@@ -227,6 +286,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.channel-binds-document]
   it("after a re-mint, the previous document's channel no longer saves", async () => {
     const s = runShell(frameCfg, (url) =>
       url === frameCfg.mintEndpoint
@@ -247,6 +308,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.puts()).toHaveLength(1);
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.saves-only-own-frame]
   it("a message never chooses the URL: extra fields are ignored", async () => {
     const s = runShell(frameCfg);
     s.fromFrame({
@@ -260,6 +323,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.fetch.mock.calls.map(([url]) => url)).toEqual([frameCfg.dataEndpoint]);
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
   it("ignores a data-changed message whose blob isn't a string", async () => {
     const s = runShell(frameCfg);
     s.fromFrame({ type: "artefactor:data-changed", blob: { a: 1 } });
@@ -267,6 +331,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.writes-pinned]
   it("pins the next write to the updatedAt its own save returned", async () => {
     const s = runShell(frameCfg, () => saved("2026-09-12T10:05:00.000Z"));
     s.changed({ a: "1" });
@@ -277,6 +343,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T10:05:00.000Z"');
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.writes-pinned]
   it("never overlaps saves: changes during a save go after it, with the new pin, carrying only the latest blob", async () => {
     let release!: (r: FakeResponse) => void;
     const s = runShell(frameCfg, (_u, _i, n) =>
@@ -312,6 +380,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T09:00:00.000Z"');
   });
 
+  // r[verify data.shim.writes-through-shell]
   it("on its own pagehide, flushes an unsent change with keepalive", async () => {
     let release!: (r: FakeResponse) => void;
     const s = runShell(frameCfg, (_u, _i, n) =>
@@ -326,6 +395,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     release(saved("2026-09-12T10:08:00.000Z"));
   });
 
+  // r[verify data.shell.writes-pinned]
   it("a pagehide with nothing unsent sends nothing", async () => {
     const s = runShell(frameCfg);
     s.listeners["pagehide"]!();
@@ -333,6 +403,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.fetch).not.toHaveBeenCalled();
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.writes-pinned]
   it("412 → shows the conflict banner and sends no further PUTs; Reload re-mints and re-seeds", async () => {
     const s = runShell(frameCfg, (url, _i, n) =>
       url === frameCfg.mintEndpoint
@@ -365,6 +437,8 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(headersOf(s.puts()[1]![1])["If-Match"]).toBe('"2026-09-12T11:00:00.000Z"');
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
+  // r[verify data.shell.saves-only-own-frame]
   it("selecting another author mints for that author, and then ignores the frame's changes", async () => {
     const s = runShell(frameCfg, (url) =>
       url === frameCfg.mintEndpoint ? minted("/a/slug1/frame?t=author", null) : saved("x"),
@@ -380,6 +454,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.puts()).toHaveLength(0);
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
   it("switching back to the viewer's own data re-seeds the pin and saves again", async () => {
     const s = runShell(frameCfg, (url, init) =>
       url === frameCfg.mintEndpoint
@@ -432,6 +507,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.puts()[0]![1].keepalive).toBe(false);
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
   it("frame-token-expired from its frame → one mint for the current context, and the frame reloads with it", async () => {
     const s = runShell(frameCfg, () => minted("/a/slug1/frame?t=fresh", "2026-09-12T09:00:00.000Z"));
     s.fromFrame({ type: "artefactor:frame-token-expired" });
@@ -442,6 +518,7 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.frame.src).toBe("/a/slug1/frame?t=fresh");
   });
 
+  // r[verify hosting.frame.shell-saves-for-frame]
   it("ignores frame-token-expired from any other source", async () => {
     const s = runShell(frameCfg, () => minted("/a/slug1/frame?t=fresh", null));
     s.listeners["message"]!({ source: {}, origin: "null", data: { type: "artefactor:frame-token-expired" } });
@@ -450,7 +527,292 @@ describe("host shell — persistence through the shell (S36, AD10)", () => {
     expect(s.frame.src).toBe(frameCfg.frameUrl);
   });
 
+  // r[verify data.shell.saves-only-own-frame]
   it("the shell never posts anything to the frame", () => {
     expect(shellFrameJs(frameCfg)).not.toContain("postMessage");
+  });
+});
+
+// Runs `fn` under fake timers, so the frame controller's cap is driven by hand.
+function withFakeTimers<T>(fn: () => T): T {
+  vi.useFakeTimers();
+  try {
+    return fn();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+// S66 — Artefact opens without flicker: the shell holds until the frame has loaded.
+describe("host shell — hold until the frame has loaded (S66)", () => {
+  const variants: Array<[string, HostShellContext]> = [
+    ["signed-in /a/:slug", ctx],
+    ["anonymous /a/:slug", { ...ctx, viewerId: null }],
+    [
+      "owner preview (raw)",
+      { ...ctx, frameUrl: "/api/artefacts/a1/raw/frame?t=tok0", mintEndpoint: "/api/artefacts/a1/frame-token" },
+    ],
+  ];
+
+  // r[verify hosting.shell.hold-until-frame]
+  it.each(variants)("renders held: html carries ae-hold, the frame is aria-busy (%s)", (_, c) => {
+    const html = renderHostShell(c);
+    const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
+    expect(html).toMatch(/<html[^>]*class="ae-hold"/);
+    expect(style).toMatch(/html\.ae-hold body > \*\s*\{\s*visibility: hidden;\s*\}/);
+    // The canvas keeps painting the chrome's theme: the body background is outside the hold.
+    expect(style).toMatch(/\n\s*body \{[^}]*background: var\(--background\)/);
+    expect(style).not.toMatch(/html\.ae-hold[^{]*\{[^}]*background/);
+    expect(style).not.toMatch(/transition/);
+    const iframe = html.match(/<iframe[^>]*>/)![0];
+    expect(iframe).toContain('aria-busy="true"');
+    expect(iframe).not.toMatch(/\sstyle=|\ssrc=/);
+  });
+
+  // r[verify hosting.shell.hold-until-frame]
+  it("wires the load listener and the cap before it assigns the frame URL", () =>
+    withFakeTimers(() => {
+      const s = runShell(frameCfg);
+      expect(s.frame.src).toBe(frameCfg.frameUrl);
+      expect(s.listenedAtFirstSrc()).toEqual(["load"]);
+      expect(s.timersAtFirstSrc()).toBe(1);
+      expect(vi.getTimerCount()).toBe(1);
+    }));
+
+  // r[verify hosting.shell.hold-until-frame]
+  it("the frame's load releases the hold", () =>
+    withFakeTimers(() => {
+      const s = runShell(frameCfg);
+      expect(s.held()).toBe(true);
+      expect(s.busy()).toBe(true);
+      s.frameLoaded();
+      expect(s.held()).toBe(false);
+      expect(s.busy()).toBe(false);
+    }));
+
+  // r[verify hosting.shell.hold-until-frame]
+  it("with no load, the cap releases the hold at FRAME_HOLD_MAX_MS, not before", () =>
+    withFakeTimers(() => {
+      expect(FRAME_HOLD_MAX_MS).toBe(3000);
+      const s = runShell(frameCfg);
+      vi.advanceTimersByTime(FRAME_HOLD_MAX_MS - 1);
+      expect(s.held()).toBe(true);
+      expect(s.busy()).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(s.held()).toBe(false);
+      expect(s.busy()).toBe(false);
+    }));
+
+  // r[verify hosting.shell.hold-until-frame]
+  it("an anonymous viewer gets the same release", () =>
+    withFakeTimers(() => {
+      const s = runShell({ ...frameCfg, viewerId: null, channel: null });
+      expect(s.listenedAtFirstSrc()).toEqual(["load"]);
+      expect(s.timersAtFirstSrc()).toBe(1);
+      expect(vi.getTimerCount()).toBe(1);
+      s.frameLoaded();
+      expect(s.held()).toBe(false);
+      expect(s.busy()).toBe(false);
+    }));
+
+  // r[verify hosting.shell.hold-until-frame]
+  it("is never raised again: an author switch, a second load and the late cap are no-ops", async () => {
+    vi.useFakeTimers();
+    try {
+      const s = runShell(frameCfg, () => minted("/a/slug1/frame?t=author", null));
+      s.frameLoaded();
+      s.api.select("u2");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.frame.src).toBe("/a/slug1/frame?t=author");
+      expect(s.held()).toBe(false);
+      // Raised by hand, so a second release would show: nothing releases it again.
+      s.raiseHold();
+      s.frameLoaded();
+      vi.advanceTimersByTime(FRAME_HOLD_MAX_MS);
+      expect(s.held()).toBe(true);
+      expect(s.busy()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Evaluates the shell's inline boot script against a stub DOM, where every element
+// is a plain object, and answers the viewers endpoint with `viewers` and the authors
+// endpoint with `authors`.
+function runBoot(
+  viewers: () => Promise<FakeResponse>,
+  { authors = [], usesStorage = true }: { authors?: Array<{ authorId: string }>; usesStorage?: boolean } = {},
+) {
+  const html = renderHostShell({ ...ctx, usesStorage });
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
+  const boot = scripts[scripts.length - 1]!;
+  const el = () => {
+    const classes = new Set<string>();
+    return {
+      hidden: false,
+      textContent: "",
+      value: "",
+      src: "",
+      classList: {
+        add: (c: string) => classes.add(c),
+        remove: (c: string) => classes.delete(c),
+        toggle: (c: string, on?: boolean) => ((on ?? !classes.has(c)) ? classes.add(c) : classes.delete(c)),
+        contains: (c: string) => classes.has(c),
+      },
+      addEventListener: () => {},
+      appendChild: () => {},
+      contains: () => false,
+      setAttribute: () => {},
+      removeAttribute: () => {},
+    };
+  };
+  const elements = new Map<string, ReturnType<typeof el>>();
+  const document = {
+    documentElement: el(),
+    getElementById: (id: string) => {
+      if (!elements.has(id)) elements.set(id, el());
+      return elements.get(id)!;
+    },
+    createElement: () => el(),
+    addEventListener: () => {},
+  };
+  const window = { addEventListener: () => {} };
+  const fetch = vi.fn((url: string) =>
+    url === ctx.viewersEndpoint
+      ? viewers()
+      : Promise.resolve({ status: 200, ok: true, json: async () => ({ authors }) }),
+  );
+  new Function("window", "document", "fetch", "TextEncoder", boot)(window, document, fetch, TextEncoder);
+  return {
+    count: document.getElementById("ae-viewers-count"),
+    picker: document.getElementById("ae-switch"),
+    fetched: (url: string) => fetch.mock.calls.some(([u]) => u === url),
+  };
+}
+
+const noViewers = async () => ({ status: 200, ok: true, json: async () => ({ viewers: [] }) });
+const author = (id: string) => ({ authorId: id, name: id, email: null, updatedAt: "2026-09-12T10:00:00.000Z" });
+
+describe("host shell — data-context picker (S20)", () => {
+  // r[verify data.switcher.needs-another-author]
+  it("stays hidden when only the viewer holds data", async () => {
+    const { picker } = runBoot(noViewers, { authors: [author(ctx.viewerId!)] });
+    await settle();
+    await settle();
+    expect(picker.classList.contains("show")).toBe(false);
+  });
+
+  // r[verify data.switcher.needs-another-author]
+  it("appears once another author holds data", async () => {
+    const { picker } = runBoot(noViewers, { authors: [author(ctx.viewerId!), author("u2")] });
+    await settle();
+    await settle();
+    expect(picker.classList.contains("show")).toBe(true);
+  });
+
+  // r[verify data.switcher.needs-another-author]
+  it("is omitted for an artefact that doesn't use storage: no authors fetch", async () => {
+    const { picker, fetched } = runBoot(noViewers, { authors: [author("u2")], usesStorage: false });
+    await settle();
+    await settle();
+    expect(fetched(ctx.authorsEndpoint)).toBe(false);
+    expect(picker.classList.contains("show")).toBe(false);
+  });
+});
+
+const viewer = (id: string) => ({ viewerId: id, name: id, email: null, viewedAt: "2026-09-12T10:00:00.000Z" });
+
+describe("host shell — Viewers count (S66)", () => {
+  const html = renderHostShell(ctx);
+  const style = html.slice(html.indexOf("<style>"), html.indexOf("</style>"));
+
+  // r[verify hosting.shell.viewers-count-reserved]
+  it("renders the count reserving its slot invisibly, never as an empty pill", () => {
+    const tag = html.match(/<span[^>]*id="ae-viewers-count"[^>]*>/)![0];
+    expect(tag).not.toMatch(/\shidden/);
+    expect(style).toMatch(/\.ae-viewers-count \{[^}]*visibility: hidden;/);
+    // Revealed by inheriting: a descendant's `visibility: visible` would show through the hold.
+    expect(style).toMatch(/\.ae-viewers-count\.show \{\s*visibility: inherit;\s*\}/);
+    expect(style).not.toMatch(/visibility: visible/);
+    expect(style).toMatch(/\.ae-viewers-count\[hidden\] \{\s*display: none;\s*\}/);
+  });
+
+  // r[verify hosting.shell.viewers-count-reserved]
+  it("the viewers fetch fills the count and reveals it", async () => {
+    const { count } = runBoot(async () => ({
+      status: 200,
+      ok: true,
+      json: async () => ({ viewers: [viewer("a"), viewer("b")] }),
+    }));
+    await settle();
+    await settle();
+    expect(count.textContent).toBe("2");
+    expect(count.classList.contains("show")).toBe(true);
+    expect(count.hidden).toBe(false);
+  });
+
+  // r[verify hosting.shell.viewers-count-reserved]
+  it.each([
+    ["zero viewers", async () => ({ status: 200, ok: true, json: async () => ({ viewers: [] }) })],
+    ["a non-OK response", async () => ({ status: 500, ok: false, json: async () => ({}) })],
+    ["a failed fetch", () => Promise.reject(new Error("offline"))],
+  ] as Array<[string, () => Promise<FakeResponse>]>)("%s collapses the count", async (_, respond) => {
+    const { count } = runBoot(respond);
+    await settle();
+    await settle();
+    expect(count.hidden).toBe(true);
+    expect(count.classList.contains("show")).toBe(false);
+  });
+
+  // r[verify hosting.shell.viewers-count-reserved]
+  it("a render that fails after revealing the count collapses it again", async () => {
+    // A viewer with nothing to name them by throws mid-render, after the reveal;
+    // the catch then renders no viewers over it.
+    const { count } = runBoot(async () => ({ status: 200, ok: true, json: async () => ({ viewers: [{}] }) }));
+    await settle();
+    await settle();
+    expect(count.hidden).toBe(true);
+    expect(count.classList.contains("show")).toBe(false);
+  });
+});
+
+// S72 — Host shell chrome loads nothing from another origin.
+describe("host shell — no third-party chrome (S72)", () => {
+  const variants: Array<[string, HostShellContext]> = [
+    ["signed-in", ctx],
+    ["anonymous", { ...ctx, viewerId: null }],
+    ["content origin", { ...ctx, frameUrl: "https://content.example/a/slug1/frame?t=tok0" }],
+  ];
+  // An absolute http(s) URL or a protocol-relative one.
+  const external = String.raw`(?:https?:)?//`;
+
+  // r[verify hosting.shell.no-third-party-chrome]
+  it.each(variants)("references no stylesheet, font, script or image on another origin (%s)", (_, c) => {
+    const html = renderHostShell(c);
+    expect(html).not.toMatch(new RegExp(`<link\\b[^>]*\\bhref=["']?${external}`, "i"));
+    // Any element's resource attribute: script, img, source, video, object, svg image.
+    expect(html).not.toMatch(new RegExp(`<[a-z][^>]*\\s(?:src|srcset|poster|data|xlink:href)=["']?${external}`, "i"));
+    expect(html).not.toMatch(new RegExp(`<image\\b[^>]*\\bhref=["']?${external}`, "i"));
+    // Every stylesheet and inline style attribute.
+    expect(html).not.toMatch(new RegExp(`url\\(\\s*["']?${external}`, "i"));
+    expect(html).not.toMatch(/@import/i);
+    // The frame URL is the only absolute URL anywhere in the page, scripts included.
+    const absolute = html.match(/(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}[^"'\s<>)]*/gi) ?? [];
+    expect(absolute.filter((u) => u !== c.frameUrl)).toEqual([]);
+    expect(html).not.toContain("fonts.googleapis.com");
+    expect(html).not.toContain("fonts.gstatic.com");
+  });
+
+  // r[verify hosting.shell.no-third-party-chrome]
+  it("sets its text in the app's sans stack (Tailwind's default unless app.css sets its own)", () => {
+    const fontSansOf = (file: string) => /--font-sans:\s*([^;]+);/.exec(readFileSync(resolve(file), "utf8"))?.[1];
+    const normalise = (stack: string) =>
+      stack.replace(/\s+/g, " ").replace(/\s*,\s*/g, ", ").replace(/"/g, "'").trim();
+    const fontSans = fontSansOf("src/client/app.css") ?? fontSansOf("node_modules/tailwindcss/theme.css");
+    expect(fontSans).toBeDefined();
+    const style = /<style>([\s\S]*?)<\/style>/.exec(renderHostShell(ctx))?.[1] ?? "";
+    const bodyFont = /\bbody \{[^}]*\bfont: 14px\/1\.4 ([^;]+);/.exec(style)?.[1];
+    expect(normalise(bodyFont ?? "")).toBe(normalise(fontSans ?? ""));
   });
 });

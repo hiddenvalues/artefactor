@@ -13,23 +13,28 @@ import type { ArtefactViewersResponse } from "../../shared/contracts";
 
 export interface ViewRoutesDeps {
   artefactRepo: ArtefactRepository;
-  // AH20 — the access decision needs the effective tier (collection tree root).
+  // hosting.access.effective-from-tree-root — the access decision needs the effective tier
+  // (collection tree root).
   collectionRepo: CollectionRepository;
   viewRepo: ViewRepository;
   userDirectory: UserDirectory;
-  // S22 (AH17) — resolves the request's tenant scope for the id-fallback resolve.
+  // S22 (hosting.tenant.invisible-to-oss) — resolves the request's tenant scope for the id-fallback
+  // resolve.
   resolveScope: TenantScopeResolver;
-  // S22 (AH18) — decides the `authenticated` tier for the slug-resolved artefact.
+  // S22 (hosting.access.policy-decided) — decides the `authenticated` tier for the slug-resolved
+  // artefact.
   accessPolicy?: AccessPolicy;
 }
 
 // S21 — Artefact Views. Mounted at `/api/artefacts/:ref/viewers`, where `:ref`
 // is the artefact's slug or its id. Unlike the data-context reads (which are
-// access-matrix gated but not auth-gated, AD4), the "viewed by" list is
+// access-matrix gated but not auth-gated, data.read.follows-artefact-access), the "viewed by" list is
 // **signed-in only**: it is surfaced solely in the signed-in host chrome and
-// lists *people* who viewed, so anonymous callers have no place here (VT4).
+// lists *people* who viewed, so anonymous callers have no place here
+// (views.viewers.follows-artefact-access).
 // There is deliberately no record endpoint — a view is recorded server-side as
-// a side effect of serving the host shell (VT3), so it can't be spoofed.
+// a side effect of serving the host shell (views.record.on-shell-serve,
+// views.record.on-owner-preview), so it can't be spoofed.
 export function createViewRoutes(deps: ViewRoutesDeps) {
   const r = new Hono<AuthEnv>();
 
@@ -39,8 +44,10 @@ export function createViewRoutes(deps: ViewRoutesDeps) {
     c.req.param("ref") ?? "";
 
   // The other viewers who have opened this artefact, enriched with name/email
-  // for the widget label. Excludes the caller (VT4). Gated by the access matrix
-  // inside the command (missing / archived / not-viewable → 404).
+  // for the widget label. Excludes the caller (views.viewers.excludes-caller).
+  // Gated by the access matrix inside the command (missing / archived /
+  // not-viewable → 404).
+  // r[impl views.viewers-endpoint.identity-enriched]
   r.get("/", requireAuth, async (c) => {
     try {
       const refs = await listArtefactViewers(

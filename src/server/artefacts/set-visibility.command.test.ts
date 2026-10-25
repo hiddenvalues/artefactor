@@ -3,7 +3,7 @@ import { setArtefactVisibilityCommand } from "./set-visibility.command";
 import { createArtefact } from "../../domain/artefact/artefact";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { SINGLETON_SCOPE as SCOPE } from "../../domain/artefact/tenant-scope";
-import { ArtefactNotFound } from "../../domain/artefact/errors";
+import { ArtefactNotFound, InvariantViolation } from "../../domain/artefact/errors";
 
 const OWNER = "owner-1";
 
@@ -26,7 +26,9 @@ describe("setArtefactVisibilityCommand (S5)", () => {
     await seed(repo);
   });
 
-  it("mints a unique slug on first share and raises visibility (AH4)", async () => {
+  // r[verify hosting.slug.shared-has-slug]
+  // r[verify hosting.share.sets-tier]
+  it("mints a unique slug on first share and raises visibility", async () => {
     const a = await setArtefactVisibilityCommand(
       { artefactId: "a1", requesterId: OWNER, visibility: "public", scope: SCOPE },
       { repo, generateSlug: () => "slug-1" },
@@ -36,7 +38,30 @@ describe("setArtefactVisibilityCommand (S5)", () => {
     expect((await repo.findBySlug("slug-1"))?.id).toBe("a1");
   });
 
-  it("reuses the retained slug across unshare → re-share (AH5)", async () => {
+  // r[verify hosting.artefact.updated-at-bumped+2]
+  it.each([
+    ["the current tier", "authenticated", "authenticated"],
+    ["private on a private artefact", "private", "private"],
+  ] as const)("setting %s saves nothing and answers the artefact", async (_, from, to) => {
+    if (from !== "private") {
+      await setArtefactVisibilityCommand(
+        { artefactId: "a1", requesterId: OWNER, visibility: from, scope: SCOPE },
+        { repo, generateSlug: () => "slug-1" },
+      );
+    }
+    const before = (await repo.findById("a1", SCOPE))!;
+    const a = await setArtefactVisibilityCommand(
+      { artefactId: "a1", requesterId: OWNER, visibility: to, scope: SCOPE },
+      { repo, now: () => new Date("2030-01-01T00:00:00Z") },
+    );
+    expect(a).toEqual(before);
+    const after = (await repo.findById("a1", SCOPE))!;
+    expect(after.revision).toBe(before.revision);
+    expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+
+  // r[verify hosting.slug.minted-once-retained]
+  it("reuses the retained slug across unshare → re-share", async () => {
     await setArtefactVisibilityCommand(
       { artefactId: "a1", requesterId: OWNER, visibility: "public", scope: SCOPE },
       { repo, generateSlug: () => "slug-1" },
@@ -57,7 +82,8 @@ describe("setArtefactVisibilityCommand (S5)", () => {
     expect(reshared.visibility).toBe("authenticated");
   });
 
-  it("regenerates on slug collision until unique (AH6)", async () => {
+  // r[verify hosting.slug.globally-unique]
+  it("regenerates on slug collision until unique", async () => {
     // Pre-occupy the first generated slug with another artefact.
     await repo.save({
       ...createArtefact({
@@ -79,7 +105,9 @@ describe("setArtefactVisibilityCommand (S5)", () => {
     expect(a.publicSlug).toBe("free");
   });
 
-  it("treats a non-owner request as not-found (AH8/AH9)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.authority.owner-only]
+  it("treats a non-owner request as not-found", async () => {
     await expect(
       setArtefactVisibilityCommand(
         { artefactId: "a1", requesterId: "intruder", visibility: "public", scope: SCOPE },
@@ -95,5 +123,20 @@ describe("setArtefactVisibilityCommand (S5)", () => {
         { repo },
       ),
     ).rejects.toBeInstanceOf(ArtefactNotFound);
+  });
+
+  // r[verify hosting.access.dormant-tier-frozen]
+  it("refuses to change a contained artefact's dormant tier, leaving it as it was", async () => {
+    const before = (await repo.findById("a1", SCOPE))!;
+    await repo.save({ ...before, collectionId: "c1" });
+    await expect(
+      setArtefactVisibilityCommand(
+        { artefactId: "a1", requesterId: OWNER, visibility: "public", scope: SCOPE },
+        { repo, generateSlug: () => "slug-1" },
+      ),
+    ).rejects.toBeInstanceOf(InvariantViolation);
+    const after = (await repo.findById("a1", SCOPE))!;
+    expect(after.visibility).toBe("private");
+    expect(after.publicSlug).toBeNull();
   });
 });

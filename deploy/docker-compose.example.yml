@@ -1,4 +1,4 @@
-# Artefactor — the app and its isolated thumbnail renderer (S37, AH29).
+# Artefactor — the app and its isolated thumbnail renderer (S37).
 #
 # Both services run the SAME image in different roles (ARTEFACTOR_ROLE). The app
 # holds the data and the secrets; the renderer holds nothing and runs untrusted
@@ -26,27 +26,33 @@ services:
     restart: always
     # Loopback only: put a reverse proxy (TLS) on the host in front of it, and
     # never publish 3000 on a public interface. The app reads X-Forwarded-For
-    # only from a trusted proxy (IA8): by default loopback and private ranges,
+    # only from a trusted proxy (S42): by default loopback and private ranges,
     # which covers a proxy on this host or on this project's network. A proxy
     # elsewhere needs ARTEFACTOR_TRUSTED_PROXIES (docs/deployment.md §5). A proxy
     # running in Compose instead joins this project's network and needs no port here.
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      # The isolated renderer. Unset this and thumbnails are simply off (AH25).
+      # The isolated renderer. Unset this and thumbnails are simply off
+      # (`hosting.thumbnail.off-without-renderer`).
       ARTEFACTOR_RENDERER_URL: http://renderer:3001
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set it, e.g. openssl rand -hex 32}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?the public https URL}
-      # Sign-in methods (S38 / IA7): production needs at least one, so set the
+      # Sign-in methods (S38): production needs at least one, so set the
       # Google pair *or* AUTH_EMAIL_PASSWORD=true — the server refuses to boot
       # with neither. Empty means "unset", i.e. take the default.
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       AUTH_EMAIL_PASSWORD: ${AUTH_EMAIL_PASSWORD:-}
-      # Account creation (IA 4). Default: closed when production has the
+      # Account creation (S38). Default: closed when production has the
       # unverified email+password path open, otherwise open.
       AUTH_ALLOW_SIGNUP: ${AUTH_ALLOW_SIGNUP:-}
       AUTH_ALLOWED_EMAIL_DOMAINS: ${AUTH_ALLOWED_EMAIL_DOMAINS:?your org domain(s)}
+      # The terms and privacy notice the sign-in screen links to (S67), e.g.
+      # /terms and /privacy, pages your proxy serves (Artefactor serves none).
+      # Unset: no notice.
+      LEGAL_TERMS_URL: ${LEGAL_TERMS_URL:-}
+      LEGAL_PRIVACY_URL: ${LEGAL_PRIVACY_URL:-}
     volumes:
       # The SQLite DB, the artefact payloads and their thumbnails.
       - artefactor-data:/data
@@ -101,6 +107,7 @@ networks:
     internal: true
     driver_opts:
       com.docker.network.bridge.name: br-art-link
+      # r[impl hosting.renderer.no-app-connection]
       com.docker.network.bridge.enable_icc: "false"
   # The renderer's way out: the public internet only (CDN CSS, fonts, images), with
   # every private and link-local range dropped by deploy/renderer-egress.sh. The

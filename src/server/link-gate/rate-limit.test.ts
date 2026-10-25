@@ -6,12 +6,15 @@ import { UNLOCK_WINDOW_MS, UnlockRateLimiter } from "./rate-limit";
 describe("UnlockRateLimiter (S32a)", () => {
   const T0 = 1_000_000;
 
+  // r[verify hosting.link-gate.unlock-attempts-limited+2]
   it("allows 10 attempts and refuses the 11th within the window", () => {
     const limiter = new UnlockRateLimiter();
     for (let i = 0; i < 10; i++) expect(limiter.attempt("a1", "1.2.3.4", T0 + i)).toBe(true);
     expect(limiter.attempt("a1", "1.2.3.4", T0 + 10)).toBe(false);
   });
 
+  // r[verify hosting.link-gate.unlock-attempts-limited+2]
+  // r[verify hosting.link-gate.unlock-limit-per-holder]
   it("counts each holder and each client separately", () => {
     const limiter = new UnlockRateLimiter();
     for (let i = 0; i < 10; i++) limiter.attempt("a1", "1.2.3.4", T0);
@@ -19,6 +22,7 @@ describe("UnlockRateLimiter (S32a)", () => {
     expect(limiter.attempt("a1", "5.6.7.8", T0)).toBe(true);
   });
 
+  // r[verify hosting.link-gate.unlock-attempts-limited+2]
   it("opens again once the window has passed", () => {
     const limiter = new UnlockRateLimiter();
     for (let i = 0; i < 11; i++) limiter.attempt("a1", "ip", T0);
@@ -28,6 +32,14 @@ describe("UnlockRateLimiter (S32a)", () => {
 });
 
 describe("UnlockRateLimiter bounds (S32a)", () => {
+  // r[verify hosting.link-gate.unlock-attempts-limited+2]
+  it("holds at most 50,000 keys by default", () => {
+    const limiter = new UnlockRateLimiter();
+    for (let i = 0; i <= 50_000; i++) limiter.attempt("h", `ip-${i}`, 1);
+    expect(limiter.size).toBe(50_000);
+  });
+
+  // r[verify hosting.link-gate.unlock-attempts-limited+2]
   it("never holds more than its key cap, evicting the oldest keys", () => {
     const limiter = new UnlockRateLimiter({ maxKeys: 3 });
     for (const ip of ["a", "b", "c", "d", "e"]) limiter.attempt("h", ip, 1);

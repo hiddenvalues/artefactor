@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ArrowUpDown, ChevronDown, FilePlus, Filter, Folder, LayoutGrid, List, Plus } from "lucide-react";
+import { ArrowUpDown, ChevronDown, FilePlus, Filter, Folder, FunnelX, LayoutGrid, List, Plus, Shapes, type LucideIcon } from "lucide-react";
 import type { ArtefactSummary, CollectionSummary, SharedArtefactSummary } from "../../../shared/contracts";
 import { Badge } from "$lib/components/ui/badge";
 import { Button } from "$lib/components/ui/button";
@@ -22,10 +22,11 @@ import {
   type KindFilter,
   type Sort,
 } from "../browse";
-import { count, VIS } from "../format";
+import { count, KINDS, VIS } from "../format";
+import { HOME_SCOPE_LABELS, HOME_SCOPES, HOME_SORT_LABELS, HOME_SORTS, type HomeScope, type HomeSort } from "../home";
 import { hueVars } from "../style";
-import { ArtefactCard, ArtefactRow, type OwnedItemProps } from "./ArtefactCard";
-import { GalleryCard, GalleryRow, type GalleryItemProps } from "./GalleryCard";
+import { ArtefactCard, type OwnedItemProps, type SharedItemProps } from "./ArtefactCard";
+import { ArtefactRow } from "./ArtefactRow";
 
 export function SectionLabel({ children }: { children: ReactNode }) {
   return <div className="mb-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{children}</div>;
@@ -117,19 +118,7 @@ export function ViewControls({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      <Tabs value={density} onValueChange={(v) => onDensity(v as Density)}>
-        <TabsList>
-          {DENSITIES.map((d) => {
-            const Icon = d === "grid" ? LayoutGrid : List;
-            const label = d === "grid" ? "Grid" : "List";
-            return (
-              <TabsTrigger key={d} value={d} title={label} aria-label={label} className="px-2">
-                <Icon />
-              </TabsTrigger>
-            );
-          })}
-        </TabsList>
-      </Tabs>
+      <DensityToggle density={density} onDensity={onDensity} />
     </>
   );
 }
@@ -174,11 +163,14 @@ export function EmptyState({
   title,
   sub,
   onUpload,
+  onClear,
 }: {
   title: string;
   sub: string;
   // The "Upload your first artefact" call to action, when there is one.
   onUpload?: () => void;
+  // S47 — "Clear filters", when the filters are what emptied the list.
+  onClear?: () => void;
 }) {
   return (
     <div className="flex flex-col items-center gap-1.5 rounded-2xl border-[1.5px] border-dashed px-6 py-16 text-center">
@@ -193,7 +185,164 @@ export function EmptyState({
           Upload your first artefact
         </Button>
       )}
+      {onClear && (
+        <Button variant="outline" className="mt-3.5" onClick={onClear}>
+          <FunnelX />
+          Clear filters
+        </Button>
+      )}
     </div>
+  );
+}
+
+// S47 — one filter dropdown (Type or Access) over chips with counts.
+function FilterDropdown<K extends string>({
+  label,
+  chips,
+  value,
+  onChange,
+  iconOf,
+}: {
+  label: string;
+  chips: Chip<K>[];
+  value: K;
+  onChange: (v: K) => void;
+  iconOf: (key: K) => LucideIcon;
+}) {
+  const current = chips.find((c) => c.key === value);
+  const Icon = iconOf(value);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" aria-label={`${label}: ${current?.label ?? value}`}>
+          <Icon />
+          {current?.label ?? chips[0]?.label}
+          <ChevronDown className="text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-52">
+        <DropdownMenuRadioGroup value={value} onValueChange={(v) => onChange(v as K)}>
+          {chips.map((chip) => {
+            const ChipIcon = iconOf(chip.key);
+            return (
+              <DropdownMenuRadioItem key={chip.key} value={chip.key}>
+                <ChipIcon />
+                <span className="flex-1">{chip.label}</span>
+                <Badge variant="secondary">{chip.count}</Badge>
+              </DropdownMenuRadioItem>
+            );
+          })}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// S47 — Home's filter and sort bar: the All / My artefacts / Shared with me
+// switch with counts, Type and Access on the left; Sort and the card/list toggle
+// on the right. It wraps by its container's width, never the viewport's: one
+// line when wide; the switch on its own line when narrower; and at the
+// narrowest Type + Access on one line, Sort + the toggle on the next.
+export function HomeControls({
+  scope,
+  counts,
+  onScope,
+  kind,
+  onKind,
+  access,
+  onAccess,
+  sort,
+  onSort,
+  density,
+  onDensity,
+}: {
+  scope: HomeScope;
+  counts: Record<HomeScope, number>;
+  onScope: (s: HomeScope) => void;
+  kind: { chips: Chip<KindFilter>[]; value: KindFilter };
+  onKind: (k: KindFilter) => void;
+  access: { chips: Chip<AccessFilter>[]; value: AccessFilter };
+  onAccess: (a: AccessFilter) => void;
+  sort: HomeSort;
+  onSort: (s: HomeSort) => void;
+  density: Density;
+  onDensity: (d: Density) => void;
+}) {
+  return (
+    <div className="@container mb-5">
+      <div data-bar className="flex flex-col gap-2.5 @5xl:flex-row @5xl:items-center">
+        <Tabs value={scope} onValueChange={(v) => onScope(v as HomeScope)} className="min-w-0">
+          <TabsList aria-label="Whose artefacts" className="max-w-full">
+            {HOME_SCOPES.map((s) => (
+              // Sized to its label, not an equal share (the stock trigger is flex-1).
+              <TabsTrigger key={s} value={s} className="group flex-none gap-2 px-3">
+                {HOME_SCOPE_LABELS[s]}
+                <Badge variant="secondary" className="rounded-full bg-transparent px-1.5 group-data-[state=active]:bg-secondary">
+                  {counts[s]}
+                </Badge>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="flex flex-col gap-2.5 @2xl:flex-row @2xl:items-center @5xl:flex-1">
+          <div data-filters className="flex flex-wrap items-center gap-2.5">
+            <FilterDropdown
+              label="Type"
+              chips={kind.chips}
+              value={kind.value}
+              onChange={onKind}
+              iconOf={(k) => (k === "all" ? Shapes : KINDS[k].icon)}
+            />
+            <FilterDropdown
+              label="Access"
+              chips={access.chips}
+              value={access.value}
+              onChange={onAccess}
+              iconOf={(a) => (a === "all" ? Filter : VIS[a].icon)}
+            />
+          </div>
+          <div data-view className="flex items-center gap-2.5 @2xl:ml-auto">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" aria-label={`Sort: ${HOME_SORT_LABELS[sort]}`}>
+                  <ArrowUpDown />
+                  {HOME_SORT_LABELS[sort]}
+                  <ChevronDown className="text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-52">
+                <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as HomeSort)}>
+                  {HOME_SORTS.map((s) => (
+                    <DropdownMenuRadioItem key={s} value={s}>
+                      {HOME_SORT_LABELS[s]}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DensityToggle density={density} onDensity={onDensity} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DensityToggle({ density, onDensity }: { density: Density; onDensity: (d: Density) => void }) {
+  return (
+    <Tabs value={density} onValueChange={(v) => onDensity(v as Density)}>
+      <TabsList>
+        {DENSITIES.map((d) => {
+          const Icon = d === "grid" ? LayoutGrid : List;
+          const label = d === "grid" ? "Grid" : "List";
+          return (
+            <TabsTrigger key={d} value={d} title={label} aria-label={label} className="px-2">
+              <Icon />
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+    </Tabs>
   );
 }
 
@@ -210,6 +359,7 @@ export function CollectionTile({
   badge?: ReactNode;
 }) {
   return (
+    // eslint-disable-next-line no-restricted-syntax -- the whole collection card is its open target, a surface rather than a control
     <button
       type="button"
       onClick={onOpen}
@@ -238,19 +388,20 @@ export function countsLine(arts: number, colls: number): string {
 }
 
 // Your own artefacts (as cards/rows with every control) and, on a collection
-// page, others' (as gallery cards with attribution), in the chosen density.
+// page, others' (S62 — the same card and row, in their viewer variant), in the
+// chosen density.
 export function ItemList({
   density,
   owned,
   others,
   ownedProps,
-  galleryProps,
+  sharedProps,
 }: {
   density: Density;
   owned: ArtefactSummary[];
   others: SharedArtefactSummary[];
   ownedProps: (a: ArtefactSummary) => OwnedItemProps;
-  galleryProps: (g: SharedArtefactSummary) => GalleryItemProps;
+  sharedProps: (g: SharedArtefactSummary) => SharedItemProps;
 }) {
   if (density === "grid")
     return (
@@ -259,7 +410,7 @@ export function ItemList({
           <ArtefactCard key={a.id} {...ownedProps(a)} />
         ))}
         {others.map((g) => (
-          <GalleryCard key={g.id} {...galleryProps(g)} />
+          <ArtefactCard key={g.id} {...sharedProps(g)} />
         ))}
       </div>
     );
@@ -269,7 +420,7 @@ export function ItemList({
         <ArtefactRow key={a.id} {...ownedProps(a)} />
       ))}
       {others.map((g) => (
-        <GalleryRow key={g.id} {...galleryProps(g)} />
+        <ArtefactRow key={g.id} {...sharedProps(g)} />
       ))}
     </div>
   );

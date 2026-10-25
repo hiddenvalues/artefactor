@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// S37 (AH29) — the image's two roles. The entrypoint runs as the app by default
+// S37 — the image's two roles. The entrypoint runs as the app by default
 // (chown /data, migrate, drop to `node`), or — with ARTEFACTOR_ROLE=renderer —
 // execs the renderer directly, never as root and with none of the app's setup.
 
@@ -38,12 +38,14 @@ function runEntrypoint(env: Record<string, string>, uid: number) {
 }
 
 describe("docker-entrypoint.sh roles (S37)", () => {
+  // r[verify hosting.renderer.entrypoint-roles]
   it("ARTEFACTOR_ROLE=renderer as uid 1000 execs the renderer, with no chown, migration or gosu", () => {
     const run = runEntrypoint({ ARTEFACTOR_ROLE: "renderer" }, 1000);
     expect(run.status).toBe(0);
     expect(run.calls).toEqual(["node dist/renderer/index.js"]);
   });
 
+  // r[verify hosting.renderer.entrypoint-roles]
   it("ARTEFACTOR_ROLE=renderer as uid 0 refuses to start", () => {
     const run = runEntrypoint({ ARTEFACTOR_ROLE: "renderer" }, 0);
     expect(run.status).not.toBe(0);
@@ -51,6 +53,7 @@ describe("docker-entrypoint.sh roles (S37)", () => {
     expect(run.stderr).toMatch(/root/);
   });
 
+  // r[verify hosting.renderer.entrypoint-roles]
   it.each<Record<string, string>>([{}, { ARTEFACTOR_ROLE: "app" }])(
     "the app role (%o) keeps today's path",
     (env) => {
@@ -75,6 +78,7 @@ describe("docker-entrypoint.sh roles (S37)", () => {
 describe("Dockerfile (S37)", () => {
   const dockerfile = readFileSync(join(ROOT, "Dockerfile"), "utf8");
 
+  // r[verify hosting.renderer.image-declares-no-volume]
   it("declares no VOLUME, so a renderer container gets no anonymous writable /data", () => {
     expect(dockerfile).not.toMatch(/^\s*VOLUME\b/im);
   });

@@ -4,8 +4,8 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 
-// S32a (AH31) — `linkGate` round-trips through both ArtefactRepository adapters,
-// and a row written before the columns existed reads null / null / 0.
+// S32a (hosting.link-gate.public-only) — `linkGate` round-trips through both ArtefactRepository
+// adapters, and a row written before the columns existed reads null / null / 0.
 
 const OWNER = "lg-owner";
 const EXPIRES = new Date("2030-01-02T03:04:05.678Z");
@@ -71,8 +71,13 @@ describe.each(adapters)("ArtefactRepository linkGate — %s (S32a)", (name, make
   });
 
   it("round-trips a cleared gate on update", async () => {
-    await repo.save(artefact(id("clear"), { passwordHash: "h", expiresAt: EXPIRES, version: 1 }));
-    await repo.save(artefact(id("clear"), { passwordHash: null, expiresAt: null, version: 2 }));
+    const { revision } = await repo.save(
+      artefact(id("clear"), { passwordHash: "h", expiresAt: EXPIRES, version: 1 }),
+    );
+    await repo.save({
+      ...artefact(id("clear"), { passwordHash: null, expiresAt: null, version: 2 }),
+      revision,
+    });
     expect((await repo.findById(id("clear"), SINGLETON_SCOPE))!.linkGate).toEqual({
       passwordHash: null,
       expiresAt: null,
@@ -82,6 +87,7 @@ describe.each(adapters)("ArtefactRepository linkGate — %s (S32a)", (name, make
 });
 
 describe("SQLite migration — link gate columns (S32a)", () => {
+  // r[verify hosting.link-gate.migrated-rows-ungated]
   it("reads a row that predates the columns as null / null / 0", async () => {
     const { sqlite } = await migratedDb();
     const { DrizzleArtefactRepository } = await import("./artefact-repository.drizzle");

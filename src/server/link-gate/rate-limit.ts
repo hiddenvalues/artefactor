@@ -1,4 +1,4 @@
-// S32a — unlock attempts are limited to 10 per holder + client address (IA8, S42) per 15 minutes.
+// S32a — unlock attempts are limited to 10 per holder + client address (S42) per 15 minutes.
 // An in-process store: the app runs as one container. A multi-instance
 // deployment needs a shared store (out of scope).
 
@@ -8,6 +8,7 @@ export const UNLOCK_MAX_ATTEMPTS = 10;
 const PRUNE_INTERVAL_MS = UNLOCK_WINDOW_MS / 15;
 const DEFAULT_MAX_KEYS = 50_000;
 
+// r[impl hosting.link-gate.unlock-attempts-limited+2]
 export class UnlockRateLimiter {
   // Insertion-ordered: a key is re-inserted on every attempt, so the first
   // entries are the least recently used.

@@ -13,7 +13,7 @@
 //
 // This is a **payload convention**, not a domain rule: the backend may forward
 // the declaration but never validates a blob against it (that would make the
-// backend interpret the blob and collapse AD8 opacity). Extraction is therefore
+// backend interpret the blob and collapse the blob's opacity (data.blob.bounded-opaque-json)). Extraction is therefore
 // best-effort — absent, malformed, or non-object → `null`, never an error, and
 // the caller falls back to reading the HTML itself. It is also only a *second*
 // representation of a truth that lives in the JS, so a reader trusts it for
@@ -33,6 +33,7 @@ const OPEN_TAG = new RegExp(
 // The artefact's declared data schema, or `null` when it does not have a
 // readable one. A declaration must be a JSON **object** — an array, a scalar, or
 // `null` is not a shape description, so it reads as "no declaration".
+// r[impl mcp.read.schema-best-effort+2]
 export function extractDeclaredSchema(html: string): Record<string, unknown> | null {
   const open = OPEN_TAG.exec(html);
   if (!open) return null;

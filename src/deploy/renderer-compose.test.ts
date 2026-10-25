@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-// S37 (AH29) — the renderer-VM Compose file is the reviewed source both runbooks
+// S37 — the renderer-VM Compose file is the reviewed source both runbooks
 // paste into Coolify. It must keep every hardening key of the example's renderer,
 // and differ only where a dedicated VM behind an outside firewall needs it to:
 // a host-created network via `network_mode` (so Coolify injects none of its own),
@@ -41,7 +41,7 @@ const envOf = (service: Service): Record<string, unknown> => {
 const list = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : []);
 const homeTmpfs = (service: Service) => list(service.tmpfs).find((entry) => entry.startsWith("/home/node"));
 
-describe("deploy/docker-compose.renderer-vm.yml (S37, AH29)", () => {
+describe("deploy/docker-compose.renderer-vm.yml (S37)", () => {
   it("is the only renderer-VM Compose file, holding only the renderer service", () => {
     expect(readdirSync(DEPLOY).filter((name) => /renderer-vm/.test(name))).toEqual([VM_FILE]);
     expect(Object.keys(vmServices)).toEqual(["renderer"]);
@@ -81,6 +81,7 @@ describe("deploy/docker-compose.renderer-vm.yml (S37, AH29)", () => {
     }
   });
 
+  // r[verify hosting.renderer.holds-no-secrets]
   it("mounts no volume and carries no secret, database or storage setting", () => {
     expect(vm).not.toHaveProperty("volumes");
     for (const key of Object.keys(envOf(vm))) {

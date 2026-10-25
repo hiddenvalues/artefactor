@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import { z } from "zod";
 
-// S37 (AH29) — the renderer role's own configuration. It deliberately shares
+// S37 — the renderer role's own configuration. It deliberately shares
 // nothing with `src/server/env.ts`: that schema demands the app's secrets in
 // production, and a renderer must hold none.
 const schema = z.object({
@@ -20,6 +20,7 @@ const schema = z.object({
 
 export type RendererEnv = z.infer<typeof schema>;
 
+// r[impl hosting.renderer.env-parses-without-secrets]
 export function parseRendererEnv(raw: Record<string, string | undefined>): RendererEnv {
   return schema.parse(raw);
 }
@@ -32,10 +33,11 @@ export interface SelfCheckProbe {
   exists: (path: string) => boolean;
 }
 
-// S37 (AH29) — in production, the reason this renderer must not start, or null.
+// S37 — in production, the reason this renderer must not start, or null.
 // The image bakes the app's storage paths into its env, so what counts is
 // whether their directories are actually present (a mounted volume), not the
 // variables.
+// r[impl hosting.renderer.holds-no-secrets]
 export function selfCheck(
   env: RendererEnv,
   raw: Record<string, string | undefined>,

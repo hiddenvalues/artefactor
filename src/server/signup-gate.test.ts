@@ -1,9 +1,10 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Hono } from "hono";
+import { callTool, connect } from "../test/mcp-oauth";
 
-// S38 (IA4, amended) — a deployment with the sign-up gate **closed** creates no
+// S38 (`identity.signup.gate`) — a deployment with the sign-up gate **closed** creates no
 // accounts by any route, while accounts created before it closed keep working.
 // The flag is read at boot, so this needs its own file: Vitest isolates modules
 // per file, which is the only way to drive a second env.
@@ -53,6 +54,7 @@ describe("sign-up gate closed (S38)", () => {
     });
   });
 
+  // r[verify identity.signup.gate]
   it("refuses sign-up from an allowlisted address, writing no user row", async () => {
     const res = await app.request("/api/auth/sign-up/email", {
       method: "POST",
@@ -72,6 +74,7 @@ describe("sign-up gate closed (S38)", () => {
     expect(rows).toHaveLength(0);
   });
 
+  // r[verify identity.config.advertises-methods+3]
   it("reports signupAllowed: false via /api/config", async () => {
     const res = await app.request("/api/config");
     expect(res.status).toBe(200);
@@ -79,6 +82,20 @@ describe("sign-up gate closed (S38)", () => {
     expect(body.signupAllowed).toBe(false);
   });
 
+  // The other env from identity.test.ts: a closed gate is advertised as closed
+  // because the server refuses the sign-up, not because the flag defaults so.
+  // r[verify identity.config.methods-from-auth-config]
+  it("advertises sign-up exactly as the server enforces it with the gate closed", async () => {
+    const config = (await (await app.request("/api/config")).json()) as { signupAllowed: boolean };
+    const signUp = await app.request("/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "advertised@example.com", password: "correct-horse-battery", name: "Advertised" }),
+    });
+    expect(config.signupAllowed).toBe(signUp.ok);
+  });
+
+  // r[verify identity.signup.gate]
   it("still signs in an account created before the gate closed", async () => {
     const signIn = await app.request("/api/auth/sign-in/email", {
       method: "POST",
@@ -98,10 +115,10 @@ describe("sign-up gate closed (S38)", () => {
     });
   });
 
-  // IA2 — the connector authorises an *existing* Account; it never creates one,
+  // The connector authorises an *existing* Account; it never creates one,
   // so a closed gate must not break it.
-  it("still completes the MCP OAuth flow for an existing Account (IA2)", async () => {
-    const REDIRECT = "https://claude.ai/api/mcp/auth_callback";
+  // r[verify identity.signup.gate]
+  it("still completes the MCP OAuth flow for an existing Account", async () => {
     const signIn = await app.request("/api/auth/sign-in/email", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -112,74 +129,17 @@ describe("sign-up gate closed (S38)", () => {
     });
     const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
 
-    const client = (await (
-      await app.request("/api/auth/mcp/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          redirect_uris: [REDIRECT],
-          client_name: "Claude",
-          token_endpoint_auth_method: "none",
-          grant_types: ["authorization_code", "refresh_token"],
-          response_types: ["code"],
-        }),
-      })
-    ).json()) as { client_id: string };
-
-    const verifier = randomBytes(32).toString("base64url");
-    const challenge = createHash("sha256").update(verifier).digest("base64url");
-    const authRes = await app.request(
-      `/api/auth/mcp/authorize?${new URLSearchParams({
-        response_type: "code",
-        client_id: client.client_id,
-        redirect_uri: REDIRECT,
-        scope: "openid",
-        state: "xyz",
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-      }).toString()}`,
-      { headers: { cookie }, redirect: "manual" },
+    // Register, authorize, Allow on the consent screen, exchange (S63).
+    const { access_token } = await connect(
+      app,
+      cookie,
+      "http://localhost:3000/mcp",
     );
-    expect(authRes.status).toBe(302);
-    const code = new URL(authRes.headers.get("location")!).searchParams.get(
-      "code",
-    );
-    expect(code).toBeTruthy();
 
-    const tokenRes = await app.request("/api/auth/mcp/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code: code!,
-        redirect_uri: REDIRECT,
-        client_id: client.client_id,
-        code_verifier: verifier,
-      }).toString(),
-    });
-    expect(tokenRes.status).toBe(200);
-    const { access_token } = (await tokenRes.json()) as { access_token: string };
-
-    const callRes = await app.request("/mcp", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${access_token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: {
-          name: "create_artefact",
-          arguments: {
-            title: "Gate closed, connector open",
-            kind: "prototype",
-            html: "<!doctype html><h1>mcp</h1>",
-          },
-        },
-      }),
+    const callRes = await callTool(app, access_token, "create_artefact", {
+      title: "Gate closed, connector open",
+      kind: "prototype",
+      html: "<!doctype html><h1>mcp</h1>",
     });
     expect(callRes.status).toBe(200);
     const rpc = (await callRes.json()) as {

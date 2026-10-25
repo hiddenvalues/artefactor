@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   UNAMBIGUOUS_ALPHABET,
   copyText,
@@ -6,40 +6,111 @@ import {
   emptyForm,
   enablePassword,
   expiryFor,
+  formFor,
   generatePassword,
   gateChange,
+  inheritedLinkGate,
   linkGateOnPublish,
 } from "./link-protection";
+import type { CollectionSummary } from "../../shared/contracts";
 
 // S32a — the client's link-protection logic: the generated password, the copy
 // button, and what the form submits.
 
 const NOW = new Date("2026-06-01T12:00:00.000Z");
+
+describe("inheritedLinkGate (S32b)", () => {
+  const coll = (over: Partial<CollectionSummary>): CollectionSummary => ({
+    id: "c-root",
+    ownerId: "u",
+    name: "Tree",
+    description: null,
+    parentId: null,
+    rootId: "c-root",
+    visibility: "public",
+    status: "active",
+    linkGate: { passwordProtected: true, expiresAt: null },
+    createdAt: NOW.toISOString(),
+    updatedAt: NOW.toISOString(),
+    ...over,
+  });
+  const root = coll({});
+  const child = coll({ id: "c-child", name: "Sub", parentId: "c-root", linkGate: null });
+  const byId = new Map([root, child].map((c) => [c.id, c]));
+
+  it("is the root's gate and name, for an artefact directly in the root or deeper", () => {
+    const expected = { rootName: "Tree", gate: { passwordProtected: true, expiresAt: null } };
+    expect(inheritedLinkGate("c-root", byId)).toEqual(expected);
+    expect(inheritedLinkGate("c-child", byId)).toEqual(expected);
+  });
+
+  it("is null at top level, under an ungated or non-public root, or an unknown collection", () => {
+    expect(inheritedLinkGate(null, byId)).toBeNull();
+    expect(inheritedLinkGate("c-missing", byId)).toBeNull();
+    const ungated = new Map([["c-root", coll({ linkGate: null })]]);
+    expect(inheritedLinkGate("c-root", ungated)).toBeNull();
+    const members = new Map([["c-root", coll({ visibility: "authenticated" })]]);
+    expect(inheritedLinkGate("c-root", members)).toBeNull();
+  });
+});
 const DAY = 24 * 60 * 60 * 1000;
 
 describe("generatePassword (S32a)", () => {
+  // r[verify hosting.link-gate.password-generator+2]
   it("returns 16 characters, all from the unambiguous alphabet", () => {
     const pw = generatePassword();
     expect(pw).toHaveLength(16);
     for (const ch of pw) expect(UNAMBIGUOUS_ALPHABET).toContain(ch);
   });
 
+  // r[verify hosting.link-gate.password-generator+2]
   it("leaves out 0, O, 1, l and I", () => {
     for (const ch of "0O1lI") expect(UNAMBIGUOUS_ALPHABET).not.toContain(ch);
   });
 
+  // r[verify hosting.link-gate.password-generator+2]
   it("differs between two calls", () => {
     expect(generatePassword()).not.toBe(generatePassword());
+  });
+
+  // r[verify hosting.link-gate.password-generator+2]
+  it("skips a random byte that would favour the alphabet's first characters", () => {
+    const n = UNAMBIGUOUS_ALPHABET.length;
+    const limit = 256 - (256 % n);
+    // Every other byte is at or above the largest multiple of the alphabet's size, where `% n`
+    // would land on the first characters more often; only the bytes below it are kept.
+    const fill = (bytes: Uint8Array) => {
+      for (let i = 0; i < bytes.length; i++) bytes[i] = i % 2 === 0 ? limit + (i % (256 - limit)) : i;
+      return bytes;
+    };
+    const spy = vi.spyOn(crypto, "getRandomValues").mockImplementation(fill as typeof crypto.getRandomValues);
+    try {
+      const pw = generatePassword(4);
+      expect(pw).toBe([1, 3, 5, 7].map((b) => UNAMBIGUOUS_ALPHABET[b % n]).join(""));
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
 describe("the password field (S32a)", () => {
+  // r[verify hosting.link-gate.password-generator+2]
   it("turning on 'Require a password' pre-fills a generated password", () => {
     const form = enablePassword(emptyForm());
     expect(form.requirePassword).toBe(true);
     expect(form.password).toHaveLength(16);
   });
 
+  // r[verify hosting.link-gate.password-generator+2]
+  it("'Change' on a kept password pre-fills a new generated one", () => {
+    const kept = formFor({ passwordProtected: true, expiresAt: null });
+    expect(kept.keepPassword).toBe(true);
+    const form = enablePassword(kept);
+    expect(form.keepPassword).toBe(false);
+    expect(form.password).toHaveLength(16);
+  });
+
+  // r[verify hosting.link-gate.password-generator+2]
   it("the owner's edit replaces it in what is submitted", () => {
     const form = { ...enablePassword(emptyForm()), password: "my-own-choice" };
     expect(linkGateOnPublish(form, NOW)).toEqual({ password: "my-own-choice" });
@@ -109,6 +180,7 @@ describe("expiryTimerDelay (S32a)", () => {
 });
 
 describe("copyText (S32a)", () => {
+  // r[verify hosting.link-gate.password-generator+2]
   it("writes exactly the field's current value and reports Copied", async () => {
     const written: string[] = [];
     const label = await copyText({ writeText: async (t) => void written.push(t) }, "abc-DEF-234");

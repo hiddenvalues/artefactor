@@ -4,12 +4,15 @@ import {
   signFrameToken,
   type FrameTokenClaims,
 } from "./frame-token";
+import { shareLinkPath } from "../../shared/share-link";
 
-// S36 (AH28, AD10, IA6) — where frames live and who may talk to the API.
+// S36 (`hosting.frame.urls-on-content-origin`, `hosting.frame.mint`,
+// `identity.origin.app-origin-only`) — where frames live and
+// who may talk to the API.
 //
 // `appOrigin` is the canonical app origin (`BETTER_AUTH_URL`). `trustedAppOrigins`
 // adds `AUTH_TRUSTED_ORIGINS` (e.g. the Vite dev server) — the origins a
-// cookie-authenticated state change may come from (IA6) — and never includes the
+// cookie-authenticated state change may come from — and never includes the
 // content origin. `contentOrigin`, when set, is the separate registrable domain
 // frames are served on; unset, frames live on the app host.
 export interface Framing {
@@ -59,12 +62,13 @@ export function framingFromEnv(env: FramingEnv): Framing {
 // The frame route path for an artefact, before any token.
 export function framePath(route: "slug" | "raw", ref: string): string {
   return route === "slug"
-    ? `/a/${encodeURIComponent(ref)}/frame`
+    ? `${shareLinkPath(ref)}/frame`
     : `/api/artefacts/${encodeURIComponent(ref)}/raw/frame`;
 }
 
 // A token-less frame URL (an anonymous, read-only frame): on the content origin
 // when there is one (absolute), else on the app host (relative).
+// r[impl hosting.frame.urls-on-content-origin]
 export function frameUrl(framing: Framing, route: "slug" | "raw", ref: string): string {
   return `${framing.contentOrigin ?? ""}${framePath(route, ref)}`;
 }
@@ -76,6 +80,7 @@ export interface MintedFrame {
   channel: string;
 }
 
+// r[impl hosting.frame.mint]
 export function mintFrame(
   framing: Framing,
   route: "slug" | "raw",

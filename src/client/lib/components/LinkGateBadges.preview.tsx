@@ -12,14 +12,12 @@ const CASES = [
 
 export default definePreview({
   title: "Link gate badges",
-  variants: (["chip", "inline"] as const).flatMap((variant) =>
-    CASES.map(([name, gate]) => ({
-      name: `${variant === "chip" ? "Chip" : "Inline"} — ${name}`,
-      render: () => (
-        <div className="flex min-h-6 items-center gap-1 rounded-md bg-muted p-2 text-xs">
-          <LinkGateBadges gate={gate} variant={variant} />
-        </div>
-      ),
-    })),
-  ),
+  variants: CASES.map(([name, gate]) => ({
+    name,
+    render: () => (
+      <div className="flex min-h-6 items-center gap-1 rounded-md bg-muted p-2 text-xs">
+        <LinkGateBadges gate={gate} />
+      </div>
+    ),
+  })),
 });

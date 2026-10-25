@@ -5,7 +5,7 @@ import type { Collection } from "./collection";
 // recursive queries (the immutable `rootId` covers the cross-owner join cases).
 
 // The node plus every descendant, in parent-before-child order. Used by the
-// cascade commands (CL7/CL8) and the cascade-count UI.
+// cascade commands (collections.lifecycle.archive-cascades, collections.lifecycle.delete-cascades) and the cascade-count UI.
 export function collectSubtree(
   collections: readonly Collection[],
   id: string,

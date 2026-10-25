@@ -1,4 +1,4 @@
-// S36 (AH28) — `ARTEFACTOR_CONTENT_ORIGIN`, the optional origin frames are served
+// S36 — `ARTEFACTOR_CONTENT_ORIGIN`, the optional origin frames are served
 // on. It must be a bare http(s) origin (`scheme://host[:port]`, no path) on a
 // **separate registrable domain** from the app: the app host itself (any port —
 // cookies don't isolate by port), a subdomain of it, or a parent domain of it
@@ -7,6 +7,7 @@
 // is documented as needing its own registrable domain (e.g. `humlycontent.com`).
 //
 // Returns a message naming the problem, or null when the value is acceptable.
+// r[impl hosting.frame.content-origin-separate]
 export function contentOriginProblem(value: string, appUrl: string): string | null {
   let url: URL;
   try {

@@ -9,7 +9,7 @@ import type {
 
 // End-to-end S12: the host data-context switcher endpoints
 // (`…/data/authors` + `…/data/:authorId`) through the real app, enforcing the
-// access matrix (AD4) and BFF name/email enrichment.
+// access matrix (data.read.follows-artefact-access) and BFF name/email enrichment.
 describe("data-context switcher — /data/authors + /data/:authorId (S12)", () => {
   let app: Hono;
   let owner: string;
@@ -46,7 +46,7 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
         body: JSON.stringify({ visibility }),
       })
     ).json()) as ArtefactSummary;
-    // AD4 as written holds under `shared`; new artefacts default to `own` (S41).
+    // data.read.follows-artefact-access as written holds under `shared`; new artefacts default to `own` (S41).
     const opened = await app.request(`/api/artefacts/${created.id}/data-visibility`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", cookie },
@@ -88,7 +88,9 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
     otherId = await meId(other);
   });
 
-  it("lists authors with name/email, and loads a chosen author's blob (AD4)", async () => {
+  // r[verify mcp.authors.route-unchanged]
+  // r[verify data.read.follows-artefact-access]
+  it("lists authors with name/email, and loads a chosen author's blob", async () => {
     const { slug } = await makeShared(owner, "authenticated");
     await putData(slug, owner, '{"who":"owner"}');
     await putData(slug, other, '{"who":"other"}');
@@ -114,7 +116,8 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
     expect(loaded).toEqual({ blob: null, updatedAt: null });
   });
 
-  it("allows anonymous reads on a public artefact (AD4)", async () => {
+  // r[verify data.read.follows-artefact-access]
+  it("allows anonymous reads on a public artefact", async () => {
     const { slug } = await makeShared(owner, "public");
     await putData(slug, owner, '{"v":1}');
     expect((await authors(slug)).status).toBe(200);
@@ -122,13 +125,16 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
     expect(loaded.blob).toBe('{"v":1}');
   });
 
-  it("denies anonymous on an authenticated artefact (AD4)", async () => {
+  // r[verify data.read.follows-artefact-access]
+  it("denies anonymous on an authenticated artefact", async () => {
     const { slug } = await makeShared(owner, "authenticated");
     expect((await authors(slug)).status).toBe(404);
     expect((await authorData(slug, ownerId)).status).toBe(404);
   });
 
-  it("denies a non-owner on a private artefact (AD4/AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify data.read.follows-artefact-access]
+  it("denies a non-owner on a private artefact", async () => {
     const { id, slug } = await makeShared(owner, "public");
     await app.request(`/api/artefacts/${id}/visibility`, {
       method: "PUT",
@@ -139,7 +145,8 @@ describe("data-context switcher — /data/authors + /data/:authorId (S12)", () =
     expect((await authors(slug, owner)).status).toBe(200);
   });
 
-  it("returns 404 for an archived artefact (AD6)", async () => {
+  // r[verify data.lifecycle.archived-inert]
+  it("returns 404 for an archived artefact", async () => {
     const { id, slug } = await makeShared(owner, "authenticated");
     await app.request(`/api/artefacts/${id}/archive`, { method: "POST", headers: { cookie: owner } });
     expect((await authors(slug, owner)).status).toBe(404);

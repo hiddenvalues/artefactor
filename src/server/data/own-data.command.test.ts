@@ -41,8 +41,9 @@ describe("own-data commands (S11)", () => {
       }),
       { tier, newSlug: "slug1" },
     );
-    await artefactRepo.save({ ...a, ...over });
-    return a;
+    // Carry the stored revision (S60) so a test can save over the seed.
+    const { revision } = await artefactRepo.save({ ...a, ...over });
+    return { ...a, revision };
   }
 
   beforeEach(() => {
@@ -57,7 +58,8 @@ describe("own-data commands (S11)", () => {
     };
   });
 
-  it("upserts and reads back the caller's own blob (AD1)", async () => {
+  // r[verify data.entry.one-per-pair]
+  it("upserts and reads back the caller's own blob", async () => {
     await seed();
     await putOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, '{"v":1}', deps);
     const got = await getOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, deps);
@@ -70,7 +72,8 @@ describe("own-data commands (S11)", () => {
     );
   });
 
-  it("keeps each author's entry separate on a shared artefact (AD2)", async () => {
+  // r[verify data.write.author-is-caller]
+  it("keeps each author's entry separate on a shared artefact", async () => {
     await seed("authenticated");
     await putOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, '{"who":"owner"}', deps);
     await putOwnDataEntry({ ref: "slug1", authorId: "user-2", scope: SCOPE }, '{"who":"two"}', deps);
@@ -87,14 +90,17 @@ describe("own-data commands (S11)", () => {
     expect(await getOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, deps)).toBeNull();
   });
 
-  it("rejects an invalid blob (AD8)", async () => {
+  // r[verify data.blob.bounded-opaque-json]
+  it("rejects an invalid blob", async () => {
     await seed();
     await expect(
       putOwnDataEntry({ ref: "slug1", authorId: OWNER, scope: SCOPE }, "not json", deps),
     ).rejects.toBeInstanceOf(InvalidBlob);
   });
 
-  it("is not-found for an archived artefact (AD6)", async () => {
+  // r[verify hosting.lifecycle.archived-data-inert]
+  // r[verify data.lifecycle.archived-inert]
+  it("is not-found for an archived artefact", async () => {
     const shared = await seed();
     await artefactRepo.save(archiveArtefact(shared));
     await expect(
@@ -105,7 +111,8 @@ describe("own-data commands (S11)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  it("is not-found when a non-owner targets a private artefact (AD4/AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  it("is not-found when a non-owner targets a private artefact", async () => {
     // Shared then unshared → private but slug retained.
     const shared = await seed("public");
     await artefactRepo.save({ ...shared, visibility: "private" });
@@ -169,6 +176,7 @@ describe("own-data commands (S11)", () => {
       expect((await getOwnDataEntry(REF, deps))?.blob).toBe('{"v":2}');
     });
 
+    // r[verify data.write.stale-pin-refused]
     it("throws DataConflict and writes nothing when the entry changed since the pin", async () => {
       await seed();
       await putOwnDataEntry(REF, '{"v":1}', at(T0));
@@ -182,6 +190,7 @@ describe("own-data commands (S11)", () => {
       expect(kept?.updatedAt).toEqual(T1);
     });
 
+    // r[verify data.write.stale-pin-refused]
     it("a null pin means 'expected no entry' — conflicts if one was created since", async () => {
       await seed();
       // The read was empty; the user then starts saving before the agent writes.
@@ -198,6 +207,7 @@ describe("own-data commands (S11)", () => {
       expect((await getOwnDataEntry(REF, deps))?.blob).toBe('{"v":1}');
     });
 
+    // r[verify data.write.stale-pin-refused]
     it("no pin writes unconditionally (the PUT …/data/me behaviour)", async () => {
       await seed();
       await putOwnDataEntry(REF, '{"v":1}', at(T1));
@@ -206,9 +216,9 @@ describe("own-data commands (S11)", () => {
     });
   });
 
-  // S19a (AD9) — every write stamps the payload hash it was written against.
+  // S19a — every write stamps the payload hash it was written against.
   // Advisory only: the pin never decides whether a read or write is allowed.
-  describe("payload version pin — authoredAgainstVersion (S19a/AD9)", () => {
+  describe("payload version pin — authoredAgainstVersion (S19a)", () => {
     const REF = { ref: "slug1", authorId: OWNER, scope: SCOPE };
 
     // Replace the artefact's payload in place (S3), as an edit would.
@@ -219,6 +229,7 @@ describe("own-data commands (S11)", () => {
       );
     }
 
+    // r[verify data.pin.stamped-on-write]
     it("a fresh write records the artefact's current payload hash", async () => {
       await seed();
       const saved = await putOwnDataEntry(REF, '{"v":1}', deps);
@@ -226,6 +237,7 @@ describe("own-data commands (S11)", () => {
       expect((await getOwnDataEntry(REF, deps))?.authoredAgainstVersion).toBe("h");
     });
 
+    // r[verify data.pin.stamped-on-write]
     it("an entry written before a payload edit reads back a pin ≠ the new hash", async () => {
       await seed();
       await putOwnDataEntry(REF, '{"v":1}', deps);
@@ -239,6 +251,7 @@ describe("own-data commands (S11)", () => {
       expect((await getOwnDataEntry(REF, deps))?.authoredAgainstVersion).toBe("h2");
     });
 
+    // r[verify data.pin.null-before-pin]
     it("an entry predating the pin reads null, and is still readable and writable", async () => {
       await seed();
       await dataRepo.save({
@@ -259,7 +272,8 @@ describe("own-data commands (S11)", () => {
       expect(saved.authoredAgainstVersion).toBe("h");
     });
 
-    it("never gates access: a stale pin doesn't block the owner, a matching one doesn't admit a non-viewer (AD3–AD5)", async () => {
+    // r[verify data.pin.stamped-on-write]
+    it("never gates access: a stale pin doesn't block the owner, a matching one doesn't admit a non-viewer", async () => {
       const shared = await seed("public");
       await putOwnDataEntry(REF, '{"v":1}', deps);
       await putOwnDataEntry({ ...REF, authorId: "user-2" }, '{"v":1}', deps);

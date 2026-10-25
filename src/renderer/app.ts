@@ -30,7 +30,7 @@ type State =
 const RETRY_BUSY_S = 1;
 const RETRY_UNAVAILABLE_S = 30;
 
-// S37 (AH29) — the isolated renderer's HTTP surface. Concurrency 1: a job is
+// S37 — the isolated renderer's HTTP surface. Concurrency 1: a job is
 // accepted only while idle; the rest get 503 + Retry-After and the app retries.
 // Nothing about the caller is read or kept — the request body is the payload,
 // the response body the image.
@@ -47,12 +47,14 @@ export function createRendererApp(options: RendererAppOptions) {
     (err: unknown) => {
       const cause = err instanceof Error && err.cause instanceof Error ? err.cause : err;
       const reason = cause instanceof Error ? cause.message.split("\n")[0]! : String(cause);
+      // r[impl hosting.renderer.unavailable-without-sandbox+2]
       state = { kind: "unavailable", reason };
       log(`unavailable: ${reason}`);
     },
   );
 
   // After an answered job: refuse further work, and exit at the minimum uptime.
+  // r[impl hosting.renderer.one-job-per-process]
   const drain = () => {
     if (!exitAfterJob) {
       state = { kind: "ready" };
@@ -79,6 +81,7 @@ export function createRendererApp(options: RendererAppOptions) {
   app.post("/render", async (c) => {
     const length = c.req.header("content-length");
     if (length === undefined || !/^\d+$/.test(length)) return c.body(null, 411);
+    // r[impl hosting.renderer.http-input-cap]
     if (Number(length) > MAX_RENDER_INPUT_BYTES) return c.body(null, 413);
 
     switch (state.kind) {
@@ -89,6 +92,7 @@ export function createRendererApp(options: RendererAppOptions) {
       case "unavailable":
         return refuse(RETRY_UNAVAILABLE_S);
       default:
+        // r[impl hosting.renderer.busy-retry-after]
         return refuse(RETRY_BUSY_S);
     }
     state = { kind: "busy" };
@@ -104,6 +108,7 @@ export function createRendererApp(options: RendererAppOptions) {
         return c.body(image as Uint8Array<ArrayBuffer>, 200, { "content-type": "image/webp" });
       } catch (err) {
         const message = err instanceof Error ? err.message.split("\n")[0] : String(err);
+        // r[impl hosting.renderer.failed-render-422+2]
         if (err instanceof ThumbnailRendererUnavailable) {
           log(`render unavailable: ${message}`);
           return refuse(RETRY_BUSY_S);

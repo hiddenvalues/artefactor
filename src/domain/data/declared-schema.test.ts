@@ -10,6 +10,7 @@ describe("extractDeclaredSchema (S30)", () => {
   const block = (body: string) =>
     `<html><head><script type="application/artefactor-schema+json">${body}</script></head><body>hi</body></html>`;
 
+  // r[verify mcp.read.schema-best-effort+2]
   it("returns the declared schema as parsed JSON", () => {
     const html = block(
       '{"key":"habit-tracker-v2","version":2,"example":{"habits":[]}}',
@@ -40,10 +41,12 @@ describe("extractDeclaredSchema (S30)", () => {
     ).toEqual({ key: "k" });
   });
 
+  // r[verify mcp.read.schema-best-effort+2]
   it("returns null when there is no declaration", () => {
     expect(extractDeclaredSchema("<html><body>nothing here</body></html>")).toBeNull();
   });
 
+  // r[verify mcp.read.schema-best-effort+2]
   it("returns null when the block is not valid JSON", () => {
     expect(extractDeclaredSchema(block("{ key: 'habit', }"))).toBeNull();
   });
@@ -52,6 +55,7 @@ describe("extractDeclaredSchema (S30)", () => {
     expect(extractDeclaredSchema(block("   "))).toBeNull();
   });
 
+  // r[verify mcp.read.schema-best-effort+2]
   it("returns null when the declaration is not a JSON object", () => {
     expect(extractDeclaredSchema(block("[1,2,3]"))).toBeNull();
     expect(extractDeclaredSchema(block('"just a string"'))).toBeNull();

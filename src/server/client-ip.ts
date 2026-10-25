@@ -2,18 +2,18 @@ import { BlockList, isIP } from "node:net";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { MiddlewareHandler } from "hono";
 
-// S42 — Trusted-proxy client address (IA8): the client address is resolved
+// S42 — Trusted-proxy client address: the client address is resolved
 // once, and only a trusted proxy may name it. Every consumer of a client address
 // (the S32a unlock limit, BetterAuth's rate limiter and stored
 // `session.ipAddress`) reads the one value the middleware below resolves.
 
 // The header BetterAuth reads its client address from (`advanced.ipAddress`).
-// The middleware strips any client-sent copy and sets it to the IA8 address.
+// The middleware strips any client-sent copy and sets it to the resolved address.
 export const CLIENT_IP_HEADER = "x-artefactor-client-ip";
 
 declare module "hono" {
   interface ContextVariableMap {
-    // The IA8 client address of the current request.
+    // The resolved client address of the current request.
     clientIp: string;
   }
 }
@@ -29,6 +29,7 @@ export interface TrustedProxies {
 
 // A comma-separated list of CIDRs or bare addresses (a /32 or /128). Unset or
 // empty gives the default; a set value replaces it. An invalid entry throws.
+// r[impl identity.client-ip.trusted-set]
 export function parseTrustedProxies(value: string | undefined): TrustedProxies {
   const source = value?.trim() ? value : DEFAULT_TRUSTED_PROXIES;
   const list = new BlockList();
@@ -58,10 +59,11 @@ function normalize(address: string): string {
   return mapped ? mapped[1]! : trimmed;
 }
 
-// IA8 — start from the socket peer; while the current address is a trusted
+// Start from the socket peer; while the current address is a trusted
 // proxy, step one hop left in `X-Forwarded-For`. The first untrusted hop is the
 // client; if every hop is trusted, the leftmost is. An empty or unparsable hop
 // stops the walk at the last address reached, so garbage never becomes a key.
+// r[impl identity.client-ip.trusted-walk]
 export function resolveClientIp(
   forwardedFor: string | undefined,
   socketAddress: string | undefined,
@@ -83,6 +85,7 @@ export function resolveClientIp(
 // A root middleware (registered by `createApp` before every route): resolve the
 // address once, hand it to BetterAuth as the one header it reads, and expose it
 // to routes as the `clientIp` variable.
+// r[impl identity.client-ip.resolved-once]
 export function createClientAddress(trusted: TrustedProxies): MiddlewareHandler {
   return async (c, next) => {
     let socket: string | undefined;

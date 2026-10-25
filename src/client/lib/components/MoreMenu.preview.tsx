@@ -2,24 +2,21 @@ import { definePreview } from "../../design/preview";
 import { noop } from "../../design/fixtures";
 import { MoreMenu } from "./MoreMenu";
 
-const base = { onOpen: noop, onCopy: noop, onEdit: noop, onArchive: noop };
+const owner = { role: "owner", onOpen: noop, onEdit: noop, onArchive: noop } as const;
 
 export default definePreview({
   title: "More menu",
   variants: [
     {
-      name: "Grid card, private, every action",
-      render: () => (
-        <MoreMenu {...base} isShared={false} onBookmark={noop} onMoveToCollection={noop} downloadHref="#more-menu" />
-      ),
+      name: "Grid card, your own, every action",
+      render: () => <MoreMenu {...owner} onBookmark={noop} onMoveToCollection={noop} downloadHref="#more-menu" />,
     },
     {
-      name: "List row, shared, bookmarked, in a collection",
+      name: "List row, your own, bookmarked, in a collection",
       render: () => (
         <MoreMenu
-          {...base}
+          {...owner}
           variant="list"
-          isShared
           bookmarked
           onBookmark={noop}
           inCollection
@@ -28,6 +25,16 @@ export default definePreview({
         />
       ),
     },
-    { name: "Minimal (no bookmark, move or download)", render: () => <MoreMenu {...base} isShared={false} /> },
+    { name: "Minimal (no bookmark, move or download)", render: () => <MoreMenu {...owner} /> },
+    {
+      name: "Another user's artefact (Open, Bookmark, Download HTML)",
+      render: () => <MoreMenu role="viewer" onOpen={noop} onBookmark={noop} downloadHref="#more-menu" />,
+    },
+    {
+      name: "Another user's artefact, on your own collection page (Remove from collection)",
+      render: () => (
+        <MoreMenu role="viewer" onOpen={noop} onBookmark={noop} downloadHref="#more-menu" onRemoveFromCollection={noop} />
+      ),
+    },
   ],
 });

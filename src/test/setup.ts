@@ -14,5 +14,5 @@ process.env.ARTEFACTOR_PAYLOAD_DIR = join(dir, "payloads");
 process.env.ARTEFACTOR_THUMBNAIL_DIR = join(dir, "thumbnails");
 process.env.BETTER_AUTH_SECRET = "test-secret-at-least-32-characters-long";
 process.env.BETTER_AUTH_URL = "http://localhost:3000";
-// Tests sign up with @example.com identities; admit them via the allowlist (IA4).
+// Tests sign up with @example.com identities; admit them via the allowlist.
 process.env.AUTH_ALLOWED_EMAIL_DOMAINS = "example.com,example.org";

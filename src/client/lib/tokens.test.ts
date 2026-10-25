@@ -1,20 +1,29 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { SHELL_TOKENS, type ShellMode } from "../../server/runtime/shell-theme";
+import {
+  MIN_NON_TEXT_CONTRAST,
+  MIN_TEXT_CONTRAST,
+  NON_TEXT_PAIRS,
+  SHELL_TEXT_PAIRS,
+  TEXT_PAIRS,
+  textContrast,
+  type ContrastRow,
+} from "../../shared/contrast";
 import { KIND_ORDER, KIND_PRESENTATION } from "../../shared/kind-presentation";
 import { COLLECTION_HUE_COUNT, collectionColor } from "./format";
 
-// S43 — the one tokens file carries the Mint garden theme
-// (docs/design/theme/mint-garden.md) and the app-specific colours, in light
+// S43 — the one tokens file carries the Ruby theme
+// (docs/design/foundations/color.md) and the app-specific colours, in light
 // (`:root`) and dark (`.dark`). S45 — the server-rendered host shell follows
 // the viewer's theme too, so the kind colours in `shared/kind-presentation.ts`
 // (light and dark) and the shell's chrome tokens in
 // `server/runtime/shell-theme.ts` must not drift from these.
 const css = readFileSync(new URL("../app.css", import.meta.url), "utf8");
 
-/** The declarations of the top-level rule whose selector is exactly `selector`. */
+/** The declarations of the top-level rule whose selector list starts with `selector`. */
 const block = (selector: string) => {
-  const start = css.search(new RegExp(`^${selector.replace(".", "\\.")}\\s*\\{`, "m"));
+  const start = css.search(new RegExp(`^${selector.replace(".", "\\.")}(\\s*,[^{]*)?\\s*\\{`, "m"));
   if (start < 0) throw new Error(`app.css has no ${selector} block`);
   const open = css.indexOf("{", start);
   return css.slice(open + 1, css.indexOf("}", open));
@@ -29,38 +38,14 @@ const dark = tokensOf(".dark");
 // Any colour value app.css writes: oklch(…), with or without alpha, or hex.
 const COLOUR = /^(oklch\(\d*\.?\d+ \d*\.?\d+ \d*\.?\d+( \/ \d+%)?\)|#[0-9a-f]{3,6})$/;
 
-type Rgb = [number, number, number];
+/** The rows below `min`, each naming the pair, mode, surface and ratio. */
+const failing = (rows: ContrastRow[], mode: string, min: number) =>
+  rows
+    .filter((row) => row.ratio < min)
+    .map(({ fg, bg, over, ratio }) => `${mode} --${fg} on --${bg}${over ? ` over --${over}` : ""}: ${ratio.toFixed(2)}:1`);
 
-function parseOklch(value: string) {
-  const m = /^oklch\(([\d.]+) ([\d.]+) ([\d.]+)(?: \/ (\d+)%)?\)$/.exec(value);
-  if (!m) throw new Error(`not an oklch colour: ${value}`);
-  return { l: Number(m[1]), c: Number(m[2]), h: Number(m[3]), alpha: m[4] ? Number(m[4]) / 100 : 1 };
-}
-
-/** OKLCH → gamma-encoded sRGB (Björn Ottosson's OKLab matrices). */
-function oklchToSrgb({ l, c, h }: { l: number; c: number; h: number }): Rgb {
-  const a = c * Math.cos((h * Math.PI) / 180);
-  const b = c * Math.sin((h * Math.PI) / 180);
-  const L = (l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const M = (l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const S = (l - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  const linear = [
-    4.0767416621 * L - 3.3077115913 * M + 0.2309699292 * S,
-    -1.2684380046 * L + 2.6097574011 * M - 0.3413193965 * S,
-    -0.0041960863 * L - 0.7034186147 * M + 1.707614701 * S,
-  ];
-  return linear.map((v) => (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.max(v, 0) ** (1 / 2.4) - 0.055)) as Rgb;
-}
-
-/** WCAG 2 contrast ratio of two gamma-encoded sRGB colours. */
-function contrast(x: Rgb, y: Rgb): number {
-  const lum = (rgb: Rgb) => {
-    const [r, g, b] = rgb.map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)) as Rgb;
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  };
-  const [hi, lo] = [lum(x), lum(y)].sort((p, q) => q - p) as [number, number];
-  return (hi + 0.05) / (lo + 0.05);
-}
+/** Every row at least `MIN_TEXT_CONTRAST`. */
+const expectReadable = (rows: ContrastRow[], mode: string) => expect(failing(rows, mode, MIN_TEXT_CONTRAST)).toEqual([]);
 
 describe("app tokens (S43)", () => {
   it.each(KIND_ORDER)("defines the light %s kind colour and tint as the shared presentation has them", (kind) => {
@@ -68,21 +53,43 @@ describe("app tokens (S43)", () => {
     expect(light(`kind-${kind}-tint`)).toBe(KIND_PRESENTATION[kind].tint);
   });
 
-  it("takes the Mint garden light kind colours, tinted at 12% (slide deck 13%)", () => {
-    expect(light("kind-prototype")).toBe("oklch(0.51 0.09 170)");
-    expect(KIND_PRESENTATION.prototype.color).toBe("oklch(0.51 0.09 170)");
-    expect(light("kind-prototype-tint")).toBe("oklch(0.51 0.09 170 / 12%)");
-    expect(light("kind-slide-deck-tint")).toBe("oklch(0.53 0.13 55 / 13%)");
+  it("takes the Ruby light kind colours", () => {
+    expect(light("kind-prototype")).toBe("oklch(0.51 0.09 190)");
+    expect(KIND_PRESENTATION.prototype.color).toBe("oklch(0.51 0.09 190)");
+    expect(light("kind-slide-deck-tint")).toBe("oklch(0.52 0.12 298 / 12%)");
   });
 
-  // The app draws kind colour as text (the card's kind badge, the specimen's
-  // chip), so each light kind colour reads at 4.5:1 on its own tint over white.
-  it.each(KIND_ORDER)("draws the light %s kind colour as text at 4.5:1 on its tint", (kind) => {
-    const colour = parseOklch(light(`kind-${kind}`)!);
-    const tint = parseOklch(light(`kind-${kind}-tint`)!);
-    const fg = oklchToSrgb(colour);
-    const bg = fg.map((c) => tint.alpha * c + (1 - tint.alpha)) as Rgb;
-    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5);
+  it.each(KIND_ORDER)("tints the light %s kind colour at 12%", (kind) => {
+    const colour = light(`kind-${kind}`);
+    expect(colour).toMatch(COLOUR);
+    expect(light(`kind-${kind}-tint`)).toBe(colour!.replace(/\)$/, " / 12%)"));
+  });
+
+  // r[verify platform.theme.text-contrast]
+  // Dark falls back to `:root` as the cascade does, so an inherited token is rated as drawn.
+  it.each(["light", "dark"] as const)("draws every %s text pair at 4.5:1", (mode) => {
+    expectReadable(textContrast(TEXT_PAIRS, mode === "light" ? light : (name) => dark(name) ?? light(name)), mode);
+  });
+
+  // r[verify platform.theme.non-text-contrast]
+  it.each(["light", "dark"] as const)("draws every %s non-text pair at 3:1", (mode) => {
+    const rows = textContrast(NON_TEXT_PAIRS, mode === "light" ? light : (name) => dark(name) ?? light(name));
+    expect(rows.map(({ fg, bg }) => `${fg}/${bg}`)).toEqual(["primary-foreground/primary", "primary/background"]);
+    expect(failing(rows, mode, MIN_NON_TEXT_CONTRAST)).toEqual([]);
+  });
+
+  // r[verify platform.theme.non-text-contrast]
+  it("fails a primary drawn in the background's colour", () => {
+    const doctored = (name: string) => light(name === "primary" ? "background" : name);
+    expect(failing(textContrast(NON_TEXT_PAIRS, doctored), "light", MIN_NON_TEXT_CONTRAST)).toContain(
+      "light --primary on --background: 1.00:1",
+    );
+  });
+
+  // contrast.ts has no imports, so it spells the kinds out: they must stay KIND_ORDER.
+  it("rates every kind's colour on its tint, and no other kind", () => {
+    const kindPairs = TEXT_PAIRS.filter(({ fg }) => fg.startsWith("kind-"));
+    expect(kindPairs).toEqual(KIND_ORDER.map((kind) => ({ fg: `kind-${kind}`, bg: `kind-${kind}-tint` })));
   });
 
   it.each(KIND_ORDER)("overrides the %s kind colour in dark, tinted at 16%", (kind) => {
@@ -91,8 +98,8 @@ describe("app tokens (S43)", () => {
     expect(dark(`kind-${kind}-tint`)).toBe(colour!.replace(/\)$/, " / 16%)"));
   });
 
-  it("takes the Mint garden dark kind colours", () => {
-    expect(dark("kind-form")).toBe("oklch(0.78 0.08 240)");
+  it("takes the Ruby dark kind colours", () => {
+    expect(dark("kind-form")).toBe("oklch(0.78 0.07 228)");
   });
 
   it("defines every collection hue a collection can hash to, in light and dark", () => {
@@ -102,17 +109,20 @@ describe("app tokens (S43)", () => {
     }
     expect(light(`collection-${COLLECTION_HUE_COUNT + 1}`)).toBeNull();
     expect(dark(`collection-${COLLECTION_HUE_COUNT + 1}`)).toBeNull();
-    expect(light("collection-1")).toBe("oklch(0.58 0.09 170)");
+    expect(light("collection-1")).toBe("oklch(0.52 0.09 200)");
     expect(collectionColor("some-collection-id")).toMatch(/^var\(--collection-[1-6]\)$/);
   });
 
-  it("carries the Mint garden colours (spot-checks of docs/design/theme/mint-garden.md)", () => {
-    expect(light("primary")).toBe("oklch(0.85 0.05 170)");
+  it("carries the Ruby colours (spot-checks of the Ruby palette)", () => {
+    expect(light("primary")).toBe("oklch(0.54 0.2 340)");
+    expect(light("primary-foreground")).toBe("#fff");
     expect(light("background")).toBe("#fff");
-    expect(dark("background")).toBe("oklch(0.11 0.02 150)");
+    expect(dark("background")).toBe("oklch(0.17 0.004 340)");
+    expect(dark("primary-foreground")).toBe("oklch(0.2 0.04 340)");
     expect(dark("destructive")).toBe("oklch(0.704 0.191 22.216)");
   });
 
+  // r[verify platform.theme.shell-tokens-match-app]
   it.each(KIND_ORDER)("defines the dark %s kind colour and tint as the shared presentation has them (S45)", (kind) => {
     expect(dark(`kind-${kind}`)).toBe(KIND_PRESENTATION[kind].darkColor);
     expect(dark(`kind-${kind}-tint`)).toBe(KIND_PRESENTATION[kind].darkTint);
@@ -129,20 +139,44 @@ describe("host shell tokens (S45)", () => {
   ];
   const app: Record<ShellMode, (name: string) => string | null> = { light, dark };
 
+  // r[verify platform.theme.shell-tokens-match-app]
   it.each(["light", "dark"] as const)("keeps every %s shell token named like an app.css token equal to it", (mode) => {
     const shared = Object.entries(SHELL_TOKENS[mode]).filter(([name]) => app[mode](name) !== null);
     expect(shared.map(([name]) => name)).toEqual(expect.arrayContaining(CHROME));
     for (const [name, value] of shared) expect(canon(value), `--${name}`).toBe(canon(app[mode](name)!));
   });
 
+  // r[verify platform.theme.shell-tokens-match-app]
   it("gives light and dark the same token names", () => {
     expect(Object.keys(SHELL_TOKENS.dark).sort()).toEqual(Object.keys(SHELL_TOKENS.light).sort());
   });
 
   // The read-only badge and the conflict/expired banners set warning text on the warning background.
-  it.each(["light", "dark"] as const)("draws the %s warning text at 4.5:1 on the warning background", (mode) => {
-    const fg = oklchToSrgb(parseOklch(SHELL_TOKENS[mode]["warn-fg"]));
-    const bg = oklchToSrgb(parseOklch(SHELL_TOKENS[mode]["warn-bg"]));
-    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(4.5);
+  // r[verify platform.theme.text-contrast]
+  it.each(["light", "dark"] as const)("draws the %s shell text pairs at 4.5:1", (mode) => {
+    const tokens: Record<string, string> = SHELL_TOKENS[mode];
+    expectReadable(textContrast(SHELL_TEXT_PAIRS, (name) => tokens[name] ?? null), mode);
+  });
+});
+
+// The trace doesn't read CSS, so the rule's one site is this reader of app.css's two switches:
+// a design-system page sets `[data-theme="dark"]`, the app sets `.dark`, and both must flip the
+// variant and the token block.
+// r[impl platform.theme.dark-follows-data-theme]
+const darkSwitches = () => ({
+  variant: /^@custom-variant dark \(&:is\(([^)]*)\)\);/m.exec(css)?.[1]?.split(",").map((s) => s.trim()) ?? [],
+  block: /^(\.dark\b[^{]*)\{/m.exec(css)?.[1]?.split(",").map((s) => s.trim()) ?? [],
+});
+
+describe("dark mode switches (S43)", () => {
+  // r[verify platform.theme.dark-follows-data-theme]
+  it("matches `.dark *` and `[data-theme=\"dark\"] *` in the dark variant", () => {
+    expect(darkSwitches().variant).toEqual([".dark *", '[data-theme="dark"] *']);
+  });
+
+  // r[verify platform.theme.dark-follows-data-theme]
+  it("declares the dark tokens under `.dark` and `[data-theme=\"dark\"]`", () => {
+    expect(darkSwitches().block).toEqual([".dark", '[data-theme="dark"]']);
+    expect(dark("background")).toBe("oklch(0.17 0.004 340)");
   });
 });

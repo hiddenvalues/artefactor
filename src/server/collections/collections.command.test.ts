@@ -104,7 +104,8 @@ describe("create / edit collection commands (S25)", () => {
     expect(child.rootId).toBe(root.id);
   });
 
-  it("treats an unknown or non-owned parent as not-found (CL10)", async () => {
+  // r[verify collections.access.no-existence-leak]
+  it("treats an unknown or non-owned parent as not-found", async () => {
     await expect(
       createCollectionCommand(
         { requesterId: OWNER, name: "X", parentId: "ghost", scope: SCOPE },
@@ -123,6 +124,8 @@ describe("create / edit collection commands (S25)", () => {
     ).rejects.toBeInstanceOf(CollectionNotFound);
   });
 
+  // r[verify collections.authority.owner-only+3]
+  // r[verify collections.access.no-existence-leak]
   it("renames and changes tier; non-owner edits are not-found", async () => {
     const root = await makeCollection("Product");
     const edited = await editCollectionCommand(
@@ -145,7 +148,9 @@ describe("create / edit collection commands (S25)", () => {
     ).rejects.toBeInstanceOf(CollectionNotFound);
   });
 
-  it("changing a root to a shared tier back-fills slugs across the subtree (CL6/AH21)", async () => {
+  // r[verify hosting.slug.minted-on-root-share]
+  // r[verify collections.slug.minted-on-effective-share]
+  it("changing a root to a shared tier back-fills slugs across the subtree", async () => {
     const root = await makeCollection("Product");
     const child = await makeCollection("Q4", { parentId: root.id });
     await artefactRepo.save(baseArtefact("a1", { collectionId: root.id }));
@@ -172,13 +177,101 @@ describe("create / edit collection commands (S25)", () => {
       (await artefactRepo.findById("a1", SCOPE))?.publicSlug,
       (await artefactRepo.findById("a2", SCOPE))?.publicSlug,
     ];
-    expect([...minted].sort()).toEqual(["slug-1", "slug-2"]); // one distinct slug each
-    expect((await artefactRepo.findById("a3", SCOPE))?.publicSlug).toBe("kept"); // AH5
+    // slug-1 went to the root itself (S44); one distinct slug each after it.
+    expect([...minted].sort()).toEqual(["slug-2", "slug-3"]);
+    expect((await artefactRepo.findById("a3", SCOPE))?.publicSlug).toBe("kept"); // hosting.slug.minted-once-retained
     expect((await artefactRepo.findById("a4", SCOPE))?.publicSlug).toBeNull();
+  });
+
+  // S60 — Save concurrency: a save never overwrites a newer artefact.
+  // r[verify hosting.save.reapply-on-conflict]
+  it("a back-fill racing a slug minted meanwhile keeps the retained slug", async () => {
+    const root = await makeCollection("Product");
+    await artefactRepo.save(baseArtefact("a1", { collectionId: root.id }));
+    // The first artefact save of the back-fill finds a slug minted after its listing.
+    let raced = false;
+    const save = artefactRepo.save.bind(artefactRepo);
+    artefactRepo.save = async (a) => {
+      if (!raced) {
+        raced = true;
+        await save({ ...(await artefactRepo.findById("a1", SCOPE))!, publicSlug: "minted-meanwhile" });
+      }
+      return save(a);
+    };
+
+    await editCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, visibility: "authenticated", scope: SCOPE },
+      { collectionRepo, artefactRepo, generateSlug },
+    );
+
+    expect(raced).toBe(true);
+    expect((await artefactRepo.findById("a1", SCOPE))?.publicSlug).toBe("minted-meanwhile");
   });
 });
 
-describe("moveArtefactCommand (S25, CL6)", () => {
+describe("root collection slug (S44)", () => {
+  const edit = (id: string, visibility: Collection["visibility"]) =>
+    editCollectionCommand(
+      { collectionId: id, requesterId: OWNER, visibility, scope: SCOPE },
+      { collectionRepo, artefactRepo, generateSlug },
+    );
+
+  // r[verify collections.public-link.root-slug-minted]
+  it.each(["public", "selected", "authenticated"] as const)(
+    "a private root changed to %s mints a slug, in the saved row",
+    async (tier) => {
+      const root = await makeCollection("Product");
+      expect(root.publicSlug).toBeNull();
+      const edited = await edit(root.id, tier);
+      expect(edited.publicSlug).toBe("slug-1");
+      expect((await collectionRepo.findById(root.id, SCOPE))!.publicSlug).toBe("slug-1");
+    },
+  );
+
+  // r[verify collections.public-link.root-slug-minted]
+  it("a root created shared has one; a root created private has none", async () => {
+    const shared = await createCollectionCommand(
+      { requesterId: OWNER, name: "Landing", visibility: "public", scope: SCOPE },
+      { collectionRepo, newId: () => "col-landing", generateSlug },
+    );
+    expect(shared.publicSlug).toBe("slug-1");
+    expect((await collectionRepo.findById(shared.id, SCOPE))!.publicSlug).toBe("slug-1");
+    expect((await makeCollection("Quiet")).publicSlug).toBeNull();
+  });
+
+  // r[verify collections.public-link.root-slug-minted]
+  it("public → private → public keeps the same slug", async () => {
+    const root = await makeCollection("Product");
+    await edit(root.id, "public");
+    expect((await edit(root.id, "private")).publicSlug).toBe("slug-1");
+    expect((await edit(root.id, "public")).publicSlug).toBe("slug-1");
+  });
+
+  // r[verify collections.public-link.root-slug-minted]
+  it("a sub-collection never gets one", async () => {
+    const root = await makeCollection("Product");
+    await edit(root.id, "public");
+    const child = await makeCollection("Q4", { parentId: root.id });
+    expect(child.publicSlug).toBeNull();
+  });
+
+  // r[verify collections.public-link.root-slug-minted]
+  it("a collision with an existing collection slug retries", async () => {
+    const first = await makeCollection("First");
+    await edit(first.id, "public"); // takes slug-1
+    const second = await makeCollection("Second");
+    const repeating = ["slug-1", "slug-1", "fresh"];
+    const minted = await editCollectionCommand(
+      { collectionId: second.id, requesterId: OWNER, visibility: "public", scope: SCOPE },
+      { collectionRepo, artefactRepo, generateSlug: () => repeating.shift()! },
+    );
+    expect(minted.publicSlug).toBe("fresh");
+  });
+});
+
+describe("moveArtefactCommand (S25)", () => {
+  // r[verify hosting.slug.minted-on-move-into-shared-tree]
+  // r[verify collections.slug.minted-on-effective-share]
   it("moves in and out, minting a slug when the tree root is shared", async () => {
     const root = await makeCollection("Product", { visibility: "authenticated" });
     const child = await makeCollection("Q4", { parentId: root.id });
@@ -197,7 +290,7 @@ describe("moveArtefactCommand (S25, CL6)", () => {
       { artefactRepo, collectionRepo, generateSlug },
     );
     expect(back.collectionId).toBeNull();
-    expect(back.publicSlug).toBe("slug-1"); // retained (AH5)
+    expect(back.publicSlug).toBe("slug-1"); // retained (hosting.slug.minted-once-retained)
   });
 
   it("does not mint when the tree is private", async () => {
@@ -210,6 +303,7 @@ describe("moveArtefactCommand (S25, CL6)", () => {
     expect(moved.publicSlug).toBeNull();
   });
 
+  // r[verify hosting.collection.move-into-own-or-contributed]
   it("rejects a non-owned, non-contributable target collection as not-found", async () => {
     const foreign = await createCollectionCommand(
       { requesterId: "other", name: "Theirs", scope: SCOPE },
@@ -225,7 +319,62 @@ describe("moveArtefactCommand (S25, CL6)", () => {
   });
 });
 
-describe("contributors (S29, CL12/CL13/CL14)", () => {
+describe("collection description (S74)", () => {
+  // r[verify collections.collection.description+2]
+  it("create takes a description; the owner's edit sets, keeps and clears it", async () => {
+    const root = await createCollectionCommand(
+      { requesterId: OWNER, name: "Help", description: "  Guides  ", scope: SCOPE },
+      { collectionRepo, newId: () => "col-help" },
+    );
+    expect(root.description).toBe("Guides");
+    const deps = { collectionRepo, artefactRepo, generateSlug };
+    const described = await editCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, description: "Topics", scope: SCOPE },
+      deps,
+    );
+    expect(described.description).toBe("Topics");
+    const renamed = await editCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, name: "Support", scope: SCOPE },
+      deps,
+    );
+    expect(renamed.description).toBe("Topics"); // absent → unchanged
+    const cleared = await editCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, description: null, scope: SCOPE },
+      deps,
+    );
+    expect(cleared.description).toBeNull();
+    expect((await collectionRepo.findById(root.id, SCOPE))!.description).toBeNull();
+  });
+
+  // r[verify collections.authority.owner-only+3]
+  // r[verify collections.lifecycle.archived-inert+3]
+  it("refuses a contributor's edit and an archived collection's", async () => {
+    const root = await makeCollection("Team", { visibility: "authenticated" });
+    await grantCollectionAccessCommand(
+      { collectionId: root.id, requesterId: OWNER, userId: VIEWER, scope: SCOPE },
+      { collectionRepo },
+    );
+    const deps = { collectionRepo, artefactRepo, generateSlug };
+    await expect(
+      editCollectionCommand(
+        { collectionId: root.id, requesterId: VIEWER, description: "Mine", scope: SCOPE },
+        deps,
+      ),
+    ).rejects.toBeInstanceOf(CollectionNotFound);
+    await archiveCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
+      { collectionRepo, artefactRepo },
+    );
+    await expect(
+      editCollectionCommand(
+        { collectionId: root.id, requesterId: OWNER, description: "X", scope: SCOPE },
+        deps,
+      ),
+    ).rejects.toBeInstanceOf(CollectionInvariantViolation);
+  });
+});
+
+describe("contributors (S29)", () => {
   // A tree owned by OWNER, shared `authenticated`, with VIEWER on the access
   // list (= contributor) — plus a VIEWER-owned artefact to contribute.
   async function seedContributable() {
@@ -238,7 +387,10 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
     return (await collectionRepo.findById(root.id, SCOPE))!;
   }
 
-  it("a listed member moves their own artefact in (slug minted per CL6)", async () => {
+  // r[verify hosting.slug.minted-on-move-into-shared-tree]
+  // r[verify hosting.collection.move-into-own-or-contributed]
+  // r[verify collections.contributor.on-root-access-list]
+  it("a listed member moves their own artefact in, minting its slug", async () => {
     const root = await seedContributable();
     const moved = await moveArtefactCommand(
       { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
@@ -249,6 +401,8 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
     expect(moved.ownerId).toBe(VIEWER); // stays theirs
   });
 
+  // r[verify hosting.collection.move-into-own-or-contributed]
+  // r[verify collections.contributor.on-root-access-list]
   it("an unlisted signed-in viewer cannot move in (uniform 404)", async () => {
     const root = await makeCollection("Team", { visibility: "authenticated" });
     await artefactRepo.save(baseArtefact("mine", { ownerId: "stranger" }));
@@ -260,6 +414,7 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
     ).rejects.toBeInstanceOf(CollectionNotFound);
   });
 
+  // r[verify collections.containment.co-owned]
   it("the collection owner ejects a foreign artefact; a non-owner cannot", async () => {
     const root = await seedContributable();
     await moveArtefactCommand(
@@ -281,7 +436,8 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
     expect(evicted.status).toBe("active"); // untouched
   });
 
-  it("archive cascade evicts foreign artefacts instead of archiving them (CL14)", async () => {
+  // r[verify collections.lifecycle.cascades-evict-foreign]
+  it("archive cascade evicts foreign artefacts instead of archiving them", async () => {
     const root = await seedContributable();
     await moveArtefactCommand(
       { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
@@ -299,7 +455,8 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
     expect((await artefactRepo.findById("owners-own", SCOPE))?.status).toBe("archived");
   });
 
-  it("delete cascade evicts foreign artefacts instead of erasing them (CL14)", async () => {
+  // r[verify collections.lifecycle.cascades-evict-foreign]
+  it("delete cascade evicts foreign artefacts instead of erasing them", async () => {
     const root = await seedContributable();
     await moveArtefactCommand(
       { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
@@ -323,6 +480,7 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
     expect(payloadStore.deleted).toEqual(["ref-owners-own"]);
   });
 
+  // r[verify collections.read.follows-root]
   it("the shared-collections read reports contributor-ness without the grantee list", async () => {
     const root = await seedContributable();
     const asMember = await listSharedCollections(VIEWER, SCOPE, { collectionRepo });
@@ -334,7 +492,8 @@ describe("contributors (S29, CL12/CL13/CL14)", () => {
   });
 });
 
-describe("effective access + shared composition (AH20/CL5)", () => {
+describe("effective access + shared composition", () => {
+  // r[verify hosting.access.effective-from-tree-root]
   it("resolveEffectiveViewable substitutes the root's tier", async () => {
     const root = await makeCollection("Shared", { visibility: "authenticated" });
     const child = await makeCollection("Nested", { parentId: root.id });
@@ -345,6 +504,7 @@ describe("effective access + shared composition (AH20/CL5)", () => {
     expect(canViewArtefact(eff, null)).toBe(false);
   });
 
+  // r[verify collections.access.unresolvable-chain-fails-closed]
   it("fails closed when the chain cannot be resolved", async () => {
     const a = baseArtefact("a1", {
       collectionId: "ghost",
@@ -356,6 +516,7 @@ describe("effective access + shared composition (AH20/CL5)", () => {
     expect(canViewArtefact(eff, OWNER)).toBe(true);
   });
 
+  // r[verify hosting.shared.lists-effectively-shared]
   it("listEffectivelyShared adds tree artefacts and drops dormant-tier ones", async () => {
     const shared = await makeCollection("Shared", { visibility: "authenticated" });
     const hidden = await makeCollection("Hidden"); // private root
@@ -388,6 +549,7 @@ describe("effective access + shared composition (AH20/CL5)", () => {
     expect(own).toEqual([]);
   });
 
+  // r[verify collections.access.root-governs-tree]
   it("a selected root shares the tree with exactly its members", async () => {
     const root = await makeCollection("Selected");
     await editCollectionCommand(
@@ -407,7 +569,7 @@ describe("effective access + shared composition (AH20/CL5)", () => {
   });
 });
 
-describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
+describe("collection lifecycle cascades (S26)", () => {
   async function seedTree() {
     const root = await makeCollection("Root", { visibility: "authenticated" });
     const child = await makeCollection("Child", { parentId: root.id });
@@ -417,6 +579,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     return { root, child };
   }
 
+  // r[verify collections.lifecycle.archive-cascades]
   it("archive cascades to descendant collections and artefacts, with counts", async () => {
     const { root, child } = await seedTree();
     const { cascade } = await archiveCollectionCommand(
@@ -429,6 +592,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     expect((await artefactRepo.findById("loose", SCOPE))?.status).toBe("active");
   });
 
+  // r[verify collections.lifecycle.restore-cascades]
   it("restore brings the subtree back, including previously-archived artefacts", async () => {
     const { root, child } = await seedTree();
     // Archive one artefact individually first — restore does not track provenance.
@@ -458,6 +622,39 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     expect((await artefactRepo.findById("a1", SCOPE))?.status).toBe("active");
   });
 
+  it("archive and restore keep a contained artefact's access list (S16, S60)", async () => {
+    // The list read carries no access list (on every adapter); a cascade must not save that copy.
+    const { root } = await seedTree();
+    const a1 = await artefactRepo.findById("a1", SCOPE);
+    await artefactRepo.save({ ...a1!, sharedWith: [VIEWER] });
+    const ids = { collectionId: root.id, requesterId: OWNER, scope: SCOPE };
+    await archiveCollectionCommand(ids, { collectionRepo, artefactRepo });
+    expect((await artefactRepo.findById("a1", SCOPE))?.sharedWith).toEqual([VIEWER]);
+    await restoreCollectionCommand(ids, { collectionRepo, artefactRepo });
+    expect((await artefactRepo.findById("a1", SCOPE))?.sharedWith).toEqual([VIEWER]);
+  });
+
+  it("archive decides each artefact's status on a fresh read, not the listed copy (S60)", async () => {
+    // The list read says a1 is archived; it was restored before the cascade reached it.
+    class StaleList extends InMemoryArtefactRepository {
+      override async listByCollectionIds(
+        ...args: Parameters<InMemoryArtefactRepository["listByCollectionIds"]>
+      ): Promise<Artefact[]> {
+        return (await super.listByCollectionIds(...args)).map((a) =>
+          a.id === "a1" ? { ...a, status: "archived" as const, archivedAt: new Date() } : a,
+        );
+      }
+    }
+    artefactRepo = new StaleList();
+    const { root } = await seedTree();
+    const { cascade } = await archiveCollectionCommand(
+      { collectionId: root.id, requesterId: OWNER, scope: SCOPE },
+      { collectionRepo, artefactRepo },
+    );
+    expect(cascade.artefacts).toBe(2);
+    expect((await artefactRepo.findById("a1", SCOPE))?.status).toBe("archived");
+  });
+
   it("delete cascade removes an artefact's thumbnails before its payload (S35)", async () => {
     const { root } = await seedTree();
     await archiveCollectionCommand(
@@ -476,7 +673,10 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     expect(payloadStore.deleted).toEqual([]);
   });
 
-  it("delete is archived-only and erases the subtree fully (CL8)", async () => {
+  // r[verify collections.lifecycle.delete-archived-only]
+  // r[verify collections.lifecycle.delete-cascades]
+  // r[verify collections.bookmark.removed-with-target]
+  it("delete is archived-only and erases the subtree fully", async () => {
     const { root, child } = await seedTree();
     const deps = {
       collectionRepo,
@@ -518,7 +718,7 @@ describe("collection lifecycle cascades (S26, CL7/CL8)", () => {
     expect(await artefactRepo.findById("a1", SCOPE)).toBeNull();
     expect(await artefactRepo.findById("a2", SCOPE)).toBeNull();
     expect(payloadStore.deleted.sort()).toEqual(["ref-a1", "ref-a2"]);
-    expect(thumbnailStore.hashesOf("a1")).toEqual([]); // AH11 via CL8 (S35)
+    expect(thumbnailStore.hashesOf("a1")).toEqual([]); // hosting.delete.removes-everything (S35)
     expect(thumbnailStore.hashesOf("a2")).toEqual([]);
     expect(await dataRepo.findByArtefactAndAuthor("a2", OWNER)).toBeNull();
     const marks = await bookmarkRepo.listByUser(OWNER);

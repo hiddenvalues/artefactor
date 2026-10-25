@@ -85,7 +85,9 @@ describe("editArtefactCommand (S3)", () => {
     );
   });
 
-  it("recomputes usesStorage on a payload edit, but not on a title-only edit (AH16)", async () => {
+  // r[verify hosting.uses-storage.chrome-only]
+  // r[verify hosting.uses-storage.recomputed-with-payload]
+  it("recomputes usesStorage on a payload edit, but not on a title- or kind-only edit", async () => {
     // Initial payload has no storage usage.
     const start = await repo.findById("a1", SCOPE);
     expect(start!.usesStorage).toBe(false);
@@ -103,6 +105,13 @@ describe("editArtefactCommand (S3)", () => {
       deps(),
     );
     expect(titled.usesStorage).toBe(true);
+
+    // So does a kind-only edit.
+    const rekinded = await editArtefactCommand(
+      { artefactId: "a1", requesterId: OWNER, scope: SCOPE, kind: "form" },
+      deps(),
+    );
+    expect(rekinded.usesStorage).toBe(true);
   });
 
   it("leaves no orphan and keeps the old payload when the edit is rejected", async () => {
@@ -116,7 +125,9 @@ describe("editArtefactCommand (S3)", () => {
     expect(store.live.size).toBe(1);
   });
 
-  it("rejects a non-owner as not-found (AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.authority.owner-only]
+  it("rejects a non-owner as not-found", async () => {
     await expect(
       editArtefactCommand(
         { artefactId: "a1", requesterId: "intruder", scope: SCOPE, title: "x" },
@@ -134,7 +145,8 @@ describe("editArtefactCommand (S3)", () => {
     ).rejects.toBeInstanceOf(InvariantViolation);
   });
 
-  describe("thumbnail enqueue (S35, AH25/AH26)", () => {
+  describe("thumbnail enqueue (S35)", () => {
+    // r[verify hosting.thumbnail.edit-enqueues-new-hash]
     it("replacing the HTML enqueues once with the new payload hash", async () => {
       const thumbnails = new RecordingQueue();
       const edited = await editArtefactCommand(
@@ -147,12 +159,13 @@ describe("editArtefactCommand (S3)", () => {
           payloadRef: edited.payloadRef,
           payloadHash: edited.payloadHash,
           thumbnailHash: null,
-          // S37 (AH29) — the size the render input cap is checked against.
+          // S37 (hosting.renderer.input-cap) — the size the render input cap is checked against.
           payloadSize: edited.payloadBytes,
         },
       ]);
     });
 
+    // r[verify hosting.thumbnail.edit-enqueues-new-hash]
     it("enqueues before the previous payload is deleted, so a newer edit's job can't be overtaken", async () => {
       const thumbnails = new RecordingQueue();
       let queuedWhenDeleted = -1;
@@ -168,6 +181,8 @@ describe("editArtefactCommand (S3)", () => {
       expect(queuedWhenDeleted).toBe(1);
     });
 
+    // r[verify hosting.thumbnail.edit-enqueues-new-hash]
+    // r[verify hosting.thumbnail.title-edit-keeps]
     it("a title/kind-only edit enqueues nothing", async () => {
       const thumbnails = new RecordingQueue();
       await editArtefactCommand(
@@ -177,6 +192,7 @@ describe("editArtefactCommand (S3)", () => {
       expect(thumbnails.jobs).toEqual([]);
     });
 
+    // r[verify hosting.thumbnail.never-blocks-command]
     it("a throwing queue does not fail the edit", async () => {
       const edited = await editArtefactCommand(
         { artefactId: "a1", requesterId: OWNER, scope: SCOPE, payload: bytes("<h1>new</h1>") },

@@ -1,4 +1,5 @@
 import type { Artefact } from "./artefact";
+import { ArtefactConflict } from "./errors";
 import type {
   ArtefactRepository,
   ListByOwnerOptions,
@@ -11,10 +12,24 @@ import type { TenantScope } from "./tenant-scope";
 export class InMemoryArtefactRepository implements ArtefactRepository {
   private readonly store = new Map<string, Artefact>();
 
-  async save(artefact: Artefact): Promise<void> {
-    // AH26 — a save never writes thumbnailHash; only recordThumbnail does.
-    const thumbnailHash = this.store.get(artefact.id)?.thumbnailHash ?? null;
-    this.store.set(artefact.id, { ...artefact, thumbnailHash });
+  async save(artefact: Artefact): Promise<Artefact> {
+    // S60 (hosting.save.no-lost-update) — the same compare-and-set as the Drizzle adapter.
+    const stored = this.store.get(artefact.id);
+    // A stored row is at revision ≥ 1 and a missing one counts as 0, so a revision-0 save of an
+    // existing id and a revision-n save of a deleted one both miss.
+    const current = stored ? stored.revision : 0;
+    if (current !== artefact.revision) {
+      throw new ArtefactConflict(artefact.id);
+    }
+    // A save never writes thumbnailHash; only recordThumbnail does
+    // (hosting.thumbnail.recorded-by-compare-and-set).
+    const saved = {
+      ...artefact,
+      thumbnailHash: stored?.thumbnailHash ?? null,
+      revision: artefact.revision + 1,
+    };
+    this.store.set(artefact.id, saved);
+    return { ...saved };
   }
 
   async recordThumbnail(id: string, renderedHash: string): Promise<boolean> {
@@ -43,13 +58,13 @@ export class InMemoryArtefactRepository implements ArtefactRepository {
 
   async findById(id: string, scope: TenantScope): Promise<Artefact | null> {
     const found = this.store.get(id);
-    // Outside the scope's tenant the row is invisible (S22/AH17, T2).
+    // Outside the scope's tenant the row is invisible (S22, hosting.tenant.invisible-to-oss).
     if (!found || found.tenantId !== scope.tenantId) return null;
     return { ...found };
   }
 
   async findBySlug(slug: string): Promise<Artefact | null> {
-    // Global by design — a slug is a tenant-agnostic capability (AH6).
+    // Global by design — a slug is a tenant-agnostic capability (hosting.slug.globally-unique).
     for (const a of this.store.values()) {
       if (a.publicSlug === slug) return { ...a };
     }
@@ -83,17 +98,19 @@ export class InMemoryArtefactRepository implements ArtefactRepository {
           a.tenantId === scope.tenantId &&
           a.status === "active" &&
           a.ownerId !== viewerId &&
-          // In a collection the own tier is dormant (AH20/CL5) — those flow in
-          // via the effectively-shared composition, not this query.
+          // In a collection the own tier is dormant (hosting.access.effective-from-tree-root, collections.access.contained-own-tier-dormant)
+          // — those flow in via the effectively-shared composition, not this query.
           a.collectionId === null &&
           (a.visibility === "authenticated" ||
             a.visibility === "public" ||
-            // `selected` shows only to the members it was shared with (AH8/13).
+            // `selected` shows only to the members it was shared with
+            // (hosting.access.matrix, hosting.access-list.retained).
             (a.visibility === "selected" &&
               a.sharedWith.includes(viewerId))),
       )
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-      .map((a) => ({ ...a }));
+      // No access list, as on the SQL adapters: recipients don't see co-members.
+      .map((a) => ({ ...a, sharedWith: [] }));
   }
 
   async listByCollectionIds(
@@ -112,6 +129,7 @@ export class InMemoryArtefactRepository implements ArtefactRepository {
           (includeArchived || a.status === "active"),
       )
       .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
-      .map((a) => ({ ...a }));
+      // No access list, as on the SQL adapters: a listed copy is never saved (S60).
+      .map((a) => ({ ...a, sharedWith: [] }));
   }
 }

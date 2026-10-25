@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-// S36 (AD10) — the frame token. A sandboxed frame has an opaque origin and
+// S36 (data.frame-token.signed-claims) — the frame token. A sandboxed frame has an opaque origin and
 // never reads cookies, so the shell hands it a short-lived, stateless token in
 // the frame URL (`?t=`) naming the context to seed. The frame route re-runs its
 // access check for the token's viewer at every redeem, so the token carries
@@ -25,10 +25,15 @@ export interface FrameTokenClaims {
   // A `raw` token's tenant scope — the owner-preview read is tenant-scoped, and
   // the frame has no session to resolve the scope from.
   tenantId?: string;
-  // S32a (AH22) — the link-gate version the viewer's pass proved when the token
-  // was minted. The redeem re-runs the gate with it, so a password change voids
-  // the frame too. Absent = no pass.
+  // S32a (hosting.link-gate.narrows-public-audience) — the link-gate version the viewer's pass
+  // proved when the token was minted. The redeem re-runs the gate with it, so a password change
+  // voids the frame too. Absent = no pass.
   gate?: number;
+  // S32b — the holder whose pass proved `gate`: the artefact, or its tree root
+  // when contained. The redeem counts `gate` only for this holder, so a token
+  // minted under one gate never satisfies another at the same version. Absent
+  // (a pre-S32b token) = the artefact itself.
+  gateHolder?: string;
   // Expiry, epoch milliseconds.
   exp: number;
 }
@@ -49,12 +54,13 @@ function mac(payload: string, secret: string): Buffer {
   return createHmac("sha256", derivedKey(secret)).update(payload).digest();
 }
 
+// r[impl data.frame-token.signed-claims]
 export function signFrameToken(claims: FrameTokenClaims, secret: string): string {
   const payload = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return `${payload}.${mac(payload, secret).toString("base64url")}`;
 }
 
-// S36 (AD10) — the frame's message channel: a value derived from its token, given
+// S36 (data.shell.channel-binds-document) — the frame's message channel: a value derived from its token, given
 // to that document only (inlined in its shim config) and to the shell (with the
 // frame URL that minted it). The shell accepts `artefactor:data-changed` only
 // when it carries the channel of the frame URL it loaded.
@@ -64,12 +70,14 @@ export function signFrameToken(claims: FrameTokenClaims, secret: string): string
 // to keeps the same `WindowProxy`. That page never learns the channel — frame
 // responses are `Referrer-Policy: no-referrer`, so the frame URL (and its token)
 // don't travel with the navigation.
+// r[impl data.shell.channel-binds-document]
 export function frameChannel(token: string, secret: string): string {
   return createHmac("sha256", createHmac("sha256", secret).update(CHANNEL_LABEL).digest())
     .update(token)
     .digest("base64url");
 }
 
+// r[impl hosting.frame.token-signed]
 export function verifyFrameToken(
   token: string,
   secret: string,
@@ -109,6 +117,7 @@ function parseClaims(payload: string): FrameTokenClaims | null {
     !nullableString(c.authorId) ||
     (c.tenantId !== undefined && typeof c.tenantId !== "string") ||
     (c.gate !== undefined && typeof c.gate !== "number") ||
+    (c.gateHolder !== undefined && typeof c.gateHolder !== "string") ||
     typeof c.exp !== "number"
   ) {
     return null;

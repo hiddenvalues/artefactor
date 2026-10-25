@@ -1,6 +1,6 @@
 import { createMiddleware } from "hono/factory";
 
-// S36 (IA6) — cookie-authenticated state changes come only from the app origin.
+// S36 — cookie-authenticated state changes come only from the app origin.
 //
 // Mounted on `/api/*`. A `POST`/`PUT`/`PATCH`/`DELETE` is refused with 403 when
 // its `Origin` is present and not a trusted app origin (`Origin: null` — a
@@ -10,6 +10,8 @@ import { createMiddleware } from "hono/factory";
 // `trustedOrigins` check. `/mcp` is not under `/api` and is bearer-only.
 const STATE_CHANGING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+// r[impl identity.origin.app-origin-only+2]
+// r[impl identity.origin.exemptions]
 export function createOriginGuard(trustedOrigins: readonly string[]) {
   const trusted = new Set(trustedOrigins);
   return createMiddleware(async (c, next) => {

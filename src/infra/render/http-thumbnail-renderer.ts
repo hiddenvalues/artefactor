@@ -30,12 +30,13 @@ class Retry {
   ) {}
 }
 
-// S37 (AH29) — the app's side of the isolated renderer: the stored payload bytes
-// go out, WebP bytes come back, and nothing else crosses — no bootstrap, shell,
-// data or identity (AH26). The renderer is disposable (one job per container),
-// so a refused or reset connection or a 503 is the normal gap between two of its
-// lives and is retried; only a renderer that stays away past the budget is
-// unavailable (AH25's missing path).
+// S37 — the app's side of the isolated renderer: the stored payload bytes go
+// out, WebP bytes come back, and nothing else crosses — no bootstrap, shell,
+// data or identity (`hosting.thumbnail.pristine`). The renderer is disposable
+// (one job per container), so a refused or reset connection or a 503 is the
+// normal gap between two of its lives and is retried; only a renderer that
+// stays away past the budget is unavailable (the disabled path,
+// `hosting.thumbnail.off-without-renderer`).
 export class HttpThumbnailRenderer implements ThumbnailRenderer {
   readonly url: string;
   readonly timeoutMs: number;
@@ -53,6 +54,7 @@ export class HttpThumbnailRenderer implements ThumbnailRenderer {
     this.sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
+  // r[impl hosting.renderer.http-client-retries]
   async render(html: Uint8Array): Promise<Uint8Array> {
     const deadline = this.now() + this.retryBudgetMs;
     for (;;) {

@@ -11,7 +11,7 @@ type Database = typeof Db;
 type DataEntryRow = typeof dataEntry.$inferSelect;
 
 // Drizzle/SQLite adapter for the DataRepository port. One row per
-// (artefact_id, author_id) — `save` upserts on that unique pair (AD1).
+// (artefact_id, author_id) — `save` upserts on that unique pair (data.entry.one-per-pair).
 export class DrizzleDataRepository implements DataRepository {
   constructor(private readonly db: Database) {}
 
@@ -39,7 +39,8 @@ export class DrizzleDataRepository implements DataRepository {
       .values(row)
       .onConflictDoUpdate({
         target: [dataEntry.artefactId, dataEntry.authorId],
-        // The pin re-stamps on every write (AD9), not only on insert.
+        // r[impl data.pin.adapter-restamps]
+        // The pin re-stamps on every write, not only on insert.
         set: {
           blob: row.blob,
           authoredAgainstVersion: row.authoredAgainstVersion,
@@ -75,6 +76,7 @@ export class DrizzleDataRepository implements DataRepository {
       .select({
         authorId: dataEntry.authorId,
         updatedAt: dataEntry.updatedAt,
+        // r[impl mcp.authors.port-bytes]
         bytes: sql<number>`octet_length(${dataEntry.blob})`,
         authoredAgainstVersion: dataEntry.authoredAgainstVersion,
       })

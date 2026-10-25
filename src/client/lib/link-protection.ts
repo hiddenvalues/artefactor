@@ -1,4 +1,4 @@
-import type { LinkGateSummary, SetLinkGateRequest } from "../../shared/contracts";
+import type { CollectionSummary, LinkGateSummary, SetLinkGateRequest } from "../../shared/contracts";
 
 // S32a — Link controls on public artefacts: the client-side logic behind the
 // "Link protection" section. Pure, so it is tested without a DOM.
@@ -11,6 +11,7 @@ export const LINK_PASSWORD_MAX = 128;
 
 // A random password from the unambiguous alphabet, drawn with the browser's
 // CSPRNG. Rejection sampling keeps every character equally likely.
+// r[impl hosting.link-gate.password-generator+2]
 export function generatePassword(length = GENERATED_PASSWORD_LENGTH): string {
   const n = UNAMBIGUOUS_ALPHABET.length;
   const limit = 256 - (256 % n);
@@ -89,7 +90,8 @@ export function expiryFor(form: LinkProtectionForm, now: Date): string | null {
   return new Date(now.getTime() + PRESET_DAYS[form.expiry] * DAY_MS).toISOString();
 }
 
-// A client-side check mirroring the server's AH31 guards, for the inline error.
+// A client-side check mirroring the server's hosting.link-gate.public-only guards, for the inline
+// error.
 export function formError(form: LinkProtectionForm, now: Date): string | null {
   if (form.requirePassword && !form.keepPassword) {
     const length = [...form.password].length;
@@ -134,6 +136,34 @@ export function gateChange(
     else if (current?.expiresAt) change.expiresAt = null;
   }
   return change;
+}
+
+// S32b — the link protection a contained artefact follows: its tree root's,
+// while the root is public and gated. null at top level, for an unknown
+// collection, or when the root has no gate.
+export function inheritedLinkGate(
+  collectionId: string | null,
+  collectionById: ReadonlyMap<string, CollectionSummary>,
+): { rootName: string; gate: LinkGateSummary } | null {
+  const node = collectionId ? collectionById.get(collectionId) : undefined;
+  const root = node && (node.parentId === null ? node : collectionById.get(node.rootId));
+  if (!root || root.visibility !== "public" || !root.linkGate) return null;
+  return { rootName: root.name, gate: root.linkGate };
+}
+
+// The one-line summary of a gate: "Password · Expires 1 Jul 2026", or the
+// open-link line when there is none.
+export function describeGate(gate: LinkGateSummary | null | undefined, now: Date): string {
+  if (!gate) return "Anyone with the link can open it";
+  const parts: string[] = [];
+  if (gate.passwordProtected) parts.push("Password");
+  if (gate.expiresAt)
+    parts.push(
+      isExpired(gate, now)
+        ? "Link expired"
+        : `Expires ${new Date(gate.expiresAt).toLocaleDateString(undefined, { dateStyle: "medium" })}`,
+    );
+  return parts.join(" · ");
 }
 
 export function isExpired(gate: LinkGateSummary | null | undefined, now: Date): boolean {

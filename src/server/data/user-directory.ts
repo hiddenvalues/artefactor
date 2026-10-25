@@ -26,5 +26,6 @@ export interface UserDirectory {
   lookup(ids: string[]): Promise<Map<string, UserIdentity>>;
   // Search registered users by name or email (substring, case-insensitive) for
   // the S16 add-member picker. Empty/blank query returns no results.
+  // r[impl hosting.access-list.members-from-directory]
   search(query: string, options?: UserSearchOptions): Promise<DirectoryUser[]>;
 }

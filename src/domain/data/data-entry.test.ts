@@ -7,23 +7,27 @@ import {
 import { BlobTooLarge, InvalidBlob } from "./errors";
 import { InMemoryDataRepository } from "./in-memory-data-repository";
 
-describe("assertBlobWithinBounds (AD8)", () => {
+describe("assertBlobWithinBounds", () => {
+  // r[verify data.blob.bounded-opaque-json]
   it("accepts valid JSON within the cap", () => {
     expect(() => assertBlobWithinBounds('{"cards":[1,2,3]}')).not.toThrow();
   });
 
+  // r[verify data.blob.bounded-opaque-json]
   it("rejects invalid JSON", () => {
     expect(() => assertBlobWithinBounds("{not json")).toThrow(InvalidBlob);
     expect(() => assertBlobWithinBounds("")).toThrow(InvalidBlob);
   });
 
+  // r[verify data.blob.bounded-opaque-json]
   it("rejects a blob over the 5 MB cap", () => {
     const huge = JSON.stringify("x".repeat(MAX_BLOB_BYTES + 1));
     expect(() => assertBlobWithinBounds(huge)).toThrow(BlobTooLarge);
   });
 });
 
-describe("upsertDataEntry (AD1)", () => {
+describe("upsertDataEntry", () => {
+  // r[verify data.entry.identity-immutable+2]
   it("creates a new entry with matching timestamps", () => {
     const now = new Date("2026-01-01T00:00:00Z");
     const e = upsertDataEntry({
@@ -39,6 +43,7 @@ describe("upsertDataEntry (AD1)", () => {
     expect(e.updatedAt).toEqual(now);
   });
 
+  // r[verify data.entry.identity-immutable+2]
   it("updates an existing entry, preserving id/createdAt and bumping updatedAt", () => {
     const created = upsertDataEntry({
       id: "d1",
@@ -51,34 +56,40 @@ describe("upsertDataEntry (AD1)", () => {
     const later = new Date("2026-02-01T00:00:00Z");
     const updated = upsertDataEntry({
       id: "ignored-on-update",
-      artefactId: "a1",
-      authorId: "u1",
+      artefactId: "ignored-a2",
+      authorId: "ignored-u2",
       blob: '{"v":2}',
       authoredAgainstVersion: null,
       existing: created,
       now: later,
     });
     expect(updated.id).toBe("d1");
+    // The entry's identity is fixed: an update never moves it to another pair.
+    expect(updated.artefactId).toBe("a1");
+    expect(updated.authorId).toBe("u1");
     expect(updated.createdAt).toEqual(created.createdAt);
     expect(updated.updatedAt).toEqual(later);
     expect(updated.blob).toBe('{"v":2}');
   });
 
-  it("validates the blob before upserting (AD8)", () => {
+  // r[verify data.blob.bounded-opaque-json]
+  it("validates the blob before upserting", () => {
     expect(() =>
       upsertDataEntry({ id: "d", artefactId: "a", authorId: "u", blob: "nope", authoredAgainstVersion: null }),
     ).toThrow(InvalidBlob);
   });
 });
 
-describe("upsertDataEntry — payload version pin (AD9)", () => {
+describe("upsertDataEntry — payload version pin", () => {
   const base = { id: "d1", artefactId: "a1", authorId: "u1", blob: "{}" };
 
+  // r[verify data.pin.stamped-on-write]
   it("stamps a new entry with the payload hash it was written against", () => {
     const e = upsertDataEntry({ ...base, authoredAgainstVersion: "hash-1" });
     expect(e.authoredAgainstVersion).toBe("hash-1");
   });
 
+  // r[verify data.pin.stamped-on-write]
   it("re-stamps on update, replacing the older pin", () => {
     const created = upsertDataEntry({ ...base, authoredAgainstVersion: "hash-1" });
     const updated = upsertDataEntry({
@@ -90,6 +101,8 @@ describe("upsertDataEntry — payload version pin (AD9)", () => {
     expect(updated.authoredAgainstVersion).toBe("hash-2");
   });
 
+  // r[verify data.pin.stamped-on-write]
+  // r[verify data.pin.null-before-pin]
   it("stamps an entry that predates the pin (null) on its next write", () => {
     const legacy = upsertDataEntry({ ...base, authoredAgainstVersion: null });
     expect(legacy.authoredAgainstVersion).toBeNull();
@@ -102,7 +115,8 @@ describe("upsertDataEntry — payload version pin (AD9)", () => {
   });
 });
 
-describe("InMemoryDataRepository (AD1)", () => {
+describe("InMemoryDataRepository", () => {
+  // r[verify data.entry.one-per-pair]
   it("keeps one entry per (artefact, author) and upserts", async () => {
     const repo = new InMemoryDataRepository();
     await repo.save(

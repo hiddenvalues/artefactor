@@ -4,6 +4,7 @@ import type {
   ArtefactSummary,
   CollectionSummary,
   SharedArtefactSummary,
+  SetLinkGateRequest,
   SharedCollectionSummary,
 } from "../../shared/contracts";
 import { Badge } from "$lib/components/ui/badge";
@@ -27,19 +28,22 @@ import {
   tileGrid,
   ViewControls,
 } from "$lib/components/Browse";
+import { LinkGateBadges } from "$lib/components/LinkGateBadges";
 import { VisibilityControl } from "$lib/components/VisibilityControl";
+import { inheritedLinkGate } from "$lib/link-protection";
+import { publicCollectionId } from "$lib/public-collection";
 import { VIS, type Visibility } from "$lib/format";
 import { hueVars } from "$lib/style";
 import { cn } from "$lib/utils";
 import type { ListingProps } from "../AppShell";
 
-const crumb =
-  "cursor-pointer rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50";
+// A breadcrumb: a link Button reset to the trail's own size and colour.
+const crumb = "h-auto cursor-pointer rounded-sm p-0 text-xs font-normal whitespace-normal text-inherit hover:text-foreground hover:no-underline";
 
 // One collection's page (S25–S29). It mixes ownership: the viewer's own
 // artefacts render as normal cards; others' (a contributor's in your tree, or
 // the owner's in a shared tree) as gallery cards with attribution. Structure,
-// access and lifecycle are owner-only (CL9).
+// access and lifecycle are owner-only (collections.authority.owner-only).
 export function CollectionPage({
   collection: c,
   isOwn,
@@ -54,6 +58,7 @@ export function CollectionPage({
   onGoDashboard,
   onGoGallery,
   onChangeVisibility,
+  onLinkGate,
   onManage,
   onEdit,
   onNewSub,
@@ -65,7 +70,7 @@ export function CollectionPage({
   density,
   onDensity,
   ownedProps,
-  galleryProps,
+  sharedProps,
 }: ListingProps & {
   collection: CollectionSummary;
   isOwn: boolean;
@@ -81,7 +86,10 @@ export function CollectionPage({
   onOpenCollection: (id: string) => void;
   onGoDashboard: () => void;
   onGoGallery: () => void;
-  onChangeVisibility: (v: Visibility) => void;
+  // S32b — choosing Public on a root carries its link protection.
+  onChangeVisibility: (v: Visibility, linkGate?: { password?: string; expiresAt?: string }) => void;
+  // S32b — edit or clear a public root's link protection.
+  onLinkGate: (change: SetLinkGateRequest) => void;
   onManage: () => void;
   onEdit: () => void;
   onNewSub: () => void;
@@ -96,7 +104,7 @@ export function CollectionPage({
   const chips = kindChips([...mine, ...theirs]);
   const filtered = filters.kind !== "all";
 
-  // The tree root a collection inherits from (CL4) — itself when top-level.
+  // The tree root a collection inherits from (collections.access.root-governs-tree) — itself when top-level.
   const root = c.parentId === null ? c : (collectionById.get(c.rootId) ?? c);
   // Ancestor chain for the breadcrumb, root-first (excludes the node itself).
   const chain: CollectionSummary[] = [];
@@ -128,15 +136,15 @@ export function CollectionPage({
         }
       >
         <nav aria-label="Breadcrumb" className="mb-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-          <button type="button" onClick={isOwn ? onGoDashboard : onGoGallery} className={crumb}>
+          <Button type="button" variant="link" onClick={isOwn ? onGoDashboard : onGoGallery} className={crumb}>
             {isOwn ? "Collections" : "Shared with you"}
-          </button>
+          </Button>
           {chain.map((n) => (
             <Fragment key={n.id}>
               <ChevronRight className="size-3 opacity-60" />
-              <button type="button" onClick={() => onOpenCollection(n.id)} className={crumb}>
+              <Button type="button" variant="link" onClick={() => onOpenCollection(n.id)} className={crumb}>
                 {n.name}
-              </button>
+              </Button>
             </Fragment>
           ))}
           <ChevronRight className="size-3 opacity-60" />
@@ -151,20 +159,38 @@ export function CollectionPage({
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-xl font-semibold tracking-tight">{c.name}</h1>
+            {c.description && (
+              <p className="mt-1 max-w-prose text-sm break-words text-muted-foreground">{c.description}</p>
+            )}
             <p className="mt-0.5 text-sm text-muted-foreground">{sub}</p>
           </div>
           {isOwn ? (
-            // Access control: editable on a root; Inherited on a nested one (CL4).
-            <VisibilityControl
-              visibility={root.visibility}
-              variant="pill"
-              onChoose={onChangeVisibility}
-              onManage={onManage}
-              inherited={c.parentId !== null}
-              inheritedFrom={root.name}
-              onOpenCollection={() => onOpenCollection(root.id)}
-              note="Members of this collection — and every artefact inside — inherit this access."
-            />
+            // Access control: editable on a root; Inherited on a nested one (collections.access.root-governs-tree).
+            // S32b — a public root's link protection, which the tree follows:
+            // lock / clock badges beside it, edited from the control.
+            <>
+              <LinkGateBadges gate={root.visibility === "public" ? root.linkGate : null} />
+              <VisibilityControl
+                visibility={root.visibility}
+                onChoose={onChangeVisibility}
+                onManage={onManage}
+                inherited={c.parentId !== null}
+                inheritedFrom={root.name}
+                inheritedGate={inheritedLinkGate(c.id, collectionById)}
+                onOpenCollection={() => onOpenCollection(root.id)}
+                note="Members of this collection — and every artefact inside — inherit this access."
+                publicCollectionId={publicCollectionId(c)}
+                linkProtection={
+                  c.parentId === null
+                    ? {
+                        current: c.linkGate ?? null,
+                        onPublish: (gate) => onChangeVisibility("public", gate),
+                        onSave: onLinkGate,
+                      }
+                    : undefined
+                }
+              />
+            </>
           ) : (
             // S28 — a viewer's page is read-only: the tier is a fact, not a
             // control; contribution happens via upload/move.
@@ -200,7 +226,7 @@ export function CollectionPage({
               <DropdownMenuContent align="end" className="min-w-48">
                 <DropdownMenuItem onSelect={onEdit}>
                   <Pencil />
-                  Rename & access
+                  Edit details & access
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={onNewSub}>
                   <Folder />
@@ -247,7 +273,7 @@ export function CollectionPage({
           owned={visibleMine}
           others={visibleTheirs}
           ownedProps={ownedProps}
-          galleryProps={(g) => galleryProps(g, isOwn ? () => onEject(g) : undefined)}
+          sharedProps={(g) => sharedProps(g, isOwn ? () => onEject(g) : undefined)}
         />
       )}
     </>

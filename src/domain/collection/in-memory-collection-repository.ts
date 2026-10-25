@@ -24,6 +24,14 @@ export class InMemoryCollectionRepository implements CollectionRepository {
     return { ...found };
   }
 
+  async findBySlug(slug: string): Promise<Collection | null> {
+    // Global by design, like the artefact slug (hosting.slug.globally-unique).
+    for (const c of this.store.values()) {
+      if (c.publicSlug === slug) return { ...c };
+    }
+    return null;
+  }
+
   async listByOwner(
     ownerId: string,
     scope: TenantScope,
@@ -55,7 +63,7 @@ export class InMemoryCollectionRepository implements CollectionRepository {
             c.visibility === "public" ||
             (c.visibility === "selected" && c.sharedWith.includes(viewerId))),
       )
-      // Recipients never see the grantee list (CL11).
+      // Recipients never see the grantee list (collections.read.follows-root).
       .map((c) => ({ ...c, sharedWith: [] }));
   }
 
@@ -71,7 +79,7 @@ export class InMemoryCollectionRepository implements CollectionRepository {
           c.status === "active" &&
           roots.has(c.rootId),
       )
-      // Recipient-facing like listSharedRoots — empty grantee list (CL11).
+      // Recipient-facing like listSharedRoots — empty grantee list (collections.read.follows-root).
       .map((c) => ({ ...c, sharedWith: [] }));
   }
 }

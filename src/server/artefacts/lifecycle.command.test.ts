@@ -43,7 +43,8 @@ describe("archive / restore commands (S7)", () => {
     expect((await repo.findById("a1", SCOPE))?.status).toBe("archived");
   });
 
-  it("round-trips archive → restore back to the prior visibility (AH9)", async () => {
+  // r[verify hosting.restore.prior-visibility]
+  it("round-trips archive → restore back to the prior visibility", async () => {
     await repo.save(shareArtefact(base(), { tier: "authenticated", newSlug: "s" }));
     await archiveArtefactCommand({ artefactId: "a1", requesterId: OWNER, scope: SCOPE }, { repo });
     const restored = await restoreArtefactCommand(
@@ -55,7 +56,9 @@ describe("archive / restore commands (S7)", () => {
     expect(restored.visibility).toBe("authenticated");
   });
 
-  it("treats a non-owner archive as not-found (AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.authority.owner-only]
+  it("treats a non-owner archive as not-found", async () => {
     await repo.save(base());
     await expect(
       archiveArtefactCommand({ artefactId: "a1", requesterId: "intruder", scope: SCOPE }, { repo }),
@@ -91,7 +94,8 @@ class FakePayloadStore implements PayloadStore {
   }
 }
 
-describe("delete command (S15, AH11)", () => {
+// r[verify hosting.delete.archived-only]
+describe("delete command (S15)", () => {
   let repo: InMemoryArtefactRepository;
   let dataRepo: InMemoryDataRepository;
   let viewRepo: InMemoryViewRepository;
@@ -114,12 +118,14 @@ describe("delete command (S15, AH11)", () => {
       id: "d2", artefactId: "a1", authorId: "viewer-2", blob: "[2]", authoredAgainstVersion: null,
       createdAt: now, updatedAt: now,
     });
-    // A view entry too — permanent delete must remove these as well (VT5).
+    // A view entry too — permanent delete must remove these as well.
     await viewRepo.save({
       id: "v1", artefactId: "a1", viewerId: "viewer-2", viewedAt: now,
     });
   }
 
+  // r[verify data.entry.lifecycle-bound]
+  // r[verify views.lifecycle.removed-with-artefact]
   it("deletes an archived artefact, its payload, and all its data + view entries", async () => {
     await seedArchivedWithData();
     await deleteArtefactCommand(
@@ -133,7 +139,23 @@ describe("delete command (S15, AH11)", () => {
     expect(await viewRepo.listViewersByArtefact("a1")).toEqual([]);
   });
 
-  it("refuses to delete an active artefact (AH11)", async () => {
+  // r[verify collections.bookmark.removed-with-target]
+  it("removes every user's bookmark of the deleted artefact and no other", async () => {
+    await seedArchivedWithData();
+    const bookmarkRepo = new InMemoryBookmarkRepository();
+    await bookmarkRepo.addArtefact(OWNER, "a1");
+    await bookmarkRepo.addArtefact("viewer-2", "a1");
+    await bookmarkRepo.addArtefact("viewer-2", "other");
+    await deleteArtefactCommand(
+      { artefactId: "a1", requesterId: OWNER, scope: SCOPE },
+      { repo, dataRepo, viewRepo, bookmarkRepo, payloadStore, thumbnailStore: new InMemoryThumbnailStore() },
+    );
+    expect((await bookmarkRepo.listByUser(OWNER)).artefactIds).toEqual([]);
+    expect((await bookmarkRepo.listByUser("viewer-2")).artefactIds).toEqual(["other"]);
+  });
+
+  // r[verify hosting.delete.archived-only]
+  it("refuses to delete an active artefact", async () => {
     await repo.save(base());
     await expect(
       deleteArtefactCommand(
@@ -145,7 +167,9 @@ describe("delete command (S15, AH11)", () => {
     expect(payloadStore.deleted).toEqual([]);
   });
 
-  it("treats a non-owner delete as not-found (AH8)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  // r[verify hosting.delete.archived-only]
+  it("treats a non-owner delete as not-found", async () => {
     await repo.save({ ...base(), status: "archived", archivedAt: new Date() });
     await expect(
       deleteArtefactCommand(
@@ -156,7 +180,8 @@ describe("delete command (S15, AH11)", () => {
     expect(await repo.findById("a1", SCOPE)).not.toBeNull();
   });
 
-  it("removes every thumbnail file of the deleted artefact and no other (AH11, S35)", async () => {
+  // r[verify hosting.delete.removes-everything+2]
+  it("removes every thumbnail file of the deleted artefact and no other (S35)", async () => {
     await seedArchivedWithData();
     const thumbnailStore = new InMemoryThumbnailStore();
     await thumbnailStore.put("a1", "h", new Uint8Array([1]));

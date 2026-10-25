@@ -12,7 +12,10 @@ import {
 import { setArtefactVisibilityCommand } from "../artefacts/set-visibility.command";
 import { setDataVisibilityCommand } from "../artefacts/set-data-visibility.command";
 import { clearLinkGateCommand, setLinkGateCommand } from "../artefacts/link-gate.command";
+import { setSharingCommand, UnknownMember } from "../artefacts/set-sharing.command";
+import { linkGateSummary, parseLinkGate } from "../link-gate/http";
 import { isLinkExpired, type LinkPasswordHasher } from "../../domain/artefact/link-gate";
+import type { SharingChange } from "../../domain/artefact/sharing";
 import { ScryptLinkPasswordHasher } from "../../infra/crypto/link-password-hasher";
 import {
   grantAccessCommand,
@@ -29,8 +32,11 @@ import {
   restoreArtefactCommand,
 } from "../artefacts/lifecycle.command";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
+import { recordArtefactView } from "../views/views.command";
 import { moveArtefactCommand } from "../collections/move-artefact.command";
 import { setArtefactBookmark } from "../bookmarks/bookmarks.command";
+import { linkPassesOf } from "../link-gate/passes";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import { loadArtefactRoot } from "../collections/effective";
 import { effectiveVisibility } from "../../domain/collection/effective-access";
 import {
@@ -52,7 +58,6 @@ import type {
   ArtefactListResponse,
   ArtefactSummary,
   GrantAccessRequest,
-  LinkGateSummary,
   MoveArtefactRequest,
   SetDataVisibilityRequest,
   SetVisibilityRequest,
@@ -70,14 +75,18 @@ export type ArtefactRoutesDeps = CreateArtefactDeps & {
   collectionRepo: CollectionRepository;
   bookmarkRepo: BookmarkRepository;
   userDirectory: UserDirectory;
-  // S22 (AH17) — resolves the request's tenant scope for the owner-scoped reads.
+  // S22 (hosting.tenant.invisible-to-oss) — resolves the request's tenant scope for the
+  // owner-scoped reads.
   resolveScope: TenantScopeResolver;
-  // S35 (AH11) — permanent delete removes the thumbnail files.
+  // S35 (hosting.delete.removes-everything) — permanent delete removes the thumbnail files.
   thumbnailStore: ThumbnailStore;
   // S36 — mints the owner-preview shell's first frame URL.
   framing: Framing;
   // S32a — hashes link passwords (default: scrypt).
   linkPasswordHasher?: LinkPasswordHasher;
+  // The deployment's `authenticated`-tier policy (hosting.access.policy-decided) for the bookmark
+  // add's read authorization; the OSS default when absent.
+  accessPolicy?: AccessPolicy;
 };
 
 // BFF routes for the Artefact Hosting context. S2 adds manual HTML upload;
@@ -86,13 +95,14 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   const r = new Hono<AuthEnv>();
   const hasher = deps.linkPasswordHasher ?? new ScryptLinkPasswordHasher();
 
-  // Resolve one owned artefact's effective tier (AH20) for a summary response.
+  // Resolve one owned artefact's effective tier (hosting.access.effective-from-tree-root) for a
+  // summary response.
   const effectiveVisOf = async (a: Artefact): Promise<Visibility> =>
     effectiveVisibility(a, await loadArtefactRoot(a, deps.collectionRepo));
 
   // Batch variant for list responses: one collections read covers the owner's
   // own trees; a container it doesn't know is another owner's tree the artefact
-  // was contributed into (S29/CL12) — those resolve per artefact via the repo.
+  // was contributed into (S29/collections.contributor.on-root-access-list) — those resolve per artefact via the repo.
   const effectiveVisMap = async (
     owner: string,
     scope: TenantScope,
@@ -104,16 +114,19 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     return async (a) => {
       if (a.collectionId === null) return a.visibility;
       const direct = byId.get(a.collectionId);
-      if (!direct) return effectiveVisOf(a); // cross-owner container (CL12)
+      if (!direct) return effectiveVisOf(a); // cross-owner container (collections.contributor.on-root-access-list)
       const root = byId.get(direct.rootId);
-      // Unresolvable chain fails closed (AH20), matching resolveEffectiveViewable.
+      // Unresolvable chain fails closed (hosting.access.effective-from-tree-root), matching
+      // resolveEffectiveViewable.
       return root?.visibility ?? "private";
     };
   };
 
   // S10 — "Your artefacts". The signed-in owner lists their own artefacts;
-  // archived ones are hidden by default (AH7). Grouping/filtering by kind is a
-  // client concern — the BFF returns the flat, most-recent-first list.
+  // archived ones are hidden by default
+  // (hosting.lifecycle.archived-hidden-from-listings). Grouping/filtering by kind
+  // is a client concern — the BFF returns the flat, most-recent-first list.
+  // r[impl hosting.list.own-active+2]
   r.get("/", requireAuth, async (c) => {
     // `?archived=true` returns the owner's archived artefacts (the "Your
     // artefacts" archived view, used to restore them in S7); otherwise active only.
@@ -133,9 +146,10 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     });
   });
 
-  // S4 — Owner views own artefact. Owner-only detail for a single active
-  // artefact (any visibility, including a never-shared private one). Non-owner,
-  // unknown, or archived → 404 (existence/archived-state not leaked, AH7/8).
+  // S4 — Owner views own artefact. Owner-only detail for a single active artefact
+  // (any visibility, including a never-shared private one). Non-owner, unknown,
+  // or archived → 404 (existence/archived-state not leaked,
+  // hosting.lifecycle.archived-not-served, hosting.access.no-existence-leak).
   r.get("/:id", requireAuth, async (c) => {
     try {
       const artefact = await loadOwnActiveArtefact(deps.repo, {
@@ -165,6 +179,14 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
         scope: await deps.resolveScope(c),
       });
       const scope = await deps.resolveScope(c);
+      // S47 — the owner opening their preview is a view too, recorded as on
+      // `/a/:slug`: best-effort, so a store hiccup never breaks serving.
+      // r[impl views.record.on-owner-preview]
+      try {
+        await recordArtefactView(artefact.id, ownerId(c), { viewRepo: deps.viewRepo });
+      } catch {
+        // Non-critical — serve the preview regardless.
+      }
       const own = await deps.dataRepo.findByArtefactAndAuthor(artefact.id, ownerId(c));
       // S36 — the owner preview's frame opens on a `raw` token carrying the
       // tenant scope this read ran under.
@@ -215,7 +237,8 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     if (!visibility || !VISIBILITIES.includes(visibility)) {
       return c.json({ error: "visibility must be one of " + VISIBILITIES.join(", ") }, 400);
     }
-    // S32a (AH31) — optional link protection, set with the change to `public`.
+    // S32a (hosting.link-gate.public-only) — optional link protection, set with the change to
+    // `public`.
     const linkGate = body.linkGate === undefined ? undefined : parseLinkGate(body.linkGate, false);
     if (linkGate === "invalid") {
       return c.json({ error: "linkGate must be { password?: string, expiresAt?: ISO date }" }, 400);
@@ -239,9 +262,42 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S32a — Link protection on a public artefact (AH31). Owner-only: a non-owner
-  // or unknown id is a flat 404 (AH8); archived, not public, contained, a bad
-  // password or a past expiry → 400. An omitted half is kept, `null` clears it;
+  // S55 — the Manage access dialog's Done: tier, access list, link gate and
+  // data visibility saved together (hosting.sharing.atomic-save). Owner-only: a
+  // non-owner or unknown id → 404 (hosting.access.no-existence-leak); a bad body, an unknown added member or
+  // any refused part → 400, and nothing is saved.
+  r.put("/:id/sharing", requireAuth, async (c) => {
+    const change = parseSharing(await c.req.json().catch(() => null));
+    if (change === "invalid") {
+      return c.json(
+        {
+          error:
+            "body must be { visibility, members?: string[], linkGate?: { password?, expiresAt? }, dataVisibility? }",
+        },
+        400,
+      );
+    }
+    try {
+      const updated = await setSharingCommand(
+        { artefactId: c.req.param("id"), requesterId: ownerId(c), scope: await deps.resolveScope(c), change },
+        {
+          repo: deps.repo,
+          hasher,
+          knownUsers: async (ids) => new Set((await deps.userDirectory.lookup([...ids])).keys()),
+        },
+      );
+      return c.json<ArtefactSummary>(toArtefactSummary(updated, await effectiveVisOf(updated), ownerId(c)));
+    } catch (err) {
+      if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
+      if (err instanceof UnknownMember) return c.json({ error: "unknown user" }, 400);
+      if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  // S32a — Link protection on a public artefact (hosting.link-gate.public-only). Owner-only: a
+  // non-owner or unknown id is a flat 404 (hosting.access.no-existence-leak); archived, not public,
+  // contained, a bad password or a past expiry → 400. An omitted half is kept, `null` clears it;
   // DELETE clears both. Returns the updated owner summary.
   r.put("/:id/link-gate", requireAuth, async (c) => {
     const body: unknown = await c.req.json().catch(() => null);
@@ -284,9 +340,9 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S41 — Owner-set data visibility (AH30). Owner-only, per artefact (settable
-  // while contained). Non-owner or unknown id → 404 (AH8); archived → 400, as
-  // for every other mutation. Returns the updated summary.
+  // S41 — Owner-set data visibility (hosting.data-visibility.owner-set). Owner-only, per artefact
+  // (settable while contained). Non-owner or unknown id → 404 (hosting.access.no-existence-leak);
+  // archived → 400, as for every other mutation. Returns the updated summary.
   r.put("/:id/data-visibility", requireAuth, async (c) => {
     // A JSON `null` or scalar body parses fine, so check it is an object first.
     const body: unknown = await c.req.json().catch(() => null);
@@ -322,8 +378,8 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
 
   // S16 — Manage access (the `selected` tier's member list). All three are
   // owner-only; a non-owner or unknown id is a flat 404 (existence not leaked,
-  // AH9). Membership is consulted only while visibility is `selected`, but it
-  // can be curated at any tier.
+  // hosting.authority.owner-only). Membership is consulted only while visibility
+  // is `selected`, but it can be curated at any tier.
 
   // List the current members, enriched with display identity for the picker.
   r.get("/:id/access", requireAuth, async (c) => {
@@ -403,8 +459,10 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   });
 
   // S3 — Edit artefact. Owner updates any of title / kind / payload
-  // (multipart/form-data; only the provided fields change). Archived/non-owner
-  // → 404; empty title, empty/oversize payload, unknown kind → 400 (AH2, 3, 7, 8).
+  // (multipart/form-data; only the provided fields change). Archived/non-owner →
+  // 404; empty title, empty/oversize payload, unknown kind → 400
+  // (hosting.payload.size-bounds, hosting.artefact.title-required,
+  // hosting.lifecycle.archived-not-served, hosting.access.no-existence-leak).
   r.patch("/:id", requireAuth, async (c) => {
     const body = await c.req.parseBody();
     const input: EditArtefactInput = {
@@ -432,7 +490,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S7 — Archive (soft-delete). Owner-only; active → archived (AH7).
+  // S7 — Archive (soft-delete). Owner-only; active → archived (hosting.lifecycle.archive-stamps-archived-at).
   r.post("/:id/archive", requireAuth, async (c) => {
     try {
       const updated = await archiveArtefactCommand(
@@ -453,7 +511,8 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S7 — Restore. Owner-only; archived → active at the prior visibility (AH9).
+  // S7 — Restore. Owner-only; archived → active at the prior visibility
+  // (hosting.authority.owner-only).
   r.post("/:id/restore", requireAuth, async (c) => {
     try {
       const updated = await restoreArtefactCommand(
@@ -474,7 +533,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S15 — Permanent delete (AH11). Owner-only; allowed only for an archived
+  // S15 — Permanent delete (hosting.delete.archived-only). Owner-only; allowed only for an archived
   // artefact. Non-owner / unknown → 404; active (not archived) → 400. Removes
   // the row, its payload file, and all its data entries. 204 on success.
   r.delete("/:id", requireAuth, async (c) => {
@@ -502,8 +561,10 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S25 — Add/move to collection (or back to top level with null). Owner-only
-  // on both sides (CL1/CL9); moving into a shared tree mints the slug (CL6).
+  // S25/S29 — Add/move to collection (or back to top level with null). The mover owns the
+  // artefact; the target is their own collection or a tree they contribute to
+  // (hosting.collection.move-into-own-or-contributed); moving into a shared tree mints the slug
+  // (collections.slug.minted-on-effective-share).
   r.put("/:id/collection", requireAuth, async (c) => {
     const body = await c.req
       .json<Partial<MoveArtefactRequest>>()
@@ -536,7 +597,8 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S27 — Bookmark / unbookmark (own artefacts only, BM2). Idempotent (BM1).
+  // S27 — Bookmark / unbookmark a viewable artefact (collections.bookmark.artefact-view-gated).
+  // Idempotent (collections.bookmark.set-semantics).
   r.put("/:id/bookmark", requireAuth, async (c) => {
     try {
       await setArtefactBookmark(
@@ -545,11 +607,13 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           requesterId: ownerId(c),
           bookmarked: true,
           scope: await deps.resolveScope(c),
+          passes: linkPassesOf(c),
         },
         {
           bookmarkRepo: deps.bookmarkRepo,
           artefactRepo: deps.repo,
           collectionRepo: deps.collectionRepo,
+          accessPolicy: deps.accessPolicy,
         },
       );
       return c.body(null, 204);
@@ -581,8 +645,11 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     }
   });
 
-  // S2 — Create artefact. Authenticated owner uploads title + kind + an HTML
-  // file (multipart/form-data). The session user becomes the ownerId (AH1).
+  // S2 — Create artefact. Authenticated owner uploads title + kind + an HTML file
+  // (multipart/form-data). The session user becomes the ownerId
+  // (hosting.create.owner-is-creator).
+  // r[impl hosting.create.from-upload+2]
+  // r[impl hosting.create.owner-from-session+2]
   r.post("/", requireAuth, async (c) => {
     const body = await c.req.parseBody();
     const title = typeof body.title === "string" ? body.title : "";
@@ -592,7 +659,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     if (!(file instanceof File)) {
       return c.json({ error: "an HTML payload file is required" }, 400);
     }
-    // Reject oversize before buffering the whole file into memory (AH2).
+    // Reject oversize before buffering the whole file into memory (hosting.payload.size-bounds).
     if (file.size > MAX_PAYLOAD_BYTES) {
       return c.json({ error: "payload exceeds the 100 MB cap" }, 400);
     }
@@ -616,57 +683,51 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   return r;
 }
 
-// S35 (AH25/AH27) — the card preview URL, versioned by the recorded hash so a
-// re-render busts the immutable cache. Archived artefacts are inert (AH7): no URL.
+// S55 — the shape of a `SetSharingRequest`; "invalid" on anything else.
+function parseSharing(body: unknown): SharingChange | "invalid" {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return "invalid";
+  const { visibility, members, linkGate, dataVisibility } = body as Record<string, unknown>;
+  if (typeof visibility !== "string" || !(VISIBILITIES as readonly string[]).includes(visibility)) return "invalid";
+  const change: SharingChange = { visibility: visibility as Visibility };
+  if (members !== undefined) {
+    if (!Array.isArray(members) || !members.every((m) => typeof m === "string" && m !== "")) return "invalid";
+    change.members = members as string[];
+  }
+  if (linkGate !== undefined) {
+    const gate = parseLinkGate(linkGate, true);
+    if (gate === "invalid") return "invalid";
+    change.linkGate = gate;
+  }
+  if (dataVisibility !== undefined) {
+    if (typeof dataVisibility !== "string" || !(DATA_VISIBILITIES as readonly string[]).includes(dataVisibility))
+      return "invalid";
+    change.dataVisibility = dataVisibility as NonNullable<SharingChange["dataVisibility"]>;
+  }
+  return change;
+}
+
+// S35 — the card preview URL, versioned by the recorded hash so a
+// re-render busts the immutable cache. Archived artefacts are inert
+// (hosting.lifecycle.archived-not-served): no URL.
+// r[impl hosting.thumbnail.summary-url]
 function thumbnailUrlOf(a: Artefact): string | null {
   if (a.thumbnailHash === null || a.status !== "active") return null;
   return `/api/artefacts/${encodeURIComponent(a.id)}/thumbnail?v=${a.thumbnailHash}`;
 }
 
-// `effectiveVisibility` (AH20) defaults to the artefact's own tier — correct
-// for every top-level artefact; callers pass the resolved tier for contained
-// ones (the create path is always top-level, AH1).
-// S32a (AH31) — the body of a gate change. `nullable` allows `null` (clear) on
-// the link-gate route; the visibility route only sets. "invalid" on any other
-// shape, a non-string password, or an unparseable expiry.
-function parseLinkGate(
-  body: unknown,
-  nullable: boolean,
-): { password?: string | null; expiresAt?: Date | null } | "invalid" {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return "invalid";
-  const { password, expiresAt } = body as Record<string, unknown>;
-  const out: { password?: string | null; expiresAt?: Date | null } = {};
-  if (password !== undefined) {
-    if (password === null && nullable) out.password = null;
-    else if (typeof password === "string") out.password = password;
-    else return "invalid";
-  }
-  if (expiresAt !== undefined) {
-    if (expiresAt === null && nullable) out.expiresAt = null;
-    else if (typeof expiresAt === "string" && !Number.isNaN(Date.parse(expiresAt))) {
-      out.expiresAt = new Date(expiresAt);
-    } else return "invalid";
-  }
-  return out;
-}
-
-// S32a — the owner's view of the gate: whether a password is set (never the
-// hash) and the expiry; null when there is no gate.
-function linkGateSummary(a: Artefact): LinkGateSummary | null {
-  const { passwordHash, expiresAt } = a.linkGate;
-  if (passwordHash === null && expiresAt === null) return null;
-  return { passwordProtected: passwordHash !== null, expiresAt: expiresAt?.toISOString() ?? null };
-}
-
-// `viewerId` is who the summary is for: `linkGate` rides only on the owner's own
-// summaries (S32a), never on a summary another user sees.
+// `effectiveVisibility` (hosting.access.effective-from-tree-root) defaults to the artefact's own
+// tier — correct for every top-level artefact; callers pass the resolved tier for contained ones
+// (the create path is always top-level, hosting.artefact.owner-required). `viewerId` is who the
+// summary is for: `linkGate` rides only on the owner's own summaries (S32a), never on a summary
+// another user sees.
 export function toArtefactSummary(
   a: Artefact,
   effectiveVis: Visibility = a.visibility,
   viewerId: string | null = null,
 ): ArtefactSummary {
   return {
-    ...(viewerId === a.ownerId ? { linkGate: linkGateSummary(a) } : {}),
+    // r[impl hosting.link-gate.owner-summary-only]
+    ...(viewerId === a.ownerId ? { linkGate: linkGateSummary(a.linkGate) } : {}),
     id: a.id,
     ownerId: a.ownerId,
     title: a.title,
@@ -679,6 +740,9 @@ export function toArtefactSummary(
     payloadBytes: a.payloadBytes,
     usesStorage: a.usesStorage,
     dataVisibility: a.dataVisibility,
+    // The one field thumbnail state reaches: derived host chrome, never access,
+    // serving or listing.
+    // r[impl hosting.thumbnail.host-chrome-only]
     thumbnailUrl: thumbnailUrlOf(a),
     createdAt: a.createdAt.toISOString(),
     updatedAt: a.updatedAt.toISOString(),

@@ -9,7 +9,7 @@ import type {
 type Database = typeof Db;
 
 // Drizzle/SQLite adapter for the BookmarkRepository port (S27). Set semantics
-// (BM1) via the (user, target) primary keys — adds are ON CONFLICT DO NOTHING,
+// (collections.bookmark.set-semantics) via the (user, target) primary keys — adds are ON CONFLICT DO NOTHING,
 // removes are naturally idempotent.
 export class DrizzleBookmarkRepository implements BookmarkRepository {
   constructor(private readonly db: Database) {}

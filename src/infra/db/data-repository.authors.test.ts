@@ -69,6 +69,7 @@ describe.each(adapters)("DataRepository author refs — %s (S40)", (name, make) 
     await entry("c", AUTHORS[2]!, MULTI_BYTE, "hash-v2", T2);
   });
 
+  // r[verify mcp.authors.port-bytes]
   it("reports each author's stored UTF-8 byte length and version pin", async () => {
     const refs = await repo.listAuthorsByArtefact(artefact);
     const byAuthor = new Map(refs.map((r) => [r.authorId, r]));

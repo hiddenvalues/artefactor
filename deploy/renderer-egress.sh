@@ -1,5 +1,5 @@
 #!/bin/sh
-# S37 (AH29) — host firewall rules for the isolated thumbnail renderer.
+# S37 — host firewall rules for the isolated thumbnail renderer.
 #
 # The renderer runs untrusted artefact HTML. Chromium's sandbox and the empty,
 # read-only, one-job-per-container setup (deploy/docker-compose.example.yml) are
@@ -65,6 +65,7 @@ for proto in udp tcp; do
   ensure iptables DOCKER-USER -i "$EGRESS_IF" -p "$proto" --dport 53 -j ACCEPT
 done
 
+# r[impl hosting.renderer.no-private-network+2]
 # Nothing private, in either chain: DOCKER-USER covers traffic routed *through*
 # the host (other containers, the LAN, the metadata service), INPUT covers the
 # host itself (the bridge gateway, the host's own listening ports).

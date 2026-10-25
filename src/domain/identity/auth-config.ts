@@ -1,6 +1,7 @@
-// Identity & Access (IA) — which sign-in methods a deployment enables, and
+// Identity & Access — which sign-in methods a deployment enables, and
 // whether account creation is open, as a pure decision. See
-// docs/specs/ddd/identity-access.md (the S38 amendment, IA7 and the amended IA4).
+// docs/specs/ddd/identity-access.md (the S38 amendment: `identity.signin.*` and
+// `identity.signup.gate-default`).
 //
 // Kept framework-free and unit-tested like `email-domain.ts`; `src/server/env.ts`
 // resolves it once at boot and exports the result, so the BetterAuth config
@@ -32,16 +33,19 @@ export interface AuthConfig {
  * has the unverified email+password path open, since Google has already proven
  * the address it asserts. An explicit flag always wins.
  *
- * IA7 ("production has at least one enabled sign-in method") is *checked* on this
+ * "Production has at least one enabled sign-in method"
+ * (`identity.signin.production-needs-a-method`) is *checked* on this
  * result by the env schema, not decided here: this function reports the
  * configuration, the schema refuses to boot on an unusable one.
  */
+// r[impl identity.signin.methods-configured]
 export function resolveAuthConfig(input: AuthConfigInput): AuthConfig {
   const emailPasswordEnabled =
     input.emailPassword ?? input.nodeEnv !== "production";
   return {
     emailPasswordEnabled,
     googleEnabled: input.googleConfigured,
+    // r[impl identity.signup.gate-default]
     signupAllowed:
       input.allowSignup ??
       !(emailPasswordEnabled && input.nodeEnv === "production"),

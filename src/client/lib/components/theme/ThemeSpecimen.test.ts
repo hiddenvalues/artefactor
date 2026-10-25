@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ThemeSpecimen } from "./ThemeSpecimen";
 
-// The Theme card (docs/design/README.md) shows the Mint garden product colours
-// (docs/design/theme/mint-garden.md) in light and dark, as it does the colours.
+// The Theme card (docs/design/README.md) shows the Ruby product colours
+// (docs/design/foundations/color.md) in light and dark, as it does the colours.
 const KINDS = ["prototype", "slide-deck", "form", "interactive-doc", "other"];
 
 const product = () => renderToStaticMarkup(createElement(ThemeSpecimen, { section: "product" }));

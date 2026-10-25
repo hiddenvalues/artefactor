@@ -50,7 +50,7 @@ describe("createArtefactCommand (S2)", () => {
       d,
     );
 
-    expect(a.ownerId).toBe("user_1"); // AH1
+    expect(a.ownerId).toBe("user_1"); // hosting.artefact.owner-required
     expect(a.status).toBe("active");
     expect(a.visibility).toBe("private");
     expect(a.publicSlug).toBeNull();
@@ -61,7 +61,9 @@ describe("createArtefactCommand (S2)", () => {
     expect(d.payloadStore.live.size).toBe(1);
   });
 
-  it("computes usesStorage from the payload (AH16)", async () => {
+  // r[verify hosting.uses-storage.chrome-only]
+  // r[verify hosting.uses-storage.computed-at-create]
+  it("computes usesStorage from the payload", async () => {
     const d = deps();
     const stat = await createArtefactCommand(
       { ownerId: "user_1", title: "Static", kind: "slide-deck", payload: html },
@@ -81,7 +83,8 @@ describe("createArtefactCommand (S2)", () => {
     expect(persists.usesStorage).toBe(true);
   });
 
-  it("rejects an empty title and leaves no orphan payload (AH3)", async () => {
+  // r[verify hosting.artefact.title-required]
+  it("rejects an empty title and leaves no orphan payload", async () => {
     const d = deps();
     await expect(
       createArtefactCommand(
@@ -92,7 +95,8 @@ describe("createArtefactCommand (S2)", () => {
     expect(d.payloadStore.live.size).toBe(0);
   });
 
-  it("rejects an empty payload before writing anything (AH2)", async () => {
+  // r[verify hosting.payload.size-bounds]
+  it("rejects an empty payload before writing anything", async () => {
     const d = deps();
     await expect(
       createArtefactCommand(
@@ -103,6 +107,7 @@ describe("createArtefactCommand (S2)", () => {
     expect(d.payloadStore.live.size).toBe(0);
   });
 
+  // r[verify hosting.kind.closed-set]
   it("rejects an unknown kind", async () => {
     const d = deps();
     await expect(
@@ -114,7 +119,9 @@ describe("createArtefactCommand (S2)", () => {
     expect(d.payloadStore.live.size).toBe(0);
   });
 
-  describe("thumbnail enqueue (S35, AH25)", () => {
+  describe("thumbnail enqueue (S35)", () => {
+    // r[verify hosting.thumbnail.create-enqueues-once]
+    // r[verify hosting.thumbnail.never-blocks-command]
     it("enqueues exactly one job carrying the saved payload hash, after the save", async () => {
       const d = deps();
       const thumbnails = new RecordingQueue();
@@ -134,7 +141,7 @@ describe("createArtefactCommand (S2)", () => {
           payloadRef: a.payloadRef,
           payloadHash: a.payloadHash,
           thumbnailHash: null,
-          // S37 (AH29) — the size the render input cap is checked against.
+          // S37 (hosting.renderer.input-cap) — the size the render input cap is checked against.
           payloadSize: a.payloadBytes,
         },
       ]);
@@ -142,6 +149,8 @@ describe("createArtefactCommand (S2)", () => {
       expect(a.thumbnailHash).toBeNull();
     });
 
+    // r[verify hosting.thumbnail.create-enqueues-once]
+    // r[verify hosting.thumbnail.never-blocks-command]
     it("a throwing queue does not fail the create", async () => {
       const d = deps();
       const thumbnails: ThumbnailQueue = {
@@ -157,6 +166,7 @@ describe("createArtefactCommand (S2)", () => {
       expect(d.payloadStore.live.size).toBe(1);
     });
 
+    // r[verify hosting.thumbnail.create-enqueues-once]
     it("a rejected create enqueues nothing", async () => {
       const d = deps();
       const thumbnails = new RecordingQueue();

@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { ownerId, requireAuth, type AuthEnv, type AuthUser } from "./auth";
 
 // Build a tiny app whose session is seeded directly, isolating the guard from
-// BetterAuth so the IA1 decision (authenticated ↔ allowed) is tested in itself.
+// BetterAuth so the decision (authenticated ↔ allowed) is tested in itself.
 function appWithUser(user: AuthUser | null) {
   const app = new Hono<AuthEnv>();
   app.use("*", async (c, next) => {
@@ -17,7 +17,8 @@ function appWithUser(user: AuthUser | null) {
 
 const fakeUser = { id: "user_123", email: "a@b.c", name: "A" } as AuthUser;
 
-describe("requireAuth (IA1)", () => {
+// r[verify identity.session.authenticated-principal]
+describe("requireAuth", () => {
   it("rejects an unauthenticated request with 401", async () => {
     const res = await appWithUser(null).request("/protected");
     expect(res.status).toBe(401);

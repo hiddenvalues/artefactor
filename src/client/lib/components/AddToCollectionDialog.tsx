@@ -15,13 +15,8 @@ import { Input } from "$lib/components/ui/input";
 import { hueVars } from "../style";
 import { flattenTree } from "../tree";
 import { cn } from "../utils";
+import { NavRow } from "./NavRow";
 import { indent, TreeToggle } from "./TreeToggle";
-
-const rowClass = (active: boolean) =>
-  cn(
-    "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50",
-    active && "bg-accent font-semibold",
-  );
 
 // S25 — the add/move-to-collection picker: a nested single-select tree with a
 // "Top level (no collection)" option and an inline "New collection" that
@@ -37,10 +32,10 @@ export function AddToCollectionDialog({
 }: {
   artefact: ArtefactSummary;
   // Active targets: the viewer's own collections plus contributable shared
-  // trees (S29/CL12) — mixed in one forest, distinguished by ownerId.
+  // trees (S29/collections.contributor.on-root-access-list) — mixed in one forest, distinguished by ownerId.
   collections: CollectionSummary[];
   // The signed-in user — gates the inline "New collection" (own targets only:
-  // creating nodes inside someone else's tree is owner-only, CL9).
+  // creating nodes inside someone else's tree is owner-only, collections.authority.owner-only).
   viewerId: string;
   busy?: boolean;
   onClose: () => void;
@@ -69,7 +64,7 @@ export function AddToCollectionDialog({
   const tree = flattenTree(collections, expanded);
   const targetName = target ? (byId.get(target)?.name ?? "") : null;
   const unchanged = target === artefact.collectionId;
-  // Inline create works at top level or under the viewer's own nodes (CL9).
+  // Inline create works at top level or under the viewer's own nodes (collections.authority.owner-only).
   const canCreateHere = target === null || byId.get(target)?.ownerId === viewerId;
   const inlineHint = target === null ? "at top level" : `in ${targetName}`;
 
@@ -109,11 +104,11 @@ export function AddToCollectionDialog({
         <div className="-mx-2 overflow-y-auto px-2">
           <div className="flex items-center">
             <span className="w-5 shrink-0" />
-            <button type="button" onClick={() => setTarget(null)} className={rowClass(target === null)}>
+            <NavRow tone="dialog" active={target === null} onClick={() => setTarget(null)} className="flex-1">
               <Home className="size-3.5 shrink-0" />
               <span className="flex-1">Top level (no collection)</span>
               {target === null && <Check className="size-3.5 shrink-0" />}
-            </button>
+            </NavRow>
           </div>
 
           {tree.map((node) => {
@@ -125,7 +120,7 @@ export function AddToCollectionDialog({
                   expanded={!!expanded[node.c.id]}
                   onToggle={() => setExpanded((e) => ({ ...e, [node.c.id]: !e[node.c.id] }))}
                 />
-                <button type="button" onClick={() => setTarget(node.c.id)} className={rowClass(active)}>
+                <NavRow tone="dialog" active={active} onClick={() => setTarget(node.c.id)} className="flex-1">
                   <Folder style={hueVars(node.c.id)} className="size-3.5 shrink-0 text-(--hue)" />
                   <span className="min-w-0 flex-1 truncate">{node.c.name}</span>
                   {node.c.ownerId !== viewerId && (
@@ -134,12 +129,12 @@ export function AddToCollectionDialog({
                     </Badge>
                   )}
                   {active && <Check className="size-3.5 shrink-0" />}
-                </button>
+                </NavRow>
               </div>
             );
           })}
 
-          {/* Inline new collection (own targets only, CL9). */}
+          {/* Inline new collection (own targets only, collections.authority.owner-only). */}
           {canCreateHere && (
             <div className="mt-2.5 pl-5">
               {inlineOpen ? (

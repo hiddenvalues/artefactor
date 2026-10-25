@@ -6,6 +6,8 @@
 
 - **Status:** done
 - **Depends on:** S0
+- **Delivers:** identity.signup.domain-allowlist, identity.session.owner-id,
+  identity.session.authenticated-principal, identity.signup.malformed-email-refused
 
 *Includes Google OAuth + the sign-up domain allowlist.*
 
@@ -16,9 +18,14 @@
   default.)*
 - Account creation is restricted to allowed email domains (`AUTH_ALLOWED_EMAIL_DOMAINS`,
   default `example.com` for dev; org domains set in prod), enforced for every provider via the
-  user-create hook. *(IA 4)*
-- An authenticated session exposes a stable `ownerId` to the BFF.
-- Protected endpoints reject unauthenticated requests. *(IA 1)*
+  user-create hook (`identity.signup.domain-allowlist`).
+
+r[identity.session.protected-rejects-anonymous+2]
+Without a session, every `/api` route answers a request the origin guard passes with 401
+`{ "error": "unauthorized" }`, except BetterAuth's `/api/auth/*`, `GET /api/ping`,
+`GET /api/config`, the owner's raw frame (`GET /api/artefacts/:id/raw/frame`, which its frame token
+authenticates) and the reads the access matrix decides for an anonymous caller: an artefact's
+download and thumbnail, its data authors and per-author reads, and a public collection by slug.
 
 **Implementation notes (from building S1):**
 
@@ -28,9 +35,10 @@
   `GOOGLE_CLIENT_SECRET` are set), and `trustedOrigins` for the dev client origin. Secret +
   base URL + trusted origins are env-driven (`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`,
   `AUTH_TRUSTED_ORIGINS`); production refuses the placeholder secret **and requires the Google
-  creds** (`env.ts` superRefine). *(S38 replaced the Google requirement with IA7 — production
-  needs Google credentials **or** `AUTH_EMAIL_PASSWORD=true`.)*
-- **Domain allowlist (IA 4):** pure `domain/identity/email-domain.ts`
+  creds** (`env.ts` superRefine). *(S38 replaced the Google requirement with
+  `identity.signin.production-needs-a-method` — production needs Google credentials **or**
+  `AUTH_EMAIL_PASSWORD=true`.)*
+- **Domain allowlist (`identity.signup.domain-allowlist`):** pure `domain/identity/email-domain.ts`
   (`isEmailDomainAllowed`), enforced in `databaseHooks.user.create.before` (throws
   `APIError("FORBIDDEN")` for a disallowed domain). Domains from
   `AUTH_ALLOWED_EMAIL_DOMAINS`. Covers every provider on the create path. The Google callback
@@ -51,10 +59,10 @@
   email+password form only in dev (`import.meta.env.DEV`). **Superseded by S38 — Configurable
   sign-in methods:** both methods now render behind server-sent flags from `GET /api/config`, not
   the build-time `import.meta.env.DEV` constant.
-- **Tests:** `requireAuth` guard unit test plus an end-to-end `identity.test.ts` that signs a
-  user up against a throwaway SQLite db and round-trips `/api/me` (IA 1) and rejects a
-  disallowed-domain sign-up (IA 4); pure `email-domain.test.ts` for the allowlist predicate. A
-  shared `src/test/setup.ts` points each test run at a temp DB and sets the test allowlist.
+- **Tests:** `requireAuth` guard unit test plus an end-to-end `identity.test.ts` that signs a user
+  up against a throwaway SQLite db and round-trips `/api/me` (an unauthenticated one is rejected)
+  and rejects a disallowed-domain sign-up; pure `email-domain.test.ts` for the allowlist predicate.
+  A shared `src/test/setup.ts` points each test run at a temp DB and sets the test allowlist.
 
 ### S8 — API key issue / revoke
 
@@ -75,6 +83,9 @@ OAuth. See the DDD amendment in `ddd/identity-access.md` ("Programmatic access")
 - **Status:** done
 - **Depends on:** S1
 - **Linear:** ALI-331
+- **Delivers:** identity.signin.methods-configured, identity.signin.production-needs-a-method,
+  identity.signup.gate, identity.signup.gate-default, identity.signup.domain-allowlist,
+  identity.config.methods-from-auth-config
 
 Make the production sign-in method **configuration**, not a hard-coded rule. S1 fixed
 production to Google-only (`emailAndPassword.enabled = NODE_ENV !== "production"`, and an
@@ -92,8 +103,8 @@ dev/test keep email+password, so existing deployments behave byte-identically.
 - The rules live in one pure function, `resolveAuthConfig` (`src/domain/identity/auth-config.ts`),
   following the `email-domain.ts` precedent; `env.ts` resolves it once and exports `authConfig`, so
   `auth.ts`, `ee/server/auth.pg.ts` and the config route all read one value.
-- The BFF advertises the enabled methods: `GET /api/config` gains `emailPasswordEnabled`,
-  `googleEnabled` and `signupAllowed` alongside `allowedEmailDomains`
+- The BFF advertises the enabled methods: `GET /api/config` reports `emailPasswordEnabled`,
+  `googleEnabled` and `signupAllowed`, and never the allowed email domains
   (`src/shared/contracts.ts`). These are presentation signals; the create hook and the env guard
   remain the only enforcement.
 - `AuthScreen.svelte` reads those flags from the config call it already makes on mount, instead
@@ -103,16 +114,16 @@ dev/test keep email+password, so existing deployments behave byte-identically.
   tab; nothing renders until the call settles, rather than flashing a method the server would
   reject. If the call **fails**, it shows both methods with sign-up open — the server rejects
   whatever is not configured, so failing that way never hides a method that works.
-- The sign-up domain allowlist (IA 4) is untouched and still gates every provider on the
-  create path, so enabling email+password does not widen *who* may hold an account — only how
-  they authenticate.
+- The sign-up domain allowlist (`identity.signup.domain-allowlist`) is untouched and still gates
+  every provider on the create path, so enabling email+password does not widen *who* may hold an
+  account — only how they authenticate.
 - `AUTH_ALLOW_SIGNUP` (boolean) gates account **creation** in
   `databaseHooks.user.create.before`, beside the allowlist — the one enforcement point, so it
   covers every provider. Closed, the deployment creates no accounts at all, by any route; a
   first-time Google sign-in is refused along with an email+password sign-up. It gates creation
   only: existing accounts still sign in, and the MCP connector's OAuth flow authorises an
   existing Account rather than creating one, so connector access is unaffected. A deployment for
-  a fixed team opens it, creates its accounts, and closes it again. *(IA 4)*
+  a fixed team opens it, creates its accounts, and closes it again. *(`identity.signup.gate`)*
 - **The default tracks whether an unverified credential path is open**, rather than being a
   blanket production rule: unset, the gate is **closed when email+password is enabled in
   production**, and **open** otherwise. This is a rule about verification, not a compatibility
@@ -133,24 +144,31 @@ dev/test keep email+password, so existing deployments behave byte-identically.
   email+password account is still **unverified**: anyone who can reach the deployment and type
   an allowlisted address can claim it. A deployment that opens it accepts that for as long as it
   stays open. Verified email+password sign-up needs a mail transport, which OSS does not have —
-  tracked as EE's `EI1 — Mail transport + magic-link sign-in`.
+  tracked as the EE Share invitations context's mail transport and magic-link sign-in.
 - **Acceptance:** with `AUTH_EMAIL_PASSWORD=true` and no Google credentials, a production-mode
   app boots, `GET /api/config` reports `emailPasswordEnabled: true`, and (signup open) an
   allowlisted address can sign up and sign in; with neither Google nor email+password
   configured, production startup fails with a clear message naming **both** routes out; with
   `AUTH_EMAIL_PASSWORD` unset, production still requires the Google credentials and rejects
   email+password (S1 behaviour preserved); a disallowed domain is still refused on the
-  email+password path (IA 4).
-- **Acceptance (config surface):** `GET /api/config` reports `emailPasswordEnabled`,
-  `googleEnabled` and `signupAllowed` beside `allowedEmailDomains`, resolved from the one
-  `authConfig`; `AUTH_EMAIL_PASSWORD` and `AUTH_ALLOW_SIGNUP` each accept `true`/`TRUE`/`1`/
-  `false`/`0`, treat the **empty string as unset** (so a `${VAR:-}` compose pass-through means
-  "default", not a boot failure), and reject any other string.
+  email+password path (`identity.signup.domain-allowlist`).
+
+**Acceptance (config surface):**
+
+r[identity.config.advertises-methods+3]
+`GET /api/config` reports `emailPasswordEnabled`, `googleEnabled` and `signupAllowed`, and no list
+of allowed email domains.
+
+r[identity.config.boolean-flags]
+`AUTH_EMAIL_PASSWORD` and `AUTH_ALLOW_SIGNUP` each accept `true`/`TRUE`/`1`/`false`/`0`, treat the
+**empty string as unset** (so a `${VAR:-}` compose pass-through means "default", not a boot
+failure), and reject any other string.
+
 - The slice keeps the **operator-facing** config honest in the same change: `.env.example`
   carries the four auth vars, `deploy/docker-compose.example.yml` no longer refuses to start
   without the Google credentials (`${GOOGLE_CLIENT_ID:-}`) and passes both flags through, and
-  `docs/deployment.md` §5 documents IA7 plus the gate's lifecycle — open it, create the intended
-  accounts, close it.
+  `docs/deployment.md` §5 documents the at-least-one-method rule plus the gate's lifecycle — open
+  it, create the intended accounts, close it.
 - **Acceptance (signup gate):** with `AUTH_ALLOW_SIGNUP` closed, an allowlisted address is
   refused on **both** the email+password and the Google create paths, while an account created
   earlier still signs in and an existing MCP Account still completes the OAuth flow; with the
@@ -165,13 +183,16 @@ dev/test keep email+password, so existing deployments behave byte-identically.
 - **Status:** done
 - **Depends on:** S1, S32a
 - **Linear:** ALI-380
+- **Delivers:** identity.client-ip.resolved-once, identity.client-ip.trusted-walk,
+  identity.client-ip.trusted-set, identity.client-ip.better-auth-header,
+  identity.client-ip.unlock-limit
 
-Resolve the client address once, from the socket peer and only the hops a **trusted proxy**
-appended (IA8), and make both of its consumers — the S32a unlock rate limit and BetterAuth — read
-that one value. Before this slice the unlock limit trusted the last `X-Forwarded-For` hop from any
-peer (forgeable by a client reaching the app port directly), and BetterAuth trusted the *first*
-hop (forgeable by any client, even behind the proxy), letting a client reset BetterAuth's sign-in
-rate limit and choose the `ipAddress` stored on its session.
+Resolve the client address once, from the socket peer and only the hops a **trusted proxy** appended
+(`identity.client-ip.trusted-walk`), and make both of its consumers — the S32a unlock rate limit and
+BetterAuth — read that one value. Before this slice the unlock limit trusted the last
+`X-Forwarded-For` hop from any peer (forgeable by a client reaching the app port directly), and
+BetterAuth trusted the *first* hop (forgeable by any client, even behind the proxy), letting a
+client reset BetterAuth's sign-in rate limit and choose the `ipAddress` stored on its session.
 
 - **Resolver** — `src/server/client-ip.ts`:
   - `parseTrustedProxies(value)` takes a comma-separated list of IPv4/IPv6 CIDRs or bare
@@ -194,7 +215,7 @@ rate limit and choose the `ipAddress` stored on its session.
   gone.
 - **BetterAuth** — both instances (`src/server/auth.ts`, `ee/server/auth.pg.ts`) set
   `advanced.ipAddress.ipAddressHeaders` to the one header (`CLIENT_IP_HEADER`, exported from
-  `client-ip.ts`), so its rate limiter and the stored `session.ipAddress` see only the IA8
+  `client-ip.ts`), so its rate limiter and the stored `session.ipAddress` see only the resolved
   address.
 - **Docs** — `docs/deployment.md` states the rule, the default and when to set the variable (a
   proxy on a public or otherwise non-private address, or a CDN in front); the compose example's
@@ -222,4 +243,280 @@ rate limit and choose the `ipAddress` stored on its session.
   `CF-Connecting-IP` (only `X-Forwarded-For` is read); trusting the proxy for `X-Forwarded-Proto`
   or `X-Forwarded-Host` (nothing reads them); a `none` keyword (set a loopback-only value such as
   `127.0.0.1/32` instead); rewriting `ipAddress` on existing session rows; Views (S21) and
-  analytics, which read no client address — any future consumer must use the resolver (IA8).
+  analytics, which read no client address — any future consumer must use the resolver
+  (`identity.client-ip.resolved-once`).
+
+### S48 — Verified sign-up and password reset affordances
+
+- **Status:** done
+- **Depends on:** S33a, S38
+- **Linear:** ALI-429
+- **Delivers:** identity.capabilities.superset-only
+
+*Enabler; behaviour-preserving.*
+
+The core half of verified password accounts: the sign-in screen learns from the server that a
+superset offers link-first sign-up and password reset, and offers them. **OSS sends no mail**, so
+it never turns either capability on; the EE side — the `/set-password` endpoint,
+`sendResetPassword`, the mail and the rate rules — is the EE Share invitations context's verified
+password sign-up and password reset, which holds its enforcing rule. No DDD invariant changes:
+both flags are presentation signals like S38's method flags and S33a's `magicLinkSignIn`
+(`ddd/identity-access.md`), each endpoint the UI calls exists only where a superset registers it,
+and every account a link creates still passes the one `user.create.before` gate
+(`identity.signup.gate`, S38). With both flags off the screen renders byte-identically.
+
+- **Capabilities** — `Capabilities` (`src/shared/contracts.ts`) gains `verifiedSignUp: boolean`
+  and `passwordReset: boolean`, returned unchanged on `GET /api/config` (the S33a injection).
+  **OSS default (`ossCapabilities`) and the sign-in screen's fallback: both `false`.**
+- **Verified sign-up** (`verifiedSignUp` on) — the **Create account** tab (still shown only when
+  `signupAllowed`) asks for **Name** and **Email**, no password, and its button "Email me a link to
+  create my account" calls `signIn.magicLink({ email, name, callbackURL, newUserCallbackURL,
+  errorCallbackURL })`: the post-sign-in destination (the captured `returnTo`, else `/`) as
+  `callbackURL`, the **welcome URL** — `/?welcome=set-password`, plus `&returnTo=…` when one was
+  captured — as `newUserCallbackURL`, and the sign-in screen as S33a sets it as `errorCallbackURL`.
+  With the flag on, S33a's "Email me a sign-in link" sends the same welcome `newUserCallbackURL`:
+  one rule, a new account's first landing offers a password. A sent link shows the check-your-inbox
+  panel, which never says whether an account exists; a 429 or any other failure is an inline error
+  with the form still usable.
+- **Set password** (the welcome landing) — the session gate (`App.tsx`) renders
+  **SetPasswordScreen** instead of `AppShell` for a signed-in user whose URL carries
+  `welcome=set-password`, when `/api/config` reports `verifiedSignUp`; without the capability the
+  param is ignored. "Choose a password" asks for **New password** and **Confirm password**; a
+  mismatch is caught client-side, and submit calls
+  `authClient.$fetch("/set-password", { method: "POST", body: { newPassword } })` — the EE endpoint,
+  a 404 in OSS. Server errors are inline: `PASSWORD_TOO_SHORT` / `PASSWORD_TOO_LONG` get their
+  messages, `PASSWORD_ALREADY_SET` reads "This account already has a password", `SESSION_NOT_FRESH`
+  reads "For your security, sign in again with a link to set a password", anything else a generic
+  message. Success, or "Skip — I'll sign in with email links", strips `welcome` and goes to
+  `returnTo`, else `/`.
+- **Forgot password** (`passwordReset` on) — a "Forgot password?" link under the password field in
+  sign-in mode swaps the form for **Email** and "Send reset link", calling
+  `requestPasswordReset({ email, redirectTo: "/?reset-password=1" })`. Success shows the
+  check-your-inbox panel ("If an account exists for `<email>`, we sent a reset link"), a 429 is an
+  inline error, and "Back to sign in" returns to the form.
+- **Reset landing** — a `reset-password` param renders the reset view whether or not a session
+  exists. BetterAuth's callback sets `token` (or `error=INVALID_TOKEN`) on the `redirectTo` it was
+  given, keeping its query, so it lands on `/?reset-password=1&token=…`. With a token, New + Confirm
+  password call `resetPassword({ newPassword, token })`; success shows the sign-in form with
+  "Password updated — sign in with your new password". `?error=INVALID_TOKEN` on landing, or
+  `INVALID_TOKEN` from submit, shows "That reset link has expired or was already used" with "Send
+  a new link" (the forgot form). The `reset-password` param keeps S33a's `?error` handling from
+  reading that `INVALID_TOKEN` as a spent sign-in link. The reset and expired views both offer
+  "Back to sign in". A successful reset, or leaving the reset view, ends the landing: the gate
+  refetches the session — a reset revokes every session — and drops the landing, so a later
+  sign-in lands in the app and a signed-in visitor whose session the reset revoked reads as signed
+  out. Until the refetch settles the gate keeps the auth screen, so its notice stays.
+- **Refused sign-up on landing** — S33a's landing-error mapping (magic link on) gains
+  `error=signup_refused`, the value a link lands with when the sign-up gate refuses its account:
+  "We couldn't create an account for that address — sign-up isn't open to it here". It names no
+  domain, gate or rule (`identity.signup.gate`).
+- **Components** (`src/client/lib/components/`, each with a preview) — `EmailSentPanel`, the
+  check-your-inbox state (message, address, a way back), used by S33a's sign-in link (same text),
+  by sign-up and by reset; `NewPasswordForm`, new + confirm with submit, busy and an inline error,
+  used by set and reset. Built from stock shadcn/ui primitives, `FieldError` for errors. The screen
+  spec is `docs/design/templates/auth-flow.md`.
+
+**Acceptance:**
+
+r[identity.capabilities.oss-default-off+2]
+`GET /api/config` reports `capabilities` as `createApp` was given them, injected `true` values as
+`true`, and `{ magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false }` when given
+none; under the OSS auth `POST /api/auth/set-password` → 404 and
+`POST /api/auth/request-password-reset` → 400 `RESET_PASSWORD_DISABLED`.
+
+r[identity.auth-screen.verified-sign-up]
+Every flag off → the sign-in screen as before (a password on Create account, `signUp.email`);
+`verifiedSignUp` on → Create account shows Name + Email only, submitting `Ada` / `a@b.co` calls the
+magic-link endpoint with that email and name, the destination as `callbackURL` and
+`/?welcome=set-password` as `newUserCallbackURL` (with `returnTo=%2Fa%2Fx` when `?returnTo=/a/x`
+was captured), success shows `EmailSentPanel` naming `a@b.co`, a 429 an inline error with the form
+still there, and S33a's sign-in link sends the same welcome URL.
+
+r[identity.auth-screen.welcome-landing]
+Every flag off → `?welcome=set-password` renders `AppShell`.
+
+r[identity.auth-screen.set-password]
+Set password → a mismatch is an inline error and no request, a valid submit POSTs
+`{ newPassword }` to `/api/auth/set-password` then lands on `returnTo` (or `/`) with `welcome`
+stripped, `SESSION_NOT_FRESH` and `PASSWORD_ALREADY_SET` show their messages, "Skip" lands without
+a request.
+
+r[identity.auth-screen.forgot-password]
+Every flag off → no "Forgot password?"; `passwordReset` on → "Forgot password?" in sign-in mode,
+submitting `a@b.co` calls `request-password-reset` with `redirectTo` `/?reset-password=1` then
+shows the "If an account exists…" panel, a 429 an inline error.
+
+r[identity.auth-screen.reset-landing]
+`?reset-password=1&token=t` → the reset form, a valid submit calls `reset-password` with
+`{ newPassword, token: "t" }` then shows the sign-in form with "Password updated…";
+`?reset-password=1&error=INVALID_TOKEN`, or `INVALID_TOKEN` from submit → the expired/used message
+with "Send a new link", and never S33a's sign-in-link message; a reset from
+`?reset-password=1&token=t` then a sign-in → `AppShell`, and "Back to sign in" from the reset or
+expired view then a sign-in → `AppShell`; a signed-in visitor's reset with the refetched session
+reporting none → the sign-in form with "Password updated…", never a stale `AppShell`.
+
+r[identity.auth-screen.signup-refused]
+Magic link on, `?error=signup_refused` → "We couldn't create an account for that address —
+sign-up isn't open to it here".
+
+r[identity.auth-screen.signin-signup-paths]
+(S73, in `artefact-collections.md`) Signed out, `/signin` opens the auth screen on Sign in and
+`/signup` on Create account — on Sign in, with no Create account tab, while sign-up is closed or
+email + password is off (so the magic-link block stays where it creates accounts); any
+other path opens on Sign in with the path kept. A sign-in or sign-up from either path lands on Home
+at `/` unless `?returnTo=` names another destination. On either path the tabs keep the address in
+step (`/signin` ↔ `/signup`); elsewhere they leave it alone. Signed in, both go to Home at `/`.
+
+- **Out of scope:** enforcement and mail (the EE Share invitations context); a signed-in page to
+  change or add a password; verify-after-sign-up (`requireEmailVerification`); any change to S38's
+  `AUTH_ALLOW_SIGNUP` default or the sign-in method count
+  (`identity.signin.production-needs-a-method`); password strength beyond BetterAuth's length
+  bounds.
+
+### S50 — Secrets stay out of the request log
+
+- **Status:** done
+- **Depends on:** S1
+- **Linear:** ALI-436
+- **Delivers:** identity.log.request-log-no-values
+
+The request log stops printing query-string values (`identity.log.request-log-no-values`), so the
+magic-link `token`, the OAuth callback's `code` / `state`, the frame token `?t=` and any later
+URL-borne credential never reach the app log (Coolify, a log drain). Before this slice `createApp`
+registered `hono/logger`, which printed the full query string on the way in and out.
+
+- **Middleware** — `src/server/request-log.ts`: `requestLog(print = console.log)` replaces
+  `hono/logger` as `createApp`'s first middleware, so every route, `/health` and the SPA fallback
+  included, is logged through it. Same line shape, without ANSI colour: `<-- <METHOD>
+  <path><query>` before the handler runs, `--> <METHOD> <path><query> <status> <elapsed>` after
+  (elapsed as `hono/logger` formats it: `12ms`, `1s`). A handler that throws still yields the
+  outgoing line, with the error handler's status.
+- **The rule** — one pure helper, `redactQuery(url)`, returns the path as received (not decoded)
+  plus the redacted query: empty when the URL has no query; otherwise `?` and each `&`-separated
+  part as `name=[redacted]`, or bare `name` when the part has no `=`, in original order, repeats
+  kept. Names stay percent-encoded as they came, so a crafted name can't inject a newline or forge
+  a log line.
+- **Fail closed** — no parameter is allow-listed: every value is redacted, so a new credential is
+  covered without being named.
+- **BetterAuth** — its logger prints error objects whose fields can carry a URL-borne value; S51
+  scrubs them.
+
+**Acceptance (`requestLog`):**
+
+r[identity.log.request-log-lines]
+`GET /x?token=abc&callbackURL=%2F` → exactly `<-- GET /x?token=[redacted]&callbackURL=[redacted]`
+and `--> GET /x?token=[redacted]&callbackURL=[redacted] 200 <n>ms`, neither containing `abc` or
+`%2F`; `GET /x` → `<-- GET /x`, no trailing `?`; `?flag&a=` → `?flag&a=[redacted]`; `?a=1&a=2` →
+`?a=[redacted]&a=[redacted]`; `?%0Aevil=1` → `%0Aevil=[redacted]` and no newline; the incoming line
+is printed before the handler runs; a throwing handler still logs `-->` with `500`; a `POST` logs
+method and path, never its body.
+
+**Acceptance (app):**
+
+r[identity.log.request-log-app]
+Through `createApp`, `GET /api/auth/magic-link/verify?token=S3CRET&…`,
+`GET /api/auth/callback/google?code=C0DE&state=ST4TE` and `GET /a/<slug>/frame?t=FR4METOKEN` log
+their paths and none of the values; `GET /health` logs `<-- GET /health` and
+`--> GET /health 200 …`.
+
+- **Out of scope:** credentials in paths (slugs are addresses); request bodies and headers (never
+  logged); purging tokens already in production logs (single-use or short-lived, long expired);
+  structured logging, log levels or a log drain.
+
+### S51 — BetterAuth's log prints no credential
+
+- **Status:** done
+- **Depends on:** S1, S50
+- **Linear:** ALI-438
+- **Delivers:** identity.log.auth-log-no-values
+
+BetterAuth's logger stops printing values it was handed (`identity.log.auth-log-no-values`). Before
+this slice it wrote whole error objects to the console, and every `StateError` a failed OAuth
+callback throws carries `details: { state }`, so `GET
+/api/auth/callback/google?code=…&state=S50ST4TE` logged `details: { state: 'S50ST4TE' }`
+(better-auth 1.6.20, `oauth2/state.mjs` `parseState`).
+
+- **Sink** — `src/server/auth-log.ts`: `authLog(level, message, ...args)` is BetterAuth's
+  `logger.log` option, which replaces its console sink for every `ctx.context.logger` call.
+  BetterAuth filters by level before calling it, so its default `warn` level holds. Line shape:
+  `<ISO timestamp> <LEVEL> [Better Auth]: <message> <rendered args…>`, BetterAuth's own uncoloured
+  format; `error` → `console.error`, `warn` → `console.warn`, anything else → `console.log`.
+- **The rule** — one pure helper, `renderLogArg(arg)`. The message string, and string, number,
+  boolean, `null` / `undefined` args, print as they are. An `Error` prints `name: message`, its
+  `code` when it is a string, its stack, and its `cause` chain by the same rule; every other own
+  property prints as `<key>: [redacted]`. Any other object or array prints its key names with
+  `[redacted]` values, one level deep: `{ providerId: [redacted] }`.
+- **Fail closed** — no field is allow-listed, so a field a later BetterAuth adds is redacted
+  without being named.
+- **Robust** — a cyclic `cause`, a throwing getter or a non-plain object never throws out of the
+  sink or loops; the worst case prints `[unprintable]`.
+- **Wiring** — `src/server/auth.ts` passes `logger: { log: authLog }` to `betterAuth`; the EE
+  instance (`ee/server/auth.pg.ts`) passes the same sink.
+
+**Acceptance (`authLog`):**
+
+r[identity.log.auth-log-sink]
+`authLog("error", "Failed to parse state", err)` for an `Error` named `StateError` with
+`code: "state_mismatch"`, `details: { state: "ST4TE" }`, `errorURL: undefined` → one
+`console.error` line containing `ERROR [Better Auth]: Failed to parse state`, `StateError`,
+`State mismatch`, `state_mismatch`, `details: [redacted]` and `errorURL: [redacted]`, not `ST4TE`;
+`authLog("warn", …, { providerId: "google" })` → one `console.warn` with `providerId: [redacted]`,
+not `google`; `info` and `debug` → `console.log`; a `cause` with `{ token: "S3CRET" }` prints its
+name and message, not `S3CRET`; `"abc"` and `42` print as they are; `["S3CRET"]` prints no
+`S3CRET`; a self-`cause` and a throwing getter print one line and throw nothing.
+
+**Acceptance (app):**
+
+r[identity.log.auth-log-app]
+Through `createApp`, `GET /api/auth/callback/google?code=C0DE&state=ST4TE` with no such
+verification row → 302 to `…error=state_mismatch`, and nothing written to the console during the
+request contains `ST4TE` or `C0DE`, while `state_mismatch` is printed.
+
+- **Out of scope:** scrubbing message strings (a Drizzle "Failed query … params" message on a DB
+  outage during the state lookup is the accepted edge); purging `state` values already in the
+  production logs; structured logging, log levels or a log drain; the app's own `console.*` calls;
+  BetterAuth's `info`-level sign-up line and its boot-time config warnings.
+
+### S67 — Legal links on the sign-in screen
+
+- **Status:** done
+- **Depends on:** S38
+- **Linear:** ALI-558
+- **Delivers:** identity.config.legal-links-validated, identity.config.legal-links,
+  identity.auth-screen.legal-notice
+
+A deployment can point the sign-in screen at its terms and privacy notice without editing the
+core client. Unset, the config reports two `null`s and the screen is unchanged. Nothing is stored
+and acceptance is not recorded; OSS ships no legal text.
+
+- **Config** — two optional deployment vars, `LEGAL_TERMS_URL` and `LEGAL_PRIVACY_URL`, read in
+  `src/server/env.ts`; an empty string counts as unset, like the other optional vars.
+- **Contract** — `PublicConfigResponse.legal: LegalLinks` (`src/shared/contracts.ts`).
+- **Screen** — one muted notice line under the actions of the sign-in and sign-up views of
+  `AuthScreen`, composed from existing primitives; each link opens in a new tab, so the form, a
+  `returnTo` and a pending connect survive reading it.
+
+**Acceptance (config surface):**
+
+r[identity.config.legal-links-validated]
+`LEGAL_TERMS_URL` and `LEGAL_PRIVACY_URL` are each optional. A set value is either an absolute
+`http:`/`https:` URL or a root-relative path (one leading `/`, not followed by `/` or `\`, which a
+browser would read as another host); anything else (`javascript:alert(1)`, `//evil.example/terms`,
+`/\evil.example/terms`, `terms`, `ftp://x/y`) fails startup with an error naming the var.
+
+r[identity.config.legal-links]
+`GET /api/config` reports `legal: { termsUrl: string | null, privacyUrl: string | null }`, each
+the configured value or `null`, beside the existing fields, which are unchanged.
+
+**Acceptance (sign-in screen):**
+
+r[identity.auth-screen.legal-notice+2]
+On the sign-in and sign-up views the screen shows "By continuing you agree to the Terms and
+acknowledge the Privacy notice.", each name a link to its configured URL that opens in a new tab
+(`target="_blank"`, `rel="noopener noreferrer"`). With only the terms set it reads "By continuing
+you agree to the Terms.", with only the privacy notice "By continuing you acknowledge the Privacy
+notice."; with both unset it renders nothing. The forgot-password, reset, set-password and welcome views
+show no notice.
+
+- **Out of scope:** recording acceptance (a checkbox, a per-account timestamp or terms version);
+  the legal pages themselves; links in the signed-in shell.

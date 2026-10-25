@@ -32,7 +32,8 @@ describe("manage-access commands (S16)", () => {
     await seed(repo);
   });
 
-  it("grants then revokes a member, persisting the change (AH14)", async () => {
+  // r[verify hosting.access-list.owner-managed-set]
+  it("grants then revokes a member, persisting the change", async () => {
     const granted = await grantAccessCommand(
       { artefactId: "a1", requesterId: OWNER, userId: MEMBER, scope: SCOPE },
       { repo },
@@ -69,7 +70,8 @@ describe("manage-access commands (S16)", () => {
     ).rejects.toBeInstanceOf(InvariantViolation);
   });
 
-  it("treats a non-owner request as not-found (AH9)", async () => {
+  // r[verify hosting.authority.owner-only]
+  it("treats a non-owner request as not-found", async () => {
     await expect(
       grantAccessCommand(
         { artefactId: "a1", requesterId: "intruder", userId: MEMBER, scope: SCOPE },
@@ -81,7 +83,8 @@ describe("manage-access commands (S16)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  it("retains members across an unshare → re-share to selected (AH13)", async () => {
+  // r[verify hosting.access-list.retained]
+  it("retains members across an unshare → re-share to selected", async () => {
     // Share as selected (mints slug) + add a member.
     await setArtefactVisibilityCommand(
       { artefactId: "a1", requesterId: OWNER, visibility: "selected", scope: SCOPE },

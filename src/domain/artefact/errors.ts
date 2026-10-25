@@ -4,12 +4,14 @@ export class DomainError extends Error {}
 export class InvariantViolation extends DomainError {}
 
 // Raised when an operation targets an artefact that does not exist or that the
-// requester is not allowed to see — the two are deliberately indistinguishable
-// so a non-owner cannot probe for the existence of a private artefact (AH8).
+// requester is not allowed to see — the two are deliberately indistinguishable so
+// a non-owner cannot probe for the existence of a private artefact
+// (hosting.access.no-existence-leak).
 export class ArtefactNotFound extends DomainError {}
 
-// S35 (AH25) — the thumbnail renderer cannot run in this process (e.g. Chromium
-// is not installed). Cards then show the kind placeholder; nothing else changes.
+// S35 (hosting.thumbnail.off-without-renderer) — the thumbnail renderer cannot run
+// in this process (e.g. Chromium is not installed). Cards then show the kind
+// placeholder; nothing else changes.
 export class ThumbnailRendererUnavailable extends Error {
   constructor(message = "thumbnail renderer unavailable", options?: { cause?: unknown }) {
     super(message, options);
@@ -17,11 +19,16 @@ export class ThumbnailRendererUnavailable extends Error {
   }
 }
 
-// S32a (AH22/AH24) — the matrix admits the viewer, but the artefact's link gate
-// asks them for its password first. Raised only after a grant, so it never
-// reveals anything a denied probe could not already see.
+// S32a (hosting.link-gate.narrows-public-audience, hosting.link-gate.no-existence-leak) — the
+// matrix admits the viewer, but the artefact's link gate asks them for its password first. Raised
+// only after a grant, so it never reveals anything a denied probe could not already see.
 export class LinkGateChallenge extends DomainError {
   constructor(ref: string) {
     super(`${ref}: this link is password protected — open it in a browser to unlock it`);
   }
 }
+
+// S60 (hosting.save.no-lost-update) — a save lost the race: the stored artefact moved past the
+// revision this aggregate was loaded at, or its row is gone (or, at revision 0, already exists).
+// The save changed nothing; the command reloads and re-applies (hosting.save.reapply-on-conflict).
+export class ArtefactConflict extends DomainError {}

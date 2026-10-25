@@ -50,7 +50,7 @@ export const KINDS: Record<ArtefactKind, KindMeta> = Object.fromEntries(
   KIND_ORDER.map((k) => [k, kindMeta(k)]),
 ) as Record<ArtefactKind, KindMeta>;
 
-// Shown for an artefact that persists data (AH16 `usesStorage`).
+// Shown for an artefact that persists data (hosting.uses-storage.chrome-only `usesStorage`).
 export const STORAGE_LABEL = "Saves data";
 
 /** Per-visibility presentation metadata. */
@@ -62,15 +62,15 @@ export interface VisMeta {
 
 export const VIS: Record<Visibility, VisMeta> = {
   private: { label: "Private", desc: "Only you", icon: Lock },
-  selected: { label: "Specific people", desc: "Only people you choose", icon: UserPlus },
-  authenticated: { label: "Members", desc: "Any signed-in user", icon: Users },
+  selected: { label: "Specific people", desc: "Only org members you invite", icon: UserPlus },
+  authenticated: { label: "Org members", desc: "Anyone in the organisation", icon: Users },
   public: { label: "Public", desc: "Anyone with the link", icon: Globe },
 };
 
 export const VIS_ORDER: Visibility[] = ["private", "selected", "authenticated", "public"];
 
-// S41 (AH30) — whose saved data a viewer may load. Offered in the visibility
-// popover's "Saved data" section, only for artefacts that persist data.
+// S41 (hosting.data-visibility.owner-set) — whose saved data a viewer may load. Offered in the
+// visibility popover's "Saved data" section, only for artefacts that persist data.
 export type DataVisibility = ArtefactSummary["dataVisibility"];
 
 export const DATA_VIS: Record<DataVisibility, { label: string; desc: string }> = {

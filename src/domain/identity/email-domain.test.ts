@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { emailDomain, isEmailDomainAllowed } from "./email-domain";
 
-// IA invariant 4 — account creation is restricted to allowed email domains.
+// Account creation is restricted to allowed email domains.
 const ALLOWED = ["example.com", "example.org"];
 
 describe("emailDomain", () => {
@@ -17,6 +17,7 @@ describe("emailDomain", () => {
   });
 });
 
+// r[verify identity.signup.domain-allowlist+2]
 describe("isEmailDomainAllowed", () => {
   it("accepts the allowed domains, case-insensitively", () => {
     expect(isEmailDomainAllowed("alice@example.com", ALLOWED)).toBe(true);
@@ -34,6 +35,7 @@ describe("isEmailDomainAllowed", () => {
     expect(isEmailDomainAllowed("x@notexample.com", ALLOWED)).toBe(false);
   });
 
+  // r[verify identity.signup.malformed-email-refused]
   it("rejects malformed emails", () => {
     expect(isEmailDomainAllowed("not-an-email", ALLOWED)).toBe(false);
     expect(isEmailDomainAllowed("@example.com", ALLOWED)).toBe(false);
@@ -43,16 +45,18 @@ describe("isEmailDomainAllowed", () => {
     expect(isEmailDomainAllowed("alice@example.com", [])).toBe(false);
   });
 
-  // S22 part C / IA5 — the wildcard `*` opens sign-up to any valid email domain
+  // S22 part C — the wildcard `*` opens sign-up to any valid email domain
   // (the cloud open-signup config). OSS keeps its configured domains (no `*`), so
   // this is opt-in and behaviour-preserving.
-  describe("wildcard (IA5 — open signup)", () => {
+  // r[verify identity.signup.allow-all]
+  describe("wildcard (open signup)", () => {
     it("accepts any valid domain when `*` is in the allowlist", () => {
       expect(isEmailDomainAllowed("anyone@gmail.com", ["*"])).toBe(true);
       // `*` alongside explicit domains still opens everything.
       expect(isEmailDomainAllowed("x@whatever.io", ["example.com", "*"])).toBe(true);
     });
 
+    // r[verify identity.signup.malformed-email-refused]
     it("still rejects a malformed email even with `*` (needs a real domain)", () => {
       expect(isEmailDomainAllowed("not-an-email", ["*"])).toBe(false);
       expect(isEmailDomainAllowed("@example.com", ["*"])).toBe(false);

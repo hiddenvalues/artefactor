@@ -17,13 +17,15 @@ import { enqueueThumbnail, type ThumbnailQueue } from "../thumbnails/thumbnail-s
 // the AH invariants. Depends only on ports, so it is unit-tested with in-memory
 // doubles.
 export interface CreateArtefactInput {
+  // The authenticated principal creating it — the session user (manual upload) or the token's
+  // account (connector); never a value taken from the request.
   ownerId: string;
   title: string;
   kind: string; // unvalidated; checked against the closed kind enum here
   payload: Uint8Array; // raw trusted HTML bytes
-  // S22/AH17 — the owning tenant. Omitted by OSS callers (the factory defaults
-  // to DEFAULT_TENANT, byte-identical); a multi-tenant superset passes the
-  // creator's active org so the artefact is stamped with its tenant (ET2/T1).
+  // S22, hosting.tenant.invisible-to-oss — the owning tenant. Omitted by OSS callers (the factory
+  // defaults to DEFAULT_TENANT, byte-identical); a multi-tenant superset passes the creator's
+  // active org, resolved through the tenant scope seam, so the artefact is stamped with its tenant.
   tenantId?: string;
 }
 
@@ -32,25 +34,28 @@ export interface CreateArtefactDeps {
   payloadStore: PayloadStore;
   newId?: () => string;
   now?: () => Date;
-  // S35 (AH25) — renders the thumbnail after the save; absent = none.
+  // S35 — renders the thumbnail after the save; absent = none.
   thumbnails?: ThumbnailQueue;
 }
 
+// r[impl hosting.ingestion.parity]
+// r[impl hosting.create.owner-is-creator]
 export async function createArtefactCommand(
   input: CreateArtefactInput,
   deps: CreateArtefactDeps,
 ): Promise<Artefact> {
-  // Cheap pre-validation before touching the filesystem: reject unknown kinds
-  // and obviously-bad payloads so we never write an empty/oversize file. The
-  // domain factory below re-checks these as the invariant authority (AH 2, 3).
+  // Cheap pre-validation before touching the filesystem: reject unknown kinds and
+  // obviously-bad payloads so we never write an empty/oversize file. The domain
+  // factory below re-checks these as the invariant authority
+  // (hosting.payload.size-bounds, hosting.artefact.title-required).
   if (!isArtefactKind(input.kind)) {
     throw new InvariantViolation(`unknown artefact kind: ${input.kind}`);
   }
   if (input.payload.byteLength === 0) {
-    throw new InvariantViolation("payload must not be empty"); // AH2
+    throw new InvariantViolation("payload must not be empty"); // hosting.payload.size-bounds
   }
   if (input.payload.byteLength > MAX_PAYLOAD_BYTES) {
-    throw new InvariantViolation("payload exceeds the 100 MB cap"); // AH2
+    throw new InvariantViolation("payload exceeds the 100 MB cap"); // hosting.payload.size-bounds
   }
 
   const stored = await deps.payloadStore.put(input.payload);
@@ -62,18 +67,23 @@ export async function createArtefactCommand(
       title: input.title,
       kind: input.kind,
       payload: stored,
-      tenantId: input.tenantId, // AH17 — undefined ⇒ DEFAULT_TENANT (OSS)
-      usesStorage: payloadUsesStorage(input.payload), // AH16
+      // undefined ⇒ DEFAULT_TENANT in OSS (hosting.tenant.invisible-to-oss)
+      tenantId: input.tenantId,
+      // r[impl hosting.uses-storage.computed-at-create]
+      usesStorage: payloadUsesStorage(input.payload), // hosting.uses-storage.chrome-only
       now: (deps.now ?? (() => new Date()))(),
     });
-    await deps.repo.save(artefact);
+    // A fresh id at revision 0: a conflict here is a bug, so it surfaces (S60).
+    artefact = await deps.repo.save(artefact);
   } catch (err) {
     // Don't leak an orphaned payload file if the aggregate is rejected
     // (e.g. empty title) or persistence fails.
     await deps.payloadStore.delete(stored.ref).catch(() => {});
     throw err;
   }
-  // Outside the rollback: a thumbnail never blocks or fails the create (AH25).
+  // Outside the rollback: a thumbnail never blocks or fails the create
+  // (hosting.thumbnail.never-blocks-command).
+  // r[impl hosting.thumbnail.create-enqueues-once]
   enqueueThumbnail(deps.thumbnails, artefact);
   return artefact;
 }

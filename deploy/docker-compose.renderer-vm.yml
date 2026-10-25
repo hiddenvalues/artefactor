@@ -1,4 +1,4 @@
-# Artefactor — the isolated thumbnail renderer on a VM of its own (S37, AH29).
+# Artefactor — the isolated thumbnail renderer on a VM of its own (S37).
 #
 # This is the renderer of deploy/docker-compose.example.yml, alone, for a
 # dedicated renderer VM: the shape docs/deployment.md §9 documents for Coolify,

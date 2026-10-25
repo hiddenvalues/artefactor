@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ArtefactSummary } from "../../shared/contracts";
-import { applyFilters, kindChips, showCollectionKindChips, showCollectionSort, type Filters } from "./browse";
+import { applyFilters, kindChips, showCollectionKindChips, showCollectionSort, SORT_LABELS, SORTS, type Filters } from "./browse";
+import { restore } from "./prefs";
 
 // S43 — which controls a collection page offers.
 const art = (kind: string) => ({ kind, effectiveVisibility: "private" }) as ArtefactSummary;
@@ -22,6 +23,7 @@ describe("collection page controls (S43)", () => {
 
 // S46 — the top bar's search is global; it no longer filters a page's grid.
 describe("applyFilters (S46)", () => {
+  // r[verify platform.search.filters-ignore-text]
   it("filters by no text: a stray query on the filters is ignored", () => {
     const list = [
       { ...art("form"), title: "Roadmap", updatedAt: "2026-01-02" },
@@ -29,5 +31,21 @@ describe("applyFilters (S46)", () => {
     ] as ArtefactSummary[];
     const f = { kind: "all", access: "all", sort: "updated", query: "road" } as Filters;
     expect(applyFilters(list, f).map((a) => a.title)).toEqual(["Roadmap", "Budget"]);
+  });
+});
+
+// S65 — no card or row shows a size, so there is no Size sort.
+describe("sort options (S65)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sorts by update or title only", () => {
+    expect([...SORTS]).toEqual(["updated", "title"]);
+    expect(Object.keys(SORT_LABELS)).toEqual(["updated", "title"]);
+  });
+
+  it("falls back to the default when a remembered sort is the retired size", () => {
+    const stored = new Map([["artefactor:sort", "size"]]);
+    vi.stubGlobal("localStorage", { getItem: (k: string) => stored.get(k) ?? null });
+    expect(restore("sort", SORTS, "updated")).toBe("updated");
   });
 });

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Browser, LaunchOptions } from "playwright-core";
 import { MAX_RENDER_INPUT_BYTES } from "../domain/artefact/artefact";
+import { ThumbnailRendererUnavailable } from "../domain/artefact/errors";
 import { createRendererApp, type RenderEngine } from "./app";
 import { PlaywrightThumbnailRenderer } from "./playwright-thumbnail-renderer";
 
-// S37 (AH29) — the renderer role's HTTP surface: one job at a time, a hard
+// S37 — the renderer role's HTTP surface: one job at a time, a hard
 // input cap, and (by default) one job per process.
 
 function post(app: { request: (req: Request) => Response | Promise<Response> }, body: string | Uint8Array) {
@@ -55,8 +56,9 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("renderer role (S37, AH29)", () => {
+describe("renderer role (S37)", () => {
   describe("sandboxed launch", () => {
+    // r[verify hosting.renderer.sandbox-on]
     it("probes Chromium with its sandbox on and reports ready", async () => {
       const spy = launchSpy(async () => ({ close: async () => {} }) as unknown as Browser);
       const renderer = createRendererApp({
@@ -75,6 +77,8 @@ describe("renderer role (S37, AH29)", () => {
       expect(spy.calls).toEqual([expect.objectContaining({ chromiumSandbox: true })]);
     });
 
+    // r[verify hosting.renderer.sandbox-on]
+    // r[verify hosting.renderer.unavailable-without-sandbox+2]
     it("when the sandboxed launch fails: unavailable, and never a launch with the sandbox off", async () => {
       const spy = launchSpy(() => Promise.reject(new Error("No usable sandbox!")));
       const renderer = createRendererApp({
@@ -127,6 +131,7 @@ describe("renderer role (S37, AH29)", () => {
       expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([82, 73, 70, 70]));
     });
 
+    // r[verify hosting.renderer.http-input-cap]
     it("answers 413 above MAX_RENDER_INPUT_BYTES without a launch", async () => {
       const spy = launchSpy(async () => ({ close: async () => {} }) as unknown as Browser);
       const r = make(new PlaywrightThumbnailRenderer({ launch: spy.launch }));
@@ -157,6 +162,7 @@ describe("renderer role (S37, AH29)", () => {
       expect(res.status).toBe(411);
     });
 
+    // r[verify hosting.renderer.failed-render-422+2]
     it("answers 422 when the render fails", async () => {
       const engine = fakeEngine();
       engine.failWith = new Error("thumbnail render timed out after 15000 ms");
@@ -165,6 +171,18 @@ describe("renderer role (S37, AH29)", () => {
       expect((await post(r.app, "<p>")).status).toBe(422);
     });
 
+    // r[verify hosting.renderer.failed-render-422+2]
+    it("answers 503 with Retry-After when Chromium can't be launched for a render", async () => {
+      const engine = fakeEngine();
+      engine.failWith = new ThumbnailRendererUnavailable("No usable sandbox!");
+      const r = make(engine);
+      await r.ready;
+      const res = await post(r.app, "<p>");
+      expect(res.status).toBe(503);
+      expect(res.headers.get("retry-after")).toBe("1");
+    });
+
+    // r[verify hosting.renderer.busy-retry-after]
     it("answers 503 with Retry-After while another job is in flight", async () => {
       const engine = fakeEngine();
       engine.hold = true;
@@ -210,6 +228,7 @@ describe("renderer role (S37, AH29)", () => {
       return { ...r, exit, engine };
     }
 
+    // r[verify hosting.renderer.one-job-per-process]
     it("after one 200 at uptime 2 s: refuses further work, and exits 0 at uptime 10 s, not before", async () => {
       const r = clocked(true);
       await r.ready;
@@ -228,6 +247,7 @@ describe("renderer role (S37, AH29)", () => {
       expect(r.engine.renders).toBe(1);
     });
 
+    // r[verify hosting.renderer.one-job-per-process]
     it("after a job past the minimum uptime: exits at once, with a zero (never negative) delay", async () => {
       vi.useFakeTimers();
       const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
@@ -251,6 +271,7 @@ describe("renderer role (S37, AH29)", () => {
       expect(exit).toHaveBeenCalledExactlyOnceWith(0);
     });
 
+    // r[verify hosting.renderer.one-job-per-process]
     it("drains after a failed render too", async () => {
       const engine = fakeEngine();
       engine.failWith = new Error("page crashed");
@@ -264,6 +285,7 @@ describe("renderer role (S37, AH29)", () => {
       expect(r.exit).toHaveBeenCalledExactlyOnceWith(0);
     });
 
+    // r[verify hosting.renderer.one-job-per-process]
     it("a 413 doesn't drain", async () => {
       const r = clocked(true);
       await r.ready;
@@ -276,6 +298,7 @@ describe("renderer role (S37, AH29)", () => {
       expect(r.exit).toHaveBeenCalledOnce();
     });
 
+    // r[verify hosting.renderer.one-job-per-process]
     it("with exit-after-job off: keeps serving and never exits", async () => {
       const r = clocked(false);
       await r.ready;

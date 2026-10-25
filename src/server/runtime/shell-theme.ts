@@ -1,7 +1,7 @@
 // S45 — App dark mode with a UI toggle: the server-rendered chrome's tokens.
 //
 // The host shell (`/a/:slug`) and the unlock page are not the React SPA, so
-// they can't read src/client/app.css; they carry the Mint garden values they
+// they can't read src/client/app.css; they carry the Ruby values they
 // need here, in light and dark. Every token named like an app.css token equals
 // it (src/client/lib/tokens.test.ts); `oklch(1 0 0)` is app.css's `#fff`, so
 // the chrome carries no hex literal. The `warn-*` tokens are shell-local (the
@@ -29,17 +29,18 @@ export type ShellToken =
   | "shadow"
   | "shadow-pop";
 
+// r[impl platform.theme.shell-tokens-match-app]
 export const SHELL_TOKENS: Record<ShellMode, Record<ShellToken, string>> = {
   light: {
     background: "oklch(1 0 0)",
-    foreground: "oklch(0.145 0 0)",
+    foreground: "oklch(0.2 0.03 340)",
     card: "oklch(1 0 0)",
-    muted: "oklch(0.97 0 0)",
-    "muted-foreground": "oklch(0.556 0 0)",
-    border: "oklch(0.922 0 0)",
-    primary: "oklch(0.85 0.05 170)",
-    "primary-foreground": "oklch(0.26 0.05 150)",
-    ring: "oklch(0.62 0.1 170)",
+    muted: "oklch(0.965 0.008 340)",
+    "muted-foreground": "oklch(0.5 0.025 340)",
+    border: "oklch(0.915 0.012 340)",
+    primary: "oklch(0.54 0.2 340)",
+    "primary-foreground": "oklch(1 0 0)",
+    ring: "oklch(0.54 0.2 340)",
     destructive: "oklch(0.577 0.245 27.3)",
     "warn-bg": "oklch(0.97 0.07 95)",
     "warn-fg": "oklch(0.45 0.1 70)",
@@ -48,15 +49,15 @@ export const SHELL_TOKENS: Record<ShellMode, Record<ShellToken, string>> = {
     "shadow-pop": "0 8px 24px oklch(0.2 0 0 / 12%)",
   },
   dark: {
-    background: "oklch(0.11 0.02 150)",
-    foreground: "oklch(0.97 0.02 90)",
-    card: "oklch(0.155 0.025 150)",
-    muted: "oklch(0.21 0.025 150)",
-    "muted-foreground": "oklch(0.78 0.03 150)",
-    border: "oklch(1 0 0 / 9%)",
-    primary: "oklch(0.85 0.05 170)",
-    "primary-foreground": "oklch(0.26 0.05 150)",
-    ring: "oklch(0.85 0.05 170)",
+    background: "oklch(0.17 0.004 340)",
+    foreground: "oklch(0.96 0.003 340)",
+    card: "oklch(0.22 0.004 340)",
+    muted: "oklch(0.27 0.004 340)",
+    "muted-foreground": "oklch(0.78 0.008 340)",
+    border: "oklch(1 0 0 / 10%)",
+    primary: "oklch(0.8 0.13 340)",
+    "primary-foreground": "oklch(0.2 0.04 340)",
+    ring: "oklch(0.8 0.13 340)",
     destructive: "oklch(0.704 0.191 22.216)",
     "warn-bg": "oklch(0.27 0.05 80)",
     "warn-fg": "oklch(0.88 0.11 88)",

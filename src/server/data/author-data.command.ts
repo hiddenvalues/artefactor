@@ -14,11 +14,11 @@ import type { PassLookup } from "../link-gate/passes";
 // author's blob so the host can re-seed the served artefact read-only.
 //
 // Read access follows the Artefact access matrix, not authorship: a viewer who
-// may view the artefact (AD4) may load **any** author's entry — narrowed by the
-// owner's data visibility (S41, AD11): under `own` a non-owner loads only their
+// may view the artefact (data.read.follows-artefact-access) may load **any** author's entry — narrowed by the
+// owner's data visibility (S41, data.visibility.narrows-reads): under `own` a non-owner loads only their
 // own, and the author list shows only what they may load. Crucially these
 // are NOT auth-gated by the caller's identity — an unauthenticated viewer of a
-// `public` artefact may read others' entries (they simply cannot write, AD5).
+// `public` artefact may read others' entries (they simply cannot write, data.write.own-context-only).
 // Missing / archived / not-viewable artefact → not-found, exactly like own-data.
 
 // List the authors who have a data entry for the referenced artefact.
@@ -31,7 +31,8 @@ export async function listDataAuthors(
 ): Promise<DataAuthorRef[]> {
   const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope, passes);
   const authors = await deps.dataRepo.listAuthorsByArtefact(artefact.id);
-  // AD11 — only the authors this viewer may load; never a refusal of the list.
+  // r[impl data.visibility.listing-filtered]
+  // Only the authors this viewer may load; never a refusal of the list.
   return authors.filter((a) => canLoadAuthorData(artefact, viewerId, a.authorId));
 }
 
@@ -46,7 +47,9 @@ export async function getAuthorDataEntry(
   passes?: PassLookup,
 ): Promise<DataEntry | null> {
   const artefact = await resolveViewableArtefact(deps, ref, viewerId, scope, passes);
-  // AD11 — a refused author is a flat not-found, whether or not they hold an entry.
+  // r[impl data.visibility.author-read-refused]
+  // r[impl data.visibility.refusal-no-leak]
+  // A refused author is a flat not-found, whether or not they hold an entry.
   if (!canLoadAuthorData(artefact, viewerId, authorId)) {
     throw new ArtefactNotFound(ref);
   }

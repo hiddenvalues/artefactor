@@ -4,8 +4,8 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 
-// S41 (AH30) — `dataVisibility` round-trips through both ArtefactRepository
-// adapters, and a row written before the column existed reads `shared`.
+// S41 (hosting.data-visibility.owner-set) — `dataVisibility` round-trips through both
+// ArtefactRepository adapters, and a row written before the column existed reads `shared`.
 
 const OWNER = "dv-owner";
 
@@ -56,8 +56,7 @@ describe.each(adapters)("ArtefactRepository dataVisibility — %s (S41)", (name,
   });
 
   it("round-trips a flip to shared", async () => {
-    const a = artefact(id("shared"));
-    await repo.save(a);
+    const a = await repo.save(artefact(id("shared")));
     await repo.save(setDataVisibility(a, OWNER, "shared"));
     expect((await repo.findById(id("shared"), SINGLETON_SCOPE))!.dataVisibility).toBe(
       "shared",
@@ -66,6 +65,7 @@ describe.each(adapters)("ArtefactRepository dataVisibility — %s (S41)", (name,
 });
 
 describe("SQLite migration — data_visibility (S41)", () => {
+  // r[verify hosting.data-visibility.legacy-rows-shared]
   it("reads a row that predates the column as shared", async () => {
     const { sqlite } = await migratedDb();
     const { DrizzleArtefactRepository } = await import("./artefact-repository.drizzle");

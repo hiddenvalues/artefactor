@@ -8,10 +8,10 @@ import type {
 } from "../shared/contracts";
 import { mintFrameToken, type MintedFrame } from "../test/frame";
 
-// End-to-end S41 — Owner-set data visibility: shared or own-only. The owner's
-// `PUT …/data-visibility` route (AH30), and AD11's four enforcement points
-// through the real app: the author list, the author read, the frame-token mint
-// and the frame redeem.
+// End-to-end S41 — Owner-set data visibility: shared or own-only. The owner's `PUT
+// …/data-visibility` route (hosting.data-visibility.owner-set), and the four enforcement points of data.visibility.narrows-reads
+// through the real app: the author list, the author read, the frame-token mint and the frame
+// redeem.
 describe("owner-set data visibility (S41)", () => {
   let app: Hono;
   let owner: string;
@@ -112,12 +112,14 @@ describe("owner-set data visibility (S41)", () => {
     bobId = await meId(bob);
   });
 
-  describe("PUT /api/artefacts/:id/data-visibility (AH30)", () => {
+  describe("PUT /api/artefacts/:id/data-visibility", () => {
+    // r[verify hosting.data-visibility.new-default-own]
     it("a new artefact reports own-only", async () => {
       const { created } = await make();
       expect(created.dataVisibility).toBe("own");
     });
 
+    // r[verify hosting.data-visibility.owner-set]
     it("the owner sets it and gets the updated summary", async () => {
       const { id } = await make();
       const res = await setDataVisibility(id, owner, { dataVisibility: "shared" });
@@ -138,7 +140,10 @@ describe("owner-set data visibility (S41)", () => {
       expect((await setDataVisibility(id, owner, "own")).status).toBe(400);
     });
 
-    it("is 404 for a non-owner (AH8/AH9)", async () => {
+    // r[verify hosting.access.no-existence-leak]
+    // r[verify hosting.authority.owner-only]
+    // r[verify hosting.data-visibility.owner-set]
+    it("is 404 for a non-owner", async () => {
       const { id } = await make();
       expect((await setDataVisibility(id, alice, { dataVisibility: "shared" })).status).toBe(404);
     });
@@ -148,7 +153,9 @@ describe("owner-set data visibility (S41)", () => {
       expect((await setDataVisibility(id, null, { dataVisibility: "shared" })).status).toBe(401);
     });
 
-    it("is refused on an archived artefact with the archived-mutation status (AH7)", async () => {
+    // r[verify hosting.lifecycle.archived-frozen]
+    // r[verify hosting.data-visibility.owner-set]
+    it("is refused on an archived artefact with the archived-mutation status", async () => {
       const { id } = await make();
       await app.request(`/api/artefacts/${id}/archive`, {
         method: "POST",
@@ -158,7 +165,8 @@ describe("owner-set data visibility (S41)", () => {
     });
   });
 
-  describe("under shared (AD4 unchanged)", () => {
+  describe("under shared", () => {
+    // r[verify data.visibility.narrows-reads]
     it("a viewer lists every author and loads another's entry", async () => {
       const { id, slug } = await withEntries();
       await setDataVisibility(id, owner, { dataVisibility: "shared" });
@@ -168,7 +176,8 @@ describe("owner-set data visibility (S41)", () => {
     });
   });
 
-  describe("under own (AD11)", () => {
+  describe("under own", () => {
+    // r[verify data.visibility.listing-filtered]
     it("a non-owner lists only their own entry; the owner lists all; a viewer with none gets []", async () => {
       const { slug } = await withEntries();
       expect(await authorIds(slug, alice)).toEqual([aliceId]);
@@ -176,6 +185,8 @@ describe("owner-set data visibility (S41)", () => {
       expect(await authorIds(slug, carol)).toEqual([]);
     });
 
+    // r[verify data.visibility.author-read-refused]
+    // r[verify data.visibility.refusal-no-leak]
     it("a non-owner's load of another author is the plain 404; the owner's succeeds", async () => {
       const { slug } = await withEntries();
       const refused = await authorData(slug, bobId, alice);
@@ -186,6 +197,7 @@ describe("owner-set data visibility (S41)", () => {
       expect(((await ownerRead.json()) as DataEntryResponse).blob).toBe('{"who":"bob"}');
     });
 
+    // r[verify data.visibility.mint-refused]
     it("mints a frame token only for what the viewer may load", async () => {
       const { slug } = await withEntries();
       expect((await mintFrameToken(app, slug, alice, bobId)).status).toBe(404);
@@ -194,6 +206,7 @@ describe("owner-set data visibility (S41)", () => {
       expect((await mintFrameToken(app, slug, owner, bobId)).status).toBe(200);
     });
 
+    // r[verify data.visibility.redeem-refused]
     it("a foreign-context token minted under shared is refused once the owner flips to own", async () => {
       const { id, slug } = await withEntries();
       await setDataVisibility(id, owner, { dataVisibility: "shared" });
@@ -206,6 +219,7 @@ describe("owner-set data visibility (S41)", () => {
       expect((await app.request(frameUrl)).status).toBe(404);
     });
 
+    // r[verify data.visibility.narrows-reads]
     it("the viewer's own frame still opens after the flip", async () => {
       const { slug } = await withEntries();
       const minted = await mintFrameToken(app, slug, alice);
@@ -215,12 +229,14 @@ describe("owner-set data visibility (S41)", () => {
       expect(await res.text()).toContain("alice");
     });
 
+    // r[verify data.visibility.listing-filtered]
     it("gives the anonymous nothing on a public artefact", async () => {
       const { slug } = await withEntries("public");
       expect(await authorIds(slug)).toEqual([]);
       expect((await authorData(slug, bobId)).status).toBe(404);
     });
 
+    // r[verify data.visibility.narrows-reads]
     it("leaves the viewer's own GET and PUT …/data/me unchanged", async () => {
       const { slug } = await withEntries();
       const put = await putData(slug, alice, '{"who":"alice","v":2}');

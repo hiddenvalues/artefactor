@@ -6,9 +6,10 @@ import type { PassLookup } from "../link-gate/passes";
 // instance (OSS default = the SQLite-backed `auth` singleton; a superset passes a
 // Postgres-backed one), so no module hardcodes which database auth lives in.
 //
-// This is the concrete OSS `auth` type, which carries the `mcp` plugin's api
-// methods the OAuth-discovery helpers (`oAuthDiscoveryMetadata`, …) require — so
-// it is deliberately *not* loosened to the generic betterAuth return type.
+// This is the concrete OSS `auth` type, which carries the `jwt` and `mcp`
+// plugins' api methods the MCP routes use (`getJwks` for the in-process bearer
+// check, `getOAuthServerConfig` for discovery) — so it is deliberately *not*
+// loosened to the generic betterAuth return type.
 // BetterAuth's `Auth<O>` is **invariant** in its options `O`: a superset whose
 // auth adds further plugins is a superset at runtime but not structurally
 // provable as assignable, so such a superset casts its instance to this type at
@@ -17,7 +18,7 @@ import type { PassLookup } from "../link-gate/passes";
 export type AuthInstance = typeof auth;
 
 // The authenticated identity, as surfaced by BetterAuth's session lookup. The
-// domain only cares about `user.id` — that is the stable `ownerId` (IA spec).
+// domain only cares about `user.id` — that is the stable `ownerId` (`docs/specs/ddd/identity-access.md`).
 export type AuthUser = typeof auth.$Infer.Session.user;
 export type AuthSession = typeof auth.$Infer.Session.session;
 
@@ -48,16 +49,19 @@ export function createAttachSession(authInstance: AuthInstance) {
 }
 
 // Guard for protected endpoints: rejects unauthenticated requests with 401.
-// Encodes IA invariant 1 — non-public access requires an authenticated session.
-// Must run after `attachSession`.
+// Non-public access requires an authenticated session. Must run after
+// `attachSession`.
+// r[impl identity.session.authenticated-principal]
 export const requireAuth = createMiddleware<AuthEnv>(async (c, next) => {
   if (!c.get("user")) {
+    // r[impl identity.session.protected-rejects-anonymous+2]
     return c.json({ error: "unauthorized" }, 401);
   }
   await next();
 });
 
 // The owning user id for the current request. Call only behind `requireAuth`.
+// r[impl identity.session.owner-id]
 export function ownerId(c: { get: (k: "user") => AuthUser | null }): string {
   const user = c.get("user");
   if (!user) {

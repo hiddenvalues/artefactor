@@ -44,25 +44,30 @@ function boot(opts: { stored?: string | null; throws?: boolean; osDark: boolean 
 }
 
 describe("theme boot script (S45)", () => {
+  // r[verify platform.theme.boot-script]
   it("sets dark for a stored dark under an OS in light", () => {
     expect(boot({ stored: "dark", osDark: false }).dark()).toBe(true);
   });
 
+  // r[verify platform.theme.boot-script]
   it("leaves dark off for a stored light under an OS in dark", () => {
     expect(boot({ stored: "light", osDark: true }).dark()).toBe(false);
   });
 
+  // r[verify platform.theme.boot-script]
   it("follows the OS when nothing is stored", () => {
     expect(boot({ stored: null, osDark: true }).dark()).toBe(true);
     expect(boot({ stored: null, osDark: false }).dark()).toBe(false);
   });
 
+  // r[verify platform.theme.boot-script]
   it("treats an unreadable localStorage as system, without throwing", () => {
     let b: ReturnType<typeof boot> | undefined;
     expect(() => (b = boot({ throws: true, osDark: true }))).not.toThrow();
     expect(b!.dark()).toBe(true);
   });
 
+  // r[verify platform.theme.boot-script]
   it("follows OS changes while the pref is system", () => {
     const b = boot({ stored: "system", osDark: false });
     b.osChanges(true);
@@ -71,6 +76,7 @@ describe("theme boot script (S45)", () => {
     expect(b.dark()).toBe(false);
   });
 
+  // r[verify platform.theme.boot-script]
   it("ignores OS changes while the pref is dark", () => {
     const b = boot({ stored: "dark", osDark: false });
     b.osChanges(true);
@@ -80,6 +86,7 @@ describe("theme boot script (S45)", () => {
 
   // The SPA may store an explicit choice after boot; the boot listener must not
   // then undo it on the next OS change.
+  // r[verify platform.theme.boot-script]
   it("stops following the OS once an explicit choice is stored", () => {
     const b = boot({ stored: null, osDark: false });
     b.store("dark");

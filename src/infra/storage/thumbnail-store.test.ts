@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FilesystemThumbnailStore } from "./thumbnail-store";
 
-// S35 (AH26) — thumbnails on the filesystem, one WebP per (artefact, payload hash).
+// S35 — thumbnails on the filesystem, one WebP per (artefact, payload hash).
 describe("FilesystemThumbnailStore (S35)", () => {
   let root: string;
   let store: FilesystemThumbnailStore;
@@ -16,6 +16,7 @@ describe("FilesystemThumbnailStore (S35)", () => {
     store = new FilesystemThumbnailStore(root);
   });
 
+  // r[verify hosting.thumbnail.file-layout]
   it("stores a render at <root>/<artefactId>/<payloadHash>.webp and reads it back", async () => {
     await store.put("art-1", "h1", bytes("webp-1"));
     expect(await readdir(join(root, "art-1"))).toEqual(["h1.webp"]);

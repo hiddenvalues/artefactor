@@ -13,7 +13,7 @@ import { readBundle } from "./read-bundle";
 // What --out needs, loaded only for --out: --verify reads nothing but the
 // bundle, so it must not depend on the server's configuration.
 export interface ExportSource {
-  // Opened read-only (DX1).
+  // Opened read-only (export.snapshot.read-only).
   openDatabase: () => Database.Database;
   payloadStore: PayloadStore;
   build: string;
@@ -30,6 +30,7 @@ const USAGE = [
   "       export --verify <dir>  check a bundle and print its counts",
 ].join("\n");
 
+// r[impl export.cli.exit-status]
 export async function runExportCommand(argv: string[], deps: ExportCommandDeps): Promise<number> {
   const [flag, dir, ...rest] = argv;
   if ((flag !== "--out" && flag !== "--verify") || !dir || dir.startsWith("--") || rest.length > 0) {

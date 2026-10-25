@@ -8,15 +8,22 @@ import "./catalog.css";
 import { installFixtureApi } from "./fixtures";
 import { StandaloneContext } from "./Launcher";
 import { CATALOG_MARKER, type DefinedPreview } from "./preview";
-import { previewGroup, previewId } from "./registry";
+import { GROUPS, previewGroup, previewId } from "./registry";
 
 // The design catalog: every component's preview on one page, grouped UI (the
-// stock shadcn/ui primitives), App, then Theme (the tokens themselves). A standalone page (the export's
+// stock shadcn/ui primitives), App, Templates (S70: the built screens), then
+// Theme (the tokens themselves). A standalone page (the export's
 // components/<id>.html, or ?preview=<id> in dev) narrows it to one preview.
 
-const modules = import.meta.glob<{ default: DefinedPreview }>("../lib/components/**/*.preview.tsx", { eager: true });
-const GROUPS = ["UI", "App", "Theme"] as const;
-const HEADINGS: Record<(typeof GROUPS)[number], string> = { UI: "UI primitives", App: "App components", Theme: "Theme" };
+const modules = import.meta.glob<{ default: DefinedPreview }>(["../lib/components/**/*.preview.tsx", "../screens/**/*.preview.tsx"], {
+  eager: true,
+});
+const HEADINGS: Record<(typeof GROUPS)[number], string> = {
+  UI: "UI primitives",
+  App: "App components",
+  Templates: "Templates",
+  Theme: "Theme",
+};
 
 const entries = Object.entries(modules)
   .map(([path, m]) => ({ id: previewId(path), group: previewGroup(path), preview: m.default }))

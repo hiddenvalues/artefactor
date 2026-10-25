@@ -30,19 +30,22 @@ export interface FrameRoutesDeps {
 export const SLUG_FRAME_ROUTE = "/a/:slug/frame";
 export const RAW_FRAME_ROUTE = "/api/artefacts/:id/raw/frame";
 
-// S36 (AH28, AD10) — the artefact itself, inside the shell's sandboxed iframe.
+// S36 (data.frame-token.redeem-rechecks-access) — the artefact itself, inside the shell's sandboxed iframe.
 // Mounted by `createApp` **before** the `/a` and `/api` routers, so their
 // attach-session middleware never runs here: a frame authenticates only from
 // its `?t=` frame token, never from cookies. Every response — the artefact, the
 // expired-token page, a 404 — carries the sandbox CSP.
 //
-// Redeem: verify the signature and `exp`; the token's artefact and route must
-// match the URL; then the route's own access check is re-run for the token's
-// viewer, so a revocation is effective immediately — the owner's data visibility
-// included (S41, AD11: a refused `authorId` is denied), and the link gate (S32a,
-// AH22) with the version the token's pass proved: a token-less frame never
-// passes a password gate. Any deny is a flat 404 (AH7/AH8). Seed = `authorId ?? viewerId`; writable only in the viewer's own
-// context (AD5).
+// Redeem: verify the signature and `exp`; the token's artefact and route must match the URL; then
+// the route's own access check is re-run for the token's viewer, so a revocation is effective
+// immediately — the owner's data visibility included (S41, data.visibility.redeem-refused: a refused `authorId` is denied),
+// and the link gate (S32a, hosting.link-gate.narrows-public-audience) with the version the token's
+// pass proved: a token-less frame never passes a password gate. Any deny is a flat 404
+// (hosting.lifecycle.archived-not-served, hosting.access.no-existence-leak). Seed = `authorId ??
+// viewerId`; writable only in the viewer's own context (data.write.own-context-only).
+// r[impl hosting.frame.no-cookies]
+// r[impl data.frame-token.redeem-rechecks-access]
+// r[impl data.frame-token.absent-invalid-expired]
 export function createFrameRoutes(deps: FrameRoutesDeps) {
   const app = new Hono();
   const accessPolicy = deps.accessPolicy ?? defaultAccessPolicy;
@@ -55,7 +58,7 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
   app.get(SLUG_FRAME_ROUTE, async (c) => {
     const artefact = await deps.repo.findBySlug(c.req.param("slug"));
     const token = c.req.query("t");
-    let claims: Pick<FrameTokenClaims, "viewerId" | "authorId" | "gate"> = {
+    let claims: Pick<FrameTokenClaims, "viewerId" | "authorId" | "gate" | "gateHolder"> = {
       viewerId: null,
       authorId: null,
     };
@@ -78,11 +81,16 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
     if (
       !artefact ||
       (await authorizeRead({ ...deps, accessPolicy }, artefact, claims.viewerId, {
+        // The pass the token proved counts only for the holder it was proved
+        // for (S32b: the tree root, when contained).
         passes: (holderId) =>
-          claims.gate !== undefined && holderId === artefact.id ? { version: claims.gate } : null,
+          claims.gate !== undefined && holderId === (claims.gateHolder ?? artefact.id)
+            ? { version: claims.gate }
+            : null,
         now: new Date(deps.framing.now()),
       })) !== "granted" ||
-      // AD11 — re-checked at redeem, so a flip to `own` refuses a token minted
+      // r[impl data.visibility.redeem-refused]
+      // Re-checked at redeem, so a flip to `own` refuses a token minted
       // for a foreign context before it.
       (claims.authorId !== null &&
         !canLoadAuthorData(artefact, claims.viewerId, claims.authorId))
@@ -122,6 +130,7 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
     }
   });
 
+  // r[impl hosting.frame.redeem-seeds-by-token]
   async function serve(
     c: Context,
     artefact: Artefact,
@@ -143,6 +152,7 @@ export function createFrameRoutes(deps: FrameRoutesDeps) {
   return app;
 }
 
+// r[impl hosting.frame.sandbox-header+2]
 async function sandboxed(c: Context, next: () => Promise<void>) {
   await next();
   for (const [name, value] of Object.entries(frameSecurityHeaders())) {

@@ -18,8 +18,9 @@ const VIEWPORT = { width: 1280, height: 800 };
 // 1280×800 × 0.4 = the 512×320 card image.
 const SCALE = 0.4;
 
-// S37 (AH29) — every launch runs Chromium with its OS sandbox on. There is no
+// S37 — every launch runs Chromium with its OS sandbox on. There is no
 // option to turn it off, and a failed launch is never retried without it.
+// r[impl hosting.renderer.sandbox-on]
 const SANDBOXED: LaunchOptions = { chromiumSandbox: true };
 
 export interface PlaywrightThumbnailRendererOptions {
@@ -64,11 +65,12 @@ export async function captureWebp(send: CaptureSend, retryDelayMs = 250): Promis
   }
 }
 
-// S35 (AH26) — renders a pristine thumbnail of an artefact's stored HTML in
-// headless Chromium: the payload alone, in a fresh context with no cookies,
-// storage, credentials, service workers or WebSockets, at a synthetic origin.
+// S35 — renders a pristine thumbnail (`hosting.thumbnail.pristine`) of an
+// artefact's stored HTML in headless Chromium: the payload alone, in a fresh
+// context with no cookies, storage, credentials, service workers or
+// WebSockets, at a synthetic origin.
 // No S13 localStorage bootstrap and no S12 shell, so no one's data can appear.
-// S37 (AH29) — runs only in the isolated renderer role, with Chromium's sandbox
+// S37 — runs only in the isolated renderer role, with Chromium's sandbox
 // on, and in a new browser for every render that is closed straight after, so
 // nothing one artefact leaves behind in Chromium reaches the next. Its profile
 // and temp files go to the OS temp dir, a tmpfs in the renderer container.
@@ -90,6 +92,7 @@ export class PlaywrightThumbnailRenderer implements ThumbnailRenderer {
     await closeBrowser(browser);
   }
 
+  // r[impl hosting.thumbnail.page-isolation]
   async render(html: Uint8Array): Promise<Uint8Array> {
     return this.withPage(html, async (page) => {
       const cdp = await page.context().newCDPSession(page);
@@ -135,6 +138,7 @@ export class PlaywrightThumbnailRenderer implements ThumbnailRenderer {
       return await Promise.race([work, cap]);
     } finally {
       if (timer) clearTimeout(timer);
+      // r[impl hosting.renderer.stateless]
       await closeBrowser(browser);
     }
   }

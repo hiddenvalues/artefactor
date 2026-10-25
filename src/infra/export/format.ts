@@ -4,12 +4,12 @@ import { DATA_VISIBILITIES, STATUSES, VISIBILITIES } from "../../domain/artefact
 
 // S39 — the `artefactor-export` bundle format (ddd/deployment-export.md). These
 // schemas are the format's single definition: the writer emits records of these
-// shapes, and `readBundle` — which the EE importer (EM1) consumes — validates
+// shapes, and `readBundle` — which the EE importer consumes — validates
 // against them. Objects are non-strict, so a later minor version's extra fields
-// are accepted and dropped (DX5).
+// are accepted and dropped (export.format.versioned).
 
 export const FORMAT = "artefactor-export";
-export const VERSION = "1.0";
+export const VERSION = "1.3";
 export const SUPPORTED_MAJOR = 1;
 
 // A failed export or a rejected bundle. `check` names what failed, so the CLI
@@ -80,14 +80,21 @@ export const artefactAccessRecord = z.object({
   grantedAt: timestamp,
 });
 
+// r[impl export.collection.description]
 export const collectionRecord = z.object({
   id,
   ownerId: id,
   name: z.string(),
+  // 1.3 (S74) — the description. Absent before 1.3, read as none.
+  description: z.string().nullable().default(null),
   parentId: id.nullable(),
   rootId: id,
   visibility: z.enum(VISIBILITIES),
+  // 1.2 (S44) — a root's retained slug. Absent before 1.2, read as slugless.
+  publicSlug: z.string().min(1).nullable().default(null),
   status: z.enum(STATUSES),
+  // 1.1 (S32b) — a root's link gate. Absent in a 1.0 bundle, read as ungated.
+  linkGate: linkGateRecord.nullable().default(null),
   createdAt: timestamp,
   updatedAt: timestamp,
   archivedAt: timestamp.nullable(),

@@ -14,6 +14,7 @@ import {
 import { Input } from "$lib/components/ui/input";
 import { api, ApiError } from "../api";
 import { initials } from "../format";
+import { NavRow } from "./NavRow";
 import { FieldError } from "./UploadDialog";
 
 export interface AccessTarget {
@@ -38,7 +39,7 @@ function Person({ u, action }: { u: UserRef; action?: React.ReactNode }) {
 }
 
 // S16/S25 — the same member picker manages an artefact's `selected`-tier list
-// and a collection root's (whose people the whole tree inherits, CL4).
+// and a collection root's (whose people the whole tree inherits, collections.access.root-governs-tree).
 export function ManageAccessDialog({ target, onClose }: { target: AccessTarget; onClose: () => void }) {
   const calls = useMemo(
     () =>
@@ -81,7 +82,9 @@ export function ManageAccessDialog({ target, onClose }: { target: AccessTarget; 
     };
   }, [calls]);
 
-  // Debounced directory search as the owner types.
+  // Debounced directory search as the owner types. A response for a query the
+  // owner has since changed is dropped, so older results never show.
+  // r[impl collections.access-dialog.no-stale-results]
   useEffect(() => {
     const q = query.trim();
     if (!q) {
@@ -89,17 +92,22 @@ export function ManageAccessDialog({ target, onClose }: { target: AccessTarget; 
       setSearching(false);
       return;
     }
+    let current = true;
     setSearching(true);
     const t = setTimeout(async () => {
       try {
-        setResults(await api.searchUsers(q));
+        const found = await api.searchUsers(q);
+        if (current) setResults(found);
       } catch {
-        setResults([]);
+        if (current) setResults([]);
       } finally {
-        setSearching(false);
+        if (current) setSearching(false);
       }
     }, 220);
-    return () => clearTimeout(t);
+    return () => {
+      current = false;
+      clearTimeout(t);
+    };
   }, [query]);
 
   async function add(u: UserRef) {
@@ -160,15 +168,15 @@ export function ManageAccessDialog({ target, onClose }: { target: AccessTarget; 
                   <div className="p-2 text-sm text-muted-foreground">No people found.</div>
                 ) : (
                   candidates.map((u) => (
-                    <button
+                    <NavRow
                       key={u.id}
-                      type="button"
+                      tone="dialog"
                       onClick={() => add(u)}
                       disabled={busyId === u.id}
-                      className="flex w-full cursor-pointer items-center gap-2.5 rounded-sm p-1.5 outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      className="gap-2.5 rounded-sm p-1.5 has-[>svg]:px-1.5"
                     >
                       <Person u={u} action={<Plus className="size-4 shrink-0" />} />
-                    </button>
+                    </NavRow>
                   ))
                 )}
               </div>

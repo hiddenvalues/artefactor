@@ -24,11 +24,11 @@ describe("serve artefact by slug (S6)", () => {
   }
 
   // Create an artefact as the owner and set its visibility; return its summary.
-  async function makeArtefact(visibility: string): Promise<ArtefactSummary> {
+  async function makeArtefact(visibility: string, html = HTML): Promise<ArtefactSummary> {
     const form = new FormData();
     form.set("title", `${visibility} artefact`);
     form.set("kind", "prototype");
-    form.set("payload", new File([HTML], "a.html"));
+    form.set("payload", new File([html], "a.html"));
     const created = (await (
       await app.request("/api/artefacts", {
         method: "POST",
@@ -69,6 +69,7 @@ describe("serve artefact by slug (S6)", () => {
     otherCookie = await signUp("other-s6@example.com");
   });
 
+  // r[verify hosting.url.share-link]
   it("serves the host shell (with the data-context switcher) to anyone for a public artefact", async () => {
     const a = await makeArtefact("public");
     const res = await get(a.publicSlug!);
@@ -121,11 +122,11 @@ describe("serve artefact by slug (S6)", () => {
     expect(body).toContain("Prototype");
     // The kind icon tile is present (rendered from shared kind-presentation).
     expect(body).toContain('class="ae-tile"');
-    // …and its icon is stroked with the kind token, the Mint garden prototype
+    // …and its icon is stroked with the kind token, the Ruby prototype
     // colour in light and in dark (S45).
     expect(body).toContain('stroke="var(--kind)"');
-    expect(body).toContain("--kind: oklch(0.51 0.09 170);");
-    expect(body).toContain("--kind: oklch(0.85 0.06 170);");
+    expect(body).toContain("--kind: oklch(0.51 0.09 190);");
+    expect(body).toContain("--kind: oklch(0.78 0.07 190);");
   });
 
   it("hides the back-to-admin button from anonymous viewers, shows it for signed-in viewers", async () => {
@@ -140,6 +141,7 @@ describe("serve artefact by slug (S6)", () => {
     expect(signedIn).toContain('href="/"');
   });
 
+  // r[verify data.switcher.signed-in-only]
   it("renders host tools (data-context switcher) only for signed-in viewers, never anonymous", async () => {
     const a = await makeArtefact("public");
     // The host-tools wrapper (and the picker inside it) are omitted entirely for
@@ -163,6 +165,18 @@ describe("serve artefact by slug (S6)", () => {
     expect(body).toContain('"writable":false');
   });
 
+  // r[verify hosting.serve.as-is]
+  it("serves the payload as uploaded in the frame, scripts and handlers kept", async () => {
+    const trusted =
+      '<!doctype html><script>window.total = 1 < 2 && "</b>";</script>' +
+      '<button onclick="alert(1)">go</button><iframe src="https://example.com"></iframe>';
+    const a = await makeArtefact("public", trusted);
+    const body = await (await frame(a.publicSlug!)).text();
+    expect(body).toContain(trusted);
+  });
+
+  // r[verify data.shim.seeded-server-side]
+  // r[verify data.context.host-chosen]
   it("seeds the signed-in owner's own data context (read-write) into the frame", async () => {
     const a = await makeArtefact("public");
     // Owner persists some data, then re-fetches the served frame.
@@ -178,7 +192,9 @@ describe("serve artefact by slug (S6)", () => {
     expect(body).toContain("dark");
   });
 
-  it("seeds another author's data read-only via an author frame token (S12, AD5, S36)", async () => {
+  // r[verify data.write.own-context-only]
+  // r[verify data.context.host-chosen]
+  it("seeds another author's data read-only via an author frame token (S12, S36)", async () => {
     // Authenticated artefact: owner writes data; a different signed-in viewer
     // loads the owner's context through the switcher — under `shared` data
     // visibility, since new artefacts default to own-only (S41).
@@ -202,11 +218,12 @@ describe("serve artefact by slug (S6)", () => {
     const body = await (
       await frame(a.publicSlug!, { cookie: otherCookie, author: ownerId })
     ).text();
-    // Owner's blob is seeded, but the viewing context is read-only (AD5).
+    // Owner's blob is seeded, but the viewing context is read-only (data.write.own-context-only).
     expect(body).toContain("owner-dark");
     expect(body).toContain('"writable":false');
   });
 
+  // r[verify hosting.access.anonymous-sign-in-redirect]
   it("serves a 'Members' (authenticated) artefact to signed-in users; redirects the anonymous to sign in", async () => {
     const a = await makeArtefact("authenticated");
     expect((await get(a.publicSlug!, otherCookie)).status).toBe(200);
@@ -219,6 +236,8 @@ describe("serve artefact by slug (S6)", () => {
     );
   });
 
+  // r[verify hosting.access.anonymous-sign-in-redirect]
+  // r[verify hosting.access.matrix]
   it("serves a private artefact only to its owner (other signed-in → 404, anonymous → sign-in)", async () => {
     // Share to mint a slug, then unshare so it is private but addressable.
     const shared = await makeArtefact("public");
@@ -232,10 +251,12 @@ describe("serve artefact by slug (S6)", () => {
     // A signed-in non-owner is denied with a flat 404 (no redirect loop, no leak).
     expect((await get(slug, otherCookie)).status).toBe(404);
     // Anonymous is redirected to sign in (uniform with an unknown slug, so the
-    // existence of a private artefact is never revealed — AH8).
+    // existence of a private artefact is never revealed — hosting.access.no-existence-leak).
     expect((await get(slug)).status).toBe(302);
   });
 
+  // r[verify hosting.access.anonymous-sign-in-redirect]
+  // r[verify hosting.access.no-existence-leak]
   it("redirects an anonymous unknown slug to sign in, but 404s an authenticated one (no existence leak)", async () => {
     // Uniform anonymous redirect: an attacker can't tell a missing slug from a
     // real-but-gated one. A signed-in user gets the honest 404.
@@ -243,7 +264,8 @@ describe("serve artefact by slug (S6)", () => {
     expect((await get("does-not-exist", otherCookie)).status).toBe(404);
   });
 
-  it("returns 404 for an archived artefact to its owner; anonymous still bounced to sign-in (AH7)", async () => {
+  // r[verify hosting.lifecycle.archived-not-served]
+  it("returns 404 for an archived artefact to its owner; anonymous still bounced to sign-in", async () => {
     const a = await makeArtefact("public");
     const slug = a.publicSlug!;
     // Archive directly via the repo (archive endpoint is S7).

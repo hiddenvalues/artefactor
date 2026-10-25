@@ -86,13 +86,16 @@ describe("share with specific people (S16)", () => {
     memberId = await meId(member);
   });
 
-  it("mints a slug when shared at the selected tier (AH12)", async () => {
+  // r[verify hosting.slug.selected-shared-tier]
+  it("mints a slug when shared at the selected tier", async () => {
     const a = await createSelected();
     expect(a.visibility).toBe("selected");
     expect(a.publicSlug).not.toBeNull();
   });
 
-  it("serves the artefact to the owner and granted members, 404 to everyone else (AH8)", async () => {
+  // r[verify hosting.access.matrix]
+  // r[verify hosting.access.no-existence-leak]
+  it("serves the artefact to the owner and granted members, 404 to everyone else", async () => {
     const a = await createSelected();
     const slug = a.publicSlug!;
 
@@ -111,6 +114,16 @@ describe("share with specific people (S16)", () => {
     // Revoke removes access again.
     expect((await revoke(a.id, memberId)).status).toBe(204);
     expect((await frame(slug, member)).status).toBe(404);
+  });
+
+  // r[verify hosting.access.anonymous-sign-in-redirect]
+  it("redirects the anonymous to sign in from a selected artefact's link, like any other miss", async () => {
+    const a = await createSelected();
+    const res = await app.request(`/a/${a.publicSlug!}`);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      `/?returnTo=${encodeURIComponent(`/a/${a.publicSlug!}`)}`,
+    );
   });
 
   it("lists current members enriched with identity (owner-only)", async () => {
@@ -140,7 +153,9 @@ describe("share with specific people (S16)", () => {
     expect((await grant(a.id, ownerId)).status).toBe(400);
   });
 
-  it("surfaces a selected artefact to its members in Shared with you (AH8)", async () => {
+  // r[verify hosting.shared.selected-members+2]
+  // r[verify hosting.shared.others-viewable]
+  it("surfaces a selected artefact to its members in Shared with you", async () => {
     const a = await createSelected();
     await grant(a.id, memberId);
 
@@ -154,6 +169,8 @@ describe("share with specific people (S16)", () => {
     expect(outList.artefacts.some((x) => x.id === a.id)).toBe(false);
   });
 
+  // r[verify hosting.access-list.members-from-directory]
+  // r[verify hosting.access-list.directory-search+2]
   it("searches the user directory by name/email, excluding the caller", async () => {
     const res = await app.request("/api/users/search?q=member-s16", {
       headers: { cookie: owner },

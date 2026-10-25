@@ -5,7 +5,7 @@ import { InMemoryThumbnailStore } from "../../domain/artefact/in-memory-thumbnai
 import type { PayloadStore, ThumbnailRenderer } from "../../domain/artefact/ports";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 
-// S37 (AH25/AH29) — thumbnails render only through an isolated renderer: with
+// S37 — thumbnails render only through an isolated renderer: with
 // ARTEFACTOR_RENDERER_URL unset no renderer is built, the service logs once
 // (naming the variable) and never renders, and every card keeps the kind
 // placeholder. S35's ARTEFACTOR_THUMBNAILS switch is gone.
@@ -25,6 +25,8 @@ describe("thumbnails follow ARTEFACTOR_RENDERER_URL (S37)", () => {
     return (await import("../env")).env;
   }
 
+  // r[verify hosting.thumbnail.off-without-renderer]
+  // r[verify hosting.thumbnail.renderer-url-config]
   it("with the variable unset: no renderer, one log line naming it, nothing rendered", async () => {
     const env = await freshEnv(undefined);
     const { thumbnailRendererFor, ThumbnailService } = await import("./thumbnail-service");
@@ -67,10 +69,13 @@ describe("thumbnails follow ARTEFACTOR_RENDERER_URL (S37)", () => {
     expect((await repo.findById("a1", SINGLETON_SCOPE))!.thumbnailHash).toBeNull();
   });
 
+  // r[verify hosting.thumbnail.renderer-url-config]
   it("an empty value counts as unset", async () => {
     expect((await freshEnv("")).ARTEFACTOR_RENDERER_URL).toBeUndefined();
   });
 
+  // r[verify hosting.thumbnail.renderer-url-config]
+  // r[verify hosting.renderer.only-isolated-renders]
   it("with ARTEFACTOR_RENDERER_URL set, the adapters build an HttpThumbnailRenderer for it", async () => {
     const env = await freshEnv("http://renderer:3001");
     expect(env.ARTEFACTOR_RENDERER_URL).toBe("http://renderer:3001");
@@ -83,6 +88,7 @@ describe("thumbnails follow ARTEFACTOR_RENDERER_URL (S37)", () => {
     );
   });
 
+  // r[verify hosting.thumbnail.renderer-url-config]
   it("rejects a value that is not an absolute http(s) URL at startup", async () => {
     const exit = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("exited");

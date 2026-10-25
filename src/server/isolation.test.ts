@@ -106,7 +106,8 @@ describe("isolated artefact serving (S36)", () => {
     otherId = await meId(otherCookie);
   });
 
-  describe("sandbox (AH28)", () => {
+  describe("sandbox", () => {
+    // r[verify hosting.frame.sandboxed]
     it("the slug shell and the owner-preview shell frame the artefact sandboxed", async () => {
       const a = await makeArtefact("public");
       for (const path of [`/a/${a.publicSlug}`, `/api/artefacts/${a.id}/raw`]) {
@@ -116,6 +117,7 @@ describe("isolated artefact serving (S36)", () => {
       }
     });
 
+    // r[verify hosting.frame.sandbox-header+2]
     it("tokened slug and raw frames carry the sandbox CSP and no referrer", async () => {
       const a = await makeArtefact("public");
       for (const ref of [a.publicSlug!, a.id]) {
@@ -126,6 +128,7 @@ describe("isolated artefact serving (S36)", () => {
       }
     });
 
+    // r[verify hosting.frame.sandbox-header+2]
     it("the anonymous public frame and the expired-token page carry it too", async () => {
       const a = await makeArtefact("public");
       const anon = await app.request(`/a/${a.publicSlug}/frame`);
@@ -143,6 +146,7 @@ describe("isolated artefact serving (S36)", () => {
       expect(page.headers.get("referrer-policy")).toBe("no-referrer");
     });
 
+    // r[verify hosting.frame.sandbox-header+2]
     it("a denied frame is still served under the sandbox headers", async () => {
       const res = await app.request("/a/no-such-slug/frame");
       expect(res.status).toBe(404);
@@ -150,7 +154,10 @@ describe("isolated artefact serving (S36)", () => {
     });
   });
 
-  describe("frame token redeem (AD10)", () => {
+  describe("frame token redeem", () => {
+    // r[verify hosting.frame.no-cookies]
+    // r[verify hosting.frame.redeem-seeds-by-token]
+    // r[verify data.frame-token.absent-invalid-expired]
     it("never reads cookies: a session and no token → 404 on an authenticated artefact", async () => {
       const a = await makeArtefact("authenticated");
       const res = await app.request(`/a/${a.publicSlug}/frame`, { headers: { cookie: ownerCookie } });
@@ -159,6 +166,7 @@ describe("isolated artefact serving (S36)", () => {
       expect(raw.status).toBe(404);
     });
 
+    // r[verify hosting.frame.redeem-seeds-by-token]
     it("a session and no token on a public artefact → the anonymous read-only seed", async () => {
       const a = await makeArtefact("public");
       await putData(a.publicSlug!, ownerCookie, '{"k":"owner-secret"}');
@@ -170,6 +178,8 @@ describe("isolated artefact serving (S36)", () => {
       expect(body).not.toContain("owner-secret");
     });
 
+    // r[verify hosting.frame.redeem-seeds-by-token]
+    // r[verify data.context.host-chosen]
     it("an own-context token seeds the viewer's blob, writable", async () => {
       const a = await makeArtefact("authenticated");
       await putData(a.publicSlug!, otherCookie, '{"k":"other-own"}');
@@ -177,6 +187,9 @@ describe("isolated artefact serving (S36)", () => {
       expect(shimCfg(body)).toMatchObject({ seed: '{"k":"other-own"}', writable: true });
     });
 
+    // r[verify hosting.frame.redeem-seeds-by-token]
+    // r[verify data.context.host-chosen]
+    // r[verify data.write.own-context-only]
     it("an author token seeds that author's blob, read-only", async () => {
       const a = await makeArtefact("authenticated");
       await shareData(a.id);
@@ -190,6 +203,7 @@ describe("isolated artefact serving (S36)", () => {
       expect(shimCfg(body)).toMatchObject({ seed: '{"k":"owner-data"}', writable: false });
     });
 
+    // r[verify hosting.frame.redeem-seeds-by-token]
     it("naming yourself as the author is your own, writable context", async () => {
       const a = await makeArtefact("authenticated");
       const minted = await mint(a.publicSlug!, otherCookie, otherId);
@@ -203,6 +217,8 @@ describe("isolated artefact serving (S36)", () => {
       expect(body).not.toContain("owner-param");
     });
 
+    // r[verify hosting.frame.redeem-seeds-by-token]
+    // r[verify data.frame-token.redeem-rechecks-access]
     it("a token for another artefact → 404", async () => {
       const a = await makeArtefact("public");
       const b = await makeArtefact("public");
@@ -210,6 +226,8 @@ describe("isolated artefact serving (S36)", () => {
       expect((await app.request(`/a/${b.publicSlug}/frame?t=${t}`)).status).toBe(404);
     });
 
+    // r[verify hosting.frame.redeem-seeds-by-token]
+    // r[verify data.frame-token.redeem-rechecks-access]
     it("a raw token on a slug frame, or a slug token on a raw frame → 404", async () => {
       const a = await makeArtefact("public");
       const raw = tokenOf((await mint(a.id, ownerCookie)).frameUrl);
@@ -218,6 +236,7 @@ describe("isolated artefact serving (S36)", () => {
       expect((await app.request(`/api/artefacts/${a.id}/raw/frame?t=${slug}`)).status).toBe(404);
     });
 
+    // r[verify data.frame-token.absent-invalid-expired]
     it("a tampered or foreign-secret token → 404", async () => {
       const a = await makeArtefact("public");
       const forged = signFrameToken(
@@ -228,6 +247,9 @@ describe("isolated artefact serving (S36)", () => {
       expect((await app.request(`/a/${a.publicSlug}/frame?t=garbage`)).status).toBe(404);
     });
 
+    // r[verify hosting.frame.no-cookies]
+    // r[verify hosting.frame.redeem-seeds-by-token]
+    // r[verify data.frame-token.redeem-rechecks-access]
     it("revoking access makes a still-unexpired token 404", async () => {
       const a = await makeArtefact("authenticated");
       const minted = await mint(a.publicSlug!, otherCookie);
@@ -236,6 +258,7 @@ describe("isolated artefact serving (S36)", () => {
       expect((await app.request(minted.frameUrl)).status).toBe(404);
     });
 
+    // r[verify data.frame-token.redeem-rechecks-access]
     it("an archived artefact's raw token → 404", async () => {
       const a = await makeArtefact("private");
       const minted = await mint(a.id, ownerCookie);
@@ -243,6 +266,8 @@ describe("isolated artefact serving (S36)", () => {
       expect((await app.request(minted.frameUrl)).status).toBe(404);
     });
 
+    // r[verify hosting.frame.redeem-seeds-by-token]
+    // r[verify data.frame-token.absent-invalid-expired]
     it("an expired token → a page that asks the shell to re-mint and seeds nothing", async () => {
       const a = await makeArtefact("authenticated");
       await putData(a.publicSlug!, ownerCookie, '{"k":"expired-seed"}');
@@ -260,13 +285,16 @@ describe("isolated artefact serving (S36)", () => {
     });
   });
 
-  describe("mint (AD10)", () => {
+  describe("mint", () => {
+    // r[verify hosting.frame.mint]
     it("401 for the anonymous", async () => {
       const a = await makeArtefact("public");
       const res = await app.request(`/api/artefacts/${a.publicSlug}/frame-token`, { method: "POST" });
       expect(res.status).toBe(401);
     });
 
+    // r[verify hosting.frame.mint]
+    // r[verify data.frame-token.minted-for-context]
     it("404 for a viewer the matrix denies, by slug or by id", async () => {
       const a = await makeArtefact("public");
       await setVisibility(a.id, "private");
@@ -275,11 +303,14 @@ describe("isolated artefact serving (S36)", () => {
       expect((await mintFrameToken(app, "no-such-ref", otherCookie)).status).toBe(404);
     });
 
+    // r[verify hosting.frame.mint]
     it("a non-owner viewer can't mint the owner preview by id", async () => {
       const a = await makeArtefact("authenticated");
       expect((await mintFrameToken(app, a.id, otherCookie)).status).toBe(404);
     });
 
+    // r[verify hosting.frame.mint]
+    // r[verify data.frame-token.minted-for-context]
     it("200 { frameUrl, seedUpdatedAt } by slug, for the viewer's own context", async () => {
       const a = await makeArtefact("authenticated");
       const { updatedAt } = await putData(a.publicSlug!, otherCookie, '{"k":"v"}');
@@ -292,6 +323,8 @@ describe("isolated artefact serving (S36)", () => {
       });
     });
 
+    // r[verify hosting.frame.mint]
+    // r[verify data.frame-token.minted-for-context]
     it("200 by id for the owner: the owner-preview raw frame", async () => {
       const a = await makeArtefact("private");
       const minted = await mint(a.id, ownerCookie);
@@ -302,6 +335,8 @@ describe("isolated artefact serving (S36)", () => {
       expect(await res.text()).toContain("<h1>isolated</h1>");
     });
 
+    // r[verify hosting.frame.mint]
+    // r[verify data.frame-token.minted-for-context]
     it("honours author, reporting that author's seed", async () => {
       const a = await makeArtefact("authenticated");
       await shareData(a.id);
@@ -322,6 +357,8 @@ describe("isolated artefact serving (S36)", () => {
   });
 
   describe("shell render", () => {
+    // r[verify hosting.frame.mint]
+    // r[verify data.frame-token.minted-for-context]
     it("embeds a tokened frame URL and the viewer's pin for a signed-in viewer", async () => {
       const a = await makeArtefact("authenticated");
       const { updatedAt } = await putData(a.publicSlug!, otherCookie, '{"k":"v"}');
@@ -335,12 +372,15 @@ describe("isolated artefact serving (S36)", () => {
       });
     });
 
+    // r[verify hosting.frame.mint]
+    // r[verify data.frame-token.minted-for-context]
     it("embeds a token-less frame URL for an anonymous viewer", async () => {
       const a = await makeArtefact("public");
       const cfg = shellCfg(await (await app.request(`/a/${a.publicSlug}`)).text());
       expect(cfg.frameUrl).toBe(`/a/${a.publicSlug}/frame`);
     });
 
+    // r[verify hosting.frame.mint]
     it("the owner preview embeds a tokened raw frame URL", async () => {
       const a = await makeArtefact("private");
       const body = await (await app.request(`/api/artefacts/${a.id}/raw`, { headers: { cookie: ownerCookie } })).text();
@@ -352,6 +392,8 @@ describe("isolated artefact serving (S36)", () => {
     // S36 — the shell accepts a change only when it carries the channel of the
     // frame URL it loaded, so a page the frame navigated itself to (same window,
     // no channel) can't forge one.
+    // r[verify hosting.frame.mint]
+    // r[verify data.shell.channel-binds-document]
     it("binds the frame to its shell: the mint's channel is the one inlined in that frame", async () => {
       const a = await makeArtefact("authenticated");
       const minted = await mint(a.publicSlug!, otherCookie);
@@ -361,6 +403,7 @@ describe("isolated artefact serving (S36)", () => {
       );
     });
 
+    // r[verify data.shell.channel-binds-document]
     it("gives each frame URL its own channel, and an anonymous frame none", async () => {
       const a = await makeArtefact("public");
       const first = await mint(a.publicSlug!, ownerCookie);
@@ -370,6 +413,7 @@ describe("isolated artefact serving (S36)", () => {
       expect(shimCfg(anon).channel).toBeNull();
     });
 
+    // r[verify hosting.frame.mint]
     it("the shell render's channel matches its embedded frame URL", async () => {
       const a = await makeArtefact("authenticated");
       const body = await (await app.request(`/a/${a.publicSlug}`, { headers: { cookie: otherCookie } })).text();
@@ -377,6 +421,8 @@ describe("isolated artefact serving (S36)", () => {
       expect(cfg.channel).toBe(frameChannel(tokenOf(cfg.frameUrl), SECRET));
     });
 
+    // r[verify hosting.frame.shim-posts-to-shell]
+    // r[verify data.shim.posts-never-fetches]
     it("the shim posts to the app origin", async () => {
       const a = await makeArtefact("public");
       const body = await (await openFrame(app, a.publicSlug!, ownerCookie)).text();

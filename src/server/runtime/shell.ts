@@ -2,13 +2,13 @@
 //
 // The served artefact stays opaque and single-dataset (it only sees
 // `localStorage`). Choosing *which* author's data is loaded is a host concern
-// handled OUTSIDE the artefact container (DDD artefact-data.md §"Data context").
+// handled OUTSIDE the artefact container (data.context.host-chosen).
 // So `/a/:slug` returns this thin host shell — a toolbar + an <iframe> that
 // loads the artefact itself from `/a/:slug/frame`. Picking an author mints a
 // frame token for that author (S36) and reloads the iframe with it; the frame
-// seeds that context read-only (only the viewer's own context is writable, AD5).
+// seeds that context read-only (only the viewer's own context is writable, data.write.own-context-only).
 //
-// S36 (AH28, AD10) — the iframe is sandboxed into an opaque origin with no
+// S36 (data.shim.posts-never-fetches) — the iframe is sandboxed into an opaque origin with no
 // session, so the shell is where the artefact's data gets saved: the shim posts
 // each change to the shell, which accepts it only from its own frame's window
 // and only in the viewer's own context, and writes it under the S31 discipline
@@ -17,13 +17,13 @@
 // The shell is server-rendered (not the React SPA) because `/a/:slug` is the
 // shareable link and also serves unauthenticated/public viewers, who never load
 // the SPA. The picker is populated client-side from `…/data/authors`, which is
-// itself access-matrix gated (AD4).
+// itself access-matrix gated (data.read.follows-artefact-access).
 //
 // The toolbar shows the same icon / title / kind as the SPA list view (shared
 // `kind-presentation`), plus — for signed-in viewers only — a back button to the
 // admin UI. Anonymous (public-link) viewers have no admin UI, so it's hidden.
 //
-// S45 — the chrome wears Mint garden in the viewer's theme: the stored SPA
+// S45 — the chrome wears Ruby in the viewer's theme: the stored SPA
 // choice, else the OS (THEME_BOOT_JS sets `.dark` before first paint; the
 // tokens are shell-theme.ts). The frame never does: its payload is the same
 // whatever the viewer's theme.
@@ -57,19 +57,19 @@ export interface HostShellContext {
   // The `…/data/authors` endpoint that populates the picker.
   authorsEndpoint: string;
   // S21 — the `…/viewers` endpoint that populates the "viewed by" widget. The
-  // list it returns already excludes the current viewer (VT4).
+  // list it returns already excludes the current viewer (views.viewers.excludes-caller).
   viewersEndpoint: string;
   // The signed-in viewer, or null. Used to label "your data", to know which
   // listed author is the viewer, and to show the back-to-admin button.
   viewerId: string | null;
   // The artefact owner, so the picker can tag the owner's entry.
   ownerId: string;
-  // AH16/S20: whether the artefact persists data (uses localStorage). When
-  // false the data-context picker is omitted entirely (and its authors fetch
-  // skipped) — there is no data to switch between.
+  // hosting.uses-storage.chrome-only, S20: whether the artefact persists data (uses localStorage).
+  // When false the data-context picker is omitted entirely (and its authors fetch skipped) — there
+  // is no data to switch between.
   usesStorage: boolean;
-  // S32a (AH23) — the owner is previewing a public artefact whose link has
-  // expired: a banner says visitors can no longer open it. Owner-only.
+  // S32a (hosting.link-gate.expiry-reads-as-private) — the owner is previewing a public artefact
+  // whose link has expired: a banner says visitors can no longer open it. Owner-only.
   linkExpired?: boolean;
 }
 
@@ -89,29 +89,54 @@ export interface ShellFrameConfig {
 // pagehide flush goes out as a plain request, best effort.
 const KEEPALIVE_MAX_BYTES = 60 * 1024;
 
-// S36 (AD10) — the shell's frame controller, as a JS expression evaluating to
+// S66 — the longest the shell holds its chrome back waiting for the frame's load,
+// so an artefact with slow subresources still appears into a visible chrome.
+export const FRAME_HOLD_MAX_MS = 3000;
+
+// S36 (data.shell.saves-only-own-frame) and S31 (data.shell.writes-pinned) — the
+// shell's frame controller, as a JS expression evaluating to
 // `{ select(authorId) }`. Kept free of server-only references so it can be
 // unit-tested by evaluating it with injected globals: references only `window`,
-// `document`, `fetch`, `TextEncoder`.
+// `document`, `fetch`, `TextEncoder` and `setTimeout`.
 //
-// It loads the frame, mints fresh frame URLs (author switch, conflict reload,
-// expired token), and saves the viewer's own data under the S31 discipline: it
-// accepts `artefactor:data-changed` only when `event.source` is its frame's
-// window (the frame's origin is "null", so there is no origin to check), only
+// It releases the shell's hold (S66) on the frame's first load or at
+// FRAME_HOLD_MAX_MS, whichever comes first; loads the frame; mints fresh frame
+// URLs (author switch, conflict reload, expired token); and saves the viewer's
+// own data under the S31 discipline: it accepts `artefactor:data-changed` only
+// when `event.source` is its frame's window (the frame's origin is "null", so
+// there is no origin to check), only
 // when the message carries the **channel** of the frame URL it loaded — so a page
 // the frame navigated itself to, which keeps the same window but never learns the
 // channel, can't forge a change — and only in the viewer's own context; the endpoint is fixed here, never taken from a
 // message; each PUT is pinned (`If-Match`, or `If-None-Match: *` with no entry);
 // saves never overlap (the latest blob waits); a 412 stops all writing and shows
 // the conflict banner. It posts nothing to the frame.
+// r[impl hosting.shell.hold-until-frame]
+// r[impl hosting.frame.shell-saves-for-frame]
+// r[impl data.shim.writes-through-shell]
+// r[impl data.shell.writes-pinned]
+// r[impl data.shell.saves-only-own-frame]
 export function shellFrameJs(cfg: ShellFrameConfig): string {
-  const cfgJson = JSON.stringify({ ...cfg, keepaliveMax: KEEPALIVE_MAX_BYTES }).replace(
-    /</g,
-    "\\u003c",
-  );
+  const cfgJson = JSON.stringify({
+    ...cfg,
+    keepaliveMax: KEEPALIVE_MAX_BYTES,
+    holdMax: FRAME_HOLD_MAX_MS,
+  }).replace(/</g, "\\u003c");
   return `(function(){
   var cfg = ${cfgJson};
   var frame = document.getElementById("ae-frame");
+  // S66 — the shell renders held (html.ae-hold); the first of the frame's load or
+  // the cap shows it, once. Wired before the frame URL is assigned, for every
+  // viewer; a later navigation the shell starts never holds again.
+  var held = true;
+  function release(){
+    if (!held) return;
+    held = false;
+    document.documentElement.classList.remove("ae-hold");
+    frame.removeAttribute("aria-busy");
+  }
+  frame.addEventListener("load", release, { once: true });
+  setTimeout(release, cfg.holdMax);
   frame.src = cfg.frameUrl;
   // Anonymous viewers are never writable and their frames carry no token.
   if (!cfg.viewerId) return { select: function(){} };
@@ -219,6 +244,13 @@ export function shellFrameJs(cfg: ShellFrameConfig): string {
 })()`;
 }
 
+// r[impl platform.theme.shell-markup]
+// r[impl platform.theme.shell-follows]
+// r[impl hosting.shell.viewers-count-reserved]
+// r[impl data.switcher.needs-another-author]
+// r[impl hosting.shell.no-third-party-chrome]
+// S72 — the chrome loads nothing from another origin: no web font, its text in
+// the app's sans stack (Tailwind's default `--font-sans`).
 export function renderHostShell(ctx: HostShellContext): string {
   const cfg = {
     title: ctx.title,
@@ -251,6 +283,8 @@ export function renderHostShell(ctx: HostShellContext): string {
   // Host tools: the data-context switcher and (later) more widgets beside it.
   // Rendered only for signed-in viewers; anonymous public viewers never see any
   // of them. Add future widgets as siblings of `.ae-switch` inside `.ae-tools`.
+  // r[impl data.switcher.signed-in-only]
+  // r[impl views.shell.viewed-by-widget]
   const hostTools = ctx.viewerId
     ? `<div class="ae-tools" id="ae-tools">
       <div class="ae-switch" id="ae-switch">
@@ -261,7 +295,7 @@ export function renderHostShell(ctx: HostShellContext): string {
       <div class="ae-viewers" id="ae-viewers">
         <button type="button" class="ae-viewers-btn" id="ae-viewers-btn" aria-haspopup="dialog" aria-expanded="false" title="Who has viewed this">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-          <span class="ae-viewers-count" id="ae-viewers-count" hidden></span>
+          <span class="ae-viewers-count" id="ae-viewers-count"></span>
           <span class="ae-viewers-label">Viewed by</span>
         </button>
         <div class="ae-viewers-pop" id="ae-viewers-pop" role="dialog" aria-label="Who has viewed this" hidden>
@@ -290,15 +324,12 @@ export function renderHostShell(ctx: HostShellContext): string {
     : "";
 
   return `<!doctype html>
-<html lang="en">
+<html lang="en" class="ae-hold">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(ctx.title)}</title>
 <script>${THEME_BOOT_JS}</script>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   ${shellThemeCss("class", {
     light: { kind: meta.color, "kind-tint": meta.tint },
@@ -306,7 +337,10 @@ export function renderHostShell(ctx: HostShellContext): string {
   })}
   *, *::before, *::after { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
-  body { display: flex; flex-direction: column; font: 14px/1.4 "Geist", -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; color: var(--foreground); background: var(--background); -webkit-font-smoothing: antialiased; }
+  body { display: flex; flex-direction: column; font: 14px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'; color: var(--foreground); background: var(--background); -webkit-font-smoothing: antialiased; }
+  /* S66 — held until the frame has loaded: only the body background paints, so
+     the chrome and the artefact appear together (released by the frame controller). */
+  html.ae-hold body > * { visibility: hidden; }
   .ae-bar { flex: 0 0 auto; display: flex; align-items: center; gap: .7rem; padding: .5rem .75rem; border-bottom: 1px solid var(--border); background: var(--background); }
   .ae-back { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-decoration: none; box-shadow: var(--shadow); }
   .ae-back:hover { background: var(--muted); }
@@ -332,7 +366,12 @@ export function renderHostShell(ctx: HostShellContext): string {
   .ae-viewers { position: relative; }
   .ae-viewers-btn { display: inline-flex; align-items: center; gap: .4rem; font: inherit; font-size: 13px; height: 32px; padding: 0 .6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); cursor: pointer; box-shadow: var(--shadow); }
   .ae-viewers-btn:hover { background: var(--muted); }
-  .ae-viewers-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--foreground); color: var(--background); font-size: 11px; font-weight: 600; line-height: 1; }
+  .ae-viewers-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--foreground); color: var(--background); font-size: 11px; font-weight: 600; line-height: 1; visibility: hidden; }
+  /* S66 — the count keeps its slot from first paint; the viewers fetch fills and
+     reveals it, or collapses it when there is no one to count. Revealed by
+     inheriting: an explicit visible value would show it through the hold. */
+  .ae-viewers-count.show { visibility: inherit; }
+  .ae-viewers-count[hidden] { display: none; }
   .ae-viewers-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 10; width: 280px; max-width: 80vw; max-height: 60vh; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-pop); padding: .5rem; }
   .ae-viewers-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground); padding: .25rem .4rem .4rem; }
   .ae-viewers-list { list-style: none; margin: 0; padding: 0; }
@@ -368,7 +407,7 @@ export function renderHostShell(ctx: HostShellContext): string {
   </div>
   ${linkExpiredBanner}
   ${conflictBanner}
-  <iframe class="ae-frame" id="ae-frame" title="Artefact" sandbox="${FRAME_SANDBOX_FLAGS}" allow="${FRAME_ALLOW}"></iframe>
+  <iframe class="ae-frame" id="ae-frame" title="Artefact" sandbox="${FRAME_SANDBOX_FLAGS}" allow="${FRAME_ALLOW}" aria-busy="true"></iframe>
 <script>
 (function(){
   var cfg = ${cfgJson};
@@ -450,7 +489,7 @@ export function renderHostShell(ctx: HostShellContext): string {
   sel.addEventListener("change", function(){ seed(sel.value); });
 
   // S21 — "viewed by" widget. Fetch the other viewers (the endpoint already
-  // excludes the current viewer, VT4), show a count, and reveal a pop-over list
+  // excludes the current viewer), show a count, and reveal a pop-over list
   // on click. Best-effort: any failure just leaves the widget showing nothing.
   var vBtn = document.getElementById("ae-viewers-btn");
   var vPop = document.getElementById("ae-viewers-pop");
@@ -464,10 +503,12 @@ export function renderHostShell(ctx: HostShellContext): string {
 
   function renderViewers(viewers){
     vList.textContent = "";
+    // Both channels set on every render: hidden collapses the count, show reveals it.
+    vCount.hidden = !viewers.length;
+    vCount.classList.toggle("show", !!viewers.length);
     if (!viewers.length) { vEmpty.hidden = false; return; }
     vEmpty.hidden = true;
     vCount.textContent = String(viewers.length);
-    vCount.hidden = false;
     viewers.forEach(function(v){
       var li = document.createElement("li");
       var name = document.createElement("div");

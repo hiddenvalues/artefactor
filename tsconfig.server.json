@@ -12,6 +12,7 @@
     "src/renderer/**/*.ts",
     "src/shared/**/*.ts",
     "src/specs/**/*.ts",
-    "src/deploy/**/*.ts"
+    "src/deploy/**/*.ts",
+    "src/dev/**/*.ts"
   ]
 }

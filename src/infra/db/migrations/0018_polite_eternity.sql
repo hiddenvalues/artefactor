@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `artefact_payload_ref_uq` ON `artefact` (`payload_ref`);

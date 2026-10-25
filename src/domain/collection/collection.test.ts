@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   archiveCollection,
+  assignCollectionSlug,
   assertCollectionDeletable,
   createCollection,
+  describeCollection,
   grantCollectionAccess,
   renameCollection,
   restoreCollection,
@@ -22,10 +24,11 @@ function makeRoot(over: Partial<Collection> = {}): Collection {
   };
 }
 
-describe("createCollection (CL1–CL3)", () => {
+describe("createCollection", () => {
+  // r[verify collections.collection.name-required]
   it("creates an active, private, top-level collection that is its own root", () => {
     const c = createCollection({ id: "c1", ownerId: OWNER, name: "  Product  " });
-    expect(c.name).toBe("Product"); // CL2 — trimmed
+    expect(c.name).toBe("Product"); // trimmed
     expect(c.parentId).toBeNull();
     expect(c.rootId).toBe("c1"); // a root is its own tree root
     expect(c.visibility).toBe("private");
@@ -34,7 +37,8 @@ describe("createCollection (CL1–CL3)", () => {
     expect(c.tenantId).toBe(DEFAULT_TENANT);
   });
 
-  it("a nested collection inherits the parent's rootId (CL3)", () => {
+  // r[verify collections.tree.shape-fixed]
+  it("a nested collection inherits the parent's rootId", () => {
     const root = makeRoot();
     const child = createCollection({
       id: "c2",
@@ -53,13 +57,15 @@ describe("createCollection (CL1–CL3)", () => {
     expect(grandchild.rootId).toBe("c1"); // denormalized through the chain
   });
 
-  it("rejects an empty name (CL2)", () => {
+  // r[verify collections.collection.name-required]
+  it("rejects an empty name", () => {
     expect(() =>
       createCollection({ id: "c1", ownerId: OWNER, name: "   " }),
     ).toThrow(CollectionInvariantViolation);
   });
 
-  it("rejects a parent with a different owner or tenant (CL1)", () => {
+  // r[verify collections.tree.single-owner]
+  it("rejects a parent with a different owner or tenant", () => {
     const other = makeRoot({ ownerId: "owner-2" });
     expect(() =>
       createCollection({ id: "c2", ownerId: OWNER, name: "Q4", parent: other }),
@@ -75,7 +81,9 @@ describe("createCollection (CL1–CL3)", () => {
     ).toThrow(CollectionInvariantViolation);
   });
 
-  it("rejects creating under an archived parent (CL7)", () => {
+  // r[verify collections.tree.shape-fixed]
+  // r[verify collections.lifecycle.archived-inert+3]
+  it("rejects creating under an archived parent", () => {
     const archived = archiveCollection(makeRoot());
     expect(() =>
       createCollection({ id: "c2", ownerId: OWNER, name: "Q4", parent: archived }),
@@ -83,7 +91,7 @@ describe("createCollection (CL1–CL3)", () => {
   });
 });
 
-describe("renameCollection (CL2/CL7)", () => {
+describe("renameCollection", () => {
   it("renames, trimming, and bumps updatedAt", () => {
     const t1 = new Date("2026-01-02T00:00:00Z");
     const next = renameCollection(makeRoot(), "  Growth  ", { now: t1 });
@@ -91,6 +99,8 @@ describe("renameCollection (CL2/CL7)", () => {
     expect(next.updatedAt).toEqual(t1);
   });
 
+  // r[verify collections.collection.name-required]
+  // r[verify collections.lifecycle.archived-inert+3]
   it("rejects empty names and archived collections", () => {
     expect(() => renameCollection(makeRoot(), " ")).toThrow(
       CollectionInvariantViolation,
@@ -101,7 +111,72 @@ describe("renameCollection (CL2/CL7)", () => {
   });
 });
 
-describe("setCollectionAccess (CL4)", () => {
+// r[verify collections.collection.description+2]
+describe("collection description (S74)", () => {
+  it("is trimmed at create", () => {
+    const c = createCollection({
+      id: "c1",
+      ownerId: OWNER,
+      name: "Help",
+      description: "  Guides for new users  ",
+    });
+    expect(c.description).toBe("Guides for new users");
+  });
+
+  it("is null when blank or omitted", () => {
+    expect(
+      createCollection({ id: "c1", ownerId: OWNER, name: "Help", description: "   " }).description,
+    ).toBeNull();
+    expect(makeRoot().description).toBeNull();
+  });
+
+  it("collapses internal whitespace runs, line breaks included, to one space", () => {
+    const c = createCollection({
+      id: "c1",
+      ownerId: OWNER,
+      name: "Help",
+      description: "Guides\n\nFAQ \t and   notes",
+    });
+    expect(c.description).toBe("Guides FAQ and notes");
+  });
+
+  it("applies the limit to the collapsed text", () => {
+    const raw = "a".repeat(140) + "\n\n\n" + "b".repeat(139); // 282 raw, 280 collapsed
+    expect(
+      createCollection({ id: "c1", ownerId: OWNER, name: "Help", description: raw }).description,
+    ).toBe("a".repeat(140) + " " + "b".repeat(139));
+  });
+
+  it("accepts exactly 280 characters and rejects 281, naming the limit", () => {
+    const at = "a".repeat(280);
+    expect(
+      createCollection({ id: "c1", ownerId: OWNER, name: "Help", description: at }).description,
+    ).toBe(at);
+    expect(() =>
+      createCollection({ id: "c1", ownerId: OWNER, name: "Help", description: "a".repeat(281) }),
+    ).toThrow(/280/);
+  });
+
+  it("the edit sets and clears it, bumping updatedAt", () => {
+    const t1 = new Date("2026-01-02T00:00:00Z");
+    const described = describeCollection(makeRoot(), " Topics ", { now: t1 });
+    expect(described.description).toBe("Topics");
+    expect(described.updatedAt).toEqual(t1);
+    expect(describeCollection(described, null).description).toBeNull();
+    expect(() => describeCollection(makeRoot(), "a".repeat(281))).toThrow(
+      CollectionInvariantViolation,
+    );
+  });
+
+  // r[verify collections.lifecycle.archived-inert+3]
+  it("refuses an archived collection's edit", () => {
+    expect(() => describeCollection(archiveCollection(makeRoot()), "X")).toThrow(
+      CollectionInvariantViolation,
+    );
+  });
+});
+
+describe("setCollectionAccess", () => {
   it("changes the tier on a root", () => {
     const next = setCollectionAccess(makeRoot(), "authenticated");
     expect(next.visibility).toBe("authenticated");
@@ -112,7 +187,8 @@ describe("setCollectionAccess (CL4)", () => {
     expect(setCollectionAccess(c, "private")).toBe(c);
   });
 
-  it("rejects a non-root — nested collections inherit (CL4)", () => {
+  // r[verify collections.access.set-on-root-only]
+  it("rejects a non-root — nested collections inherit", () => {
     const child = createCollection({
       id: "c2",
       ownerId: OWNER,
@@ -124,14 +200,17 @@ describe("setCollectionAccess (CL4)", () => {
     );
   });
 
-  it("rejects an archived collection (CL7)", () => {
+  // r[verify collections.lifecycle.archived-inert+3]
+  it("rejects an archived collection", () => {
     expect(() =>
       setCollectionAccess(archiveCollection(makeRoot()), "public"),
     ).toThrow(CollectionInvariantViolation);
   });
 });
 
-describe("collection access list (CL4, AH13/14 semantics)", () => {
+// r[verify hosting.access-list.retained]
+// r[verify hosting.access-list.owner-managed-set]
+describe("collection access list", () => {
   it("grants and revokes with set semantics", () => {
     const c = makeRoot();
     const granted = grantCollectionAccess(c, "user-2");
@@ -142,6 +221,8 @@ describe("collection access list (CL4, AH13/14 semantics)", () => {
     expect(revokeCollectionAccess(revoked, "ghost")).toBe(revoked); // no-op
   });
 
+  // r[verify collections.access.set-on-root-only]
+  // r[verify collections.lifecycle.archived-inert+3]
   it("rejects granting the owner, on non-roots, and while archived", () => {
     expect(() => grantCollectionAccess(makeRoot(), OWNER)).toThrow(
       CollectionInvariantViolation,
@@ -161,7 +242,7 @@ describe("collection access list (CL4, AH13/14 semantics)", () => {
   });
 });
 
-describe("collection lifecycle (CL7/CL8)", () => {
+describe("collection lifecycle", () => {
   it("archive stamps archivedAt; restore clears it and keeps the tier", () => {
     const c = setCollectionAccess(makeRoot(), "public");
     const archived = archiveCollection(c);
@@ -173,6 +254,7 @@ describe("collection lifecycle (CL7/CL8)", () => {
     expect(restored.visibility).toBe("public"); // tier retained through archival
   });
 
+  // r[verify collections.lifecycle.delete-archived-only]
   it("guards double-archive, restore-of-active, and delete-of-active", () => {
     const c = makeRoot();
     expect(() => restoreCollection(c)).toThrow(CollectionInvariantViolation);
@@ -184,5 +266,35 @@ describe("collection lifecycle (CL7/CL8)", () => {
       CollectionInvariantViolation,
     );
     expect(() => assertCollectionDeletable(archived)).not.toThrow();
+  });
+});
+
+describe("collection public slug (S44)", () => {
+  it("starts null on every new collection", () => {
+    expect(makeRoot().publicSlug).toBeNull();
+  });
+
+  // r[verify collections.public-link.root-slug-minted]
+  it("assignCollectionSlug sets the slug on a slugless root", () => {
+    expect(assignCollectionSlug(makeRoot(), "abc").publicSlug).toBe("abc");
+  });
+
+  // r[verify collections.public-link.root-slug-minted]
+  it("assignCollectionSlug refuses a non-root, and a root that already has one", () => {
+    const root = makeRoot();
+    const child = createCollection({ id: "c2", ownerId: OWNER, name: "Q4", parent: root });
+    expect(() => assignCollectionSlug(child, "abc")).toThrow(CollectionInvariantViolation);
+    expect(() => assignCollectionSlug(makeRoot({ publicSlug: "kept" }), "abc")).toThrow(
+      CollectionInvariantViolation,
+    );
+  });
+
+  // r[verify collections.public-link.root-slug-minted]
+  it("setCollectionAccess retains the slug across every tier change", () => {
+    let c = makeRoot({ publicSlug: "kept" });
+    for (const tier of ["public", "private", "selected", "authenticated", "private"] as const) {
+      c = setCollectionAccess(c, tier);
+      expect(c.publicSlug).toBe("kept");
+    }
   });
 });

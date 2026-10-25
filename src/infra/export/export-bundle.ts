@@ -14,15 +14,16 @@ import {
   RECORD_FILES,
   RECORD_KINDS,
   VERSION,
+  type LinkGateRecord,
   type Manifest,
   type RecordsByKind,
 } from "./format";
 
 // S39 — write a deployment's state as an `artefactor-export` bundle
 // (ddd/deployment-export.md). Reads every record inside one read transaction
-// (DX3) through a connection the caller should open read-only (DX1), copies each
-// distinct payload under its sha256 after checking every artefact's file against
-// its `payloadHash` (DX4), and writes into `<out>.partial`, renamed to `<out>`
+// through a connection the caller should open read-only, copies each distinct
+// payload under its sha256 after checking every artefact's file against its
+// `payloadHash`, and writes into `<out>.partial`, renamed to `<out>`
 // only once the whole bundle is on disk.
 
 export interface ExportBundleInput {
@@ -46,15 +47,37 @@ interface PayloadSource {
   bytes: number;
 }
 
+// r[impl export.bundle.owner-only]
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 
+// r[impl export.format.utc-millis]
 const iso = (d: Date) => d.toISOString();
-const isoOrNull = (d: Date | null) => (d ? d.toISOString() : null);
+// An absent value stays null — undefined would drop the key from the record.
+// r[impl export.format.null-not-omitted]
+const isoOrNull = (d: Date | null) => (d ? iso(d) : null);
 
+// A row's link gate — an artefact's (S32a) or a collection root's (S32b). No
+// password and no expiry is no gate (incl. a cleared one) → null.
+function linkGateRecordOf(row: {
+  linkPasswordHash: string | null;
+  linkExpiresAt: Date | null;
+  linkGateVersion: number;
+}): LinkGateRecord | null {
+  return row.linkPasswordHash !== null || row.linkExpiresAt !== null
+    ? {
+        passwordHash: row.linkPasswordHash,
+        expiresAt: isoOrNull(row.linkExpiresAt),
+        version: row.linkGateVersion,
+      }
+    : null;
+}
+
+// r[impl export.bundle.round-trips+2]
 export async function exportBundle(input: ExportBundleInput): Promise<Manifest> {
   const out = resolve(input.out);
   const partial = `${out}.partial`;
+  // r[impl export.output.never-reused]
   await assertUsableOut(out);
   if (await stat(partial).catch(() => undefined)) {
     throw new BundleError("out", `${partial} already exists (an earlier failed run?); remove it first`);
@@ -77,6 +100,7 @@ export async function exportBundle(input: ExportBundleInput): Promise<Manifest> 
     } catch (e) {
       throw new BundleError("payload", `artefact ${p.artefactId}: payload ${p.ref} is unreadable (${String(e)})`);
     }
+    // r[impl export.payload.writer-verifies]
     const hash = createHash("sha256").update(bytes).digest("hex");
     if (hash !== p.hash || bytes.byteLength !== p.bytes) {
       throw new BundleError(
@@ -92,6 +116,7 @@ export async function exportBundle(input: ExportBundleInput): Promise<Manifest> 
 
   for (const kind of RECORD_KINDS) {
     const rows = records[kind] as unknown[];
+    // r[impl export.format.json-lines]
     await writeFile(
       join(partial, RECORD_FILES[kind].file),
       rows.map((r) => `${JSON.stringify(r)}\n`).join(""),
@@ -136,16 +161,22 @@ async function assertUsableOut(out: string): Promise<void> {
   }
 }
 
-// DX3 — every record comes from one read transaction. better-sqlite3 reads are
+// Every record comes from one read transaction. better-sqlite3 reads are
 // synchronous, and a deferred transaction's snapshot opens at its first read.
+// r[impl export.snapshot.one-transaction]
 function readSnapshot(
   sqlite: Database.Database,
   afterSnapshot?: () => void,
 ): { records: Records; payloads: PayloadSource[] } {
   const db = drizzle(sqlite, { schema });
   const read = sqlite.transaction(() => {
+    // Every read is ordered by id, or by its key columns for keyless rows;
+    // collections are then re-sorted parents first.
+    // r[impl export.format.stable-order]
     const users = db.select().from(schema.user).orderBy(asc(schema.user.id)).all();
     afterSnapshot?.();
+    // No status filter, here or on collections: archived records travel too.
+    // r[impl export.format.archived-included]
     const artefacts = db.select().from(schema.artefact).orderBy(asc(schema.artefact.id)).all();
     const artefactAccess = db
       .select()
@@ -184,8 +215,10 @@ function readSnapshot(
   });
   const rows = read.deferred();
 
+  // r[impl export.bundle.lossless]
   const records: Records = {
-    // DX2 — identity only; no credential column is ever selected into a record.
+    // Identity only; no credential column is ever selected into a record.
+    // r[impl export.account.no-credentials+2]
     accounts: rows.users.map((u) => ({
       id: u.id,
       email: u.email,
@@ -194,6 +227,8 @@ function readSnapshot(
       image: u.image,
       createdAt: iso(u.createdAt),
     })),
+    // Named fields only: no payload storage ref, tenant id or thumbnail.
+    // r[impl export.format.excludes-derived]
     artefacts: rows.artefacts.map((a) => ({
       id: a.id,
       ownerId: a.ownerId,
@@ -207,15 +242,7 @@ function readSnapshot(
       payloadBytes: a.payloadBytes,
       usesStorage: a.usesStorage,
       dataVisibility: a.dataVisibility,
-      // No password and no expiry is no gate (incl. a cleared one) → null.
-      linkGate:
-        a.linkPasswordHash !== null || a.linkExpiresAt !== null
-          ? {
-              passwordHash: a.linkPasswordHash,
-              expiresAt: isoOrNull(a.linkExpiresAt),
-              version: a.linkGateVersion,
-            }
-          : null,
+      linkGate: linkGateRecordOf(a),
       createdAt: iso(a.createdAt),
       updatedAt: iso(a.updatedAt),
       archivedAt: isoOrNull(a.archivedAt),
@@ -229,10 +256,15 @@ function readSnapshot(
       id: c.id,
       ownerId: c.ownerId,
       name: c.name,
+      description: c.description,
       parentId: c.parentId,
       rootId: c.rootId,
       visibility: c.visibility,
+      // r[impl export.collection.public-slug]
+      publicSlug: c.publicSlug,
       status: c.status,
+      // r[impl export.collection.link-gate]
+      linkGate: linkGateRecordOf(c),
       createdAt: iso(c.createdAt),
       updatedAt: iso(c.updatedAt),
       archivedAt: isoOrNull(c.archivedAt),
@@ -246,6 +278,7 @@ function readSnapshot(
       id: d.id,
       artefactId: d.artefactId,
       authorId: d.authorId,
+      // r[impl export.format.blob-untouched]
       blob: d.blob,
       authoredAgainstVersion: d.authoredAgainstVersion,
       createdAt: iso(d.createdAt),

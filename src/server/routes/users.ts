@@ -14,6 +14,7 @@ export interface UserRoutesDeps {
 export function createUserRoutes(deps: UserRoutesDeps) {
   const r = new Hono<AuthEnv>();
 
+  // r[impl hosting.access-list.directory-search+2]
   r.get("/search", requireAuth, async (c) => {
     const q = c.req.query("q") ?? "";
     const users = await deps.userDirectory.search(q, {

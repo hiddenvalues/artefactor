@@ -1,8 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { db as Db } from "./client";
 import { viewEntry } from "./schema";
 import type { ViewEntry } from "../../domain/views/view-entry";
 import type {
+  OwnViewRef,
   ViewerRef,
   ViewRepository,
 } from "../../domain/views/view-repository";
@@ -11,7 +12,7 @@ type Database = typeof Db;
 type ViewEntryRow = typeof viewEntry.$inferSelect;
 
 // Drizzle/SQLite adapter for the ViewRepository port. One row per
-// (artefact_id, viewer_id) — `save` upserts on that unique pair (VT1).
+// (artefact_id, viewer_id) — `save` upserts on that unique pair (views.entry.one-per-pair).
 export class DrizzleViewRepository implements ViewRepository {
   constructor(private readonly db: Database) {}
 
@@ -49,6 +50,15 @@ export class DrizzleViewRepository implements ViewRepository {
       .from(viewEntry)
       .where(eq(viewEntry.artefactId, artefactId));
     return rows.map((r) => ({ viewerId: r.viewerId, viewedAt: r.viewedAt }));
+  }
+
+  async listByViewer(viewerId: string): Promise<OwnViewRef[]> {
+    const rows = await this.db
+      .select({ artefactId: viewEntry.artefactId, viewedAt: viewEntry.viewedAt })
+      .from(viewEntry)
+      .where(eq(viewEntry.viewerId, viewerId))
+      .orderBy(desc(viewEntry.viewedAt));
+    return rows.map((r) => ({ artefactId: r.artefactId, viewedAt: r.viewedAt }));
   }
 
   async deleteByArtefact(artefactId: string): Promise<void> {

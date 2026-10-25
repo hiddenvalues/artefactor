@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   archiveArtefact,
   assertDeletable,
@@ -6,10 +6,18 @@ import {
   editArtefact,
   isThumbnailStale,
   restoreArtefact,
+  setDataVisibility,
   shareArtefact,
   unshareArtefact,
+  DEFAULT_TENANT,
   MAX_PAYLOAD_BYTES,
+  type Artefact,
 } from "./artefact";
+import { grantAccess, revokeAccess } from "./access-list";
+import { clearArtefactLinkGate } from "./link-gate";
+import { changed, type OwnerChanges } from "./changed";
+import { createCollection } from "../collection/collection";
+import { evictFromCollection, moveArtefactToCollection } from "../collection/move-artefact";
 import { InMemoryArtefactRepository } from "./in-memory-artefact-repository";
 import { SINGLETON_SCOPE } from "./tenant-scope";
 import { InvariantViolation } from "./errors";
@@ -23,6 +31,7 @@ const base = {
 };
 
 describe("createArtefact", () => {
+  // r[verify hosting.create.active-private]
   it("creates an active, private artefact with no slug", () => {
     const a = createArtefact(base);
     expect(a.status).toBe("active");
@@ -31,19 +40,35 @@ describe("createArtefact", () => {
     expect(a.payloadBytes).toBe(1024);
   });
 
-  it("trims and rejects an empty title (AH3)", () => {
+  // r[verify hosting.create.title-kind-payload]
+  it("carries the owner, title, kind and payload it was created from", () => {
+    const a = createArtefact(base);
+    expect(a).toMatchObject({
+      ownerId: "u1",
+      title: "Demo artefact",
+      kind: "prototype",
+      payloadRef: "r1",
+      payloadBytes: 1024,
+      payloadHash: "deadbeef",
+    });
+  });
+
+  // r[verify hosting.artefact.title-required]
+  it("trims and rejects an empty title", () => {
     expect(() => createArtefact({ ...base, title: "   " })).toThrow(
       InvariantViolation,
     );
   });
 
-  it("rejects an empty payload (AH2)", () => {
+  // r[verify hosting.payload.size-bounds]
+  it("rejects an empty payload", () => {
     expect(() =>
       createArtefact({ ...base, payload: { ref: "r", bytes: 0, hash: "h" } }),
     ).toThrow(InvariantViolation);
   });
 
-  it("rejects a payload over the 100 MB cap (AH2)", () => {
+  // r[verify hosting.payload.size-bounds]
+  it("rejects a payload over the 100 MB cap", () => {
     expect(() =>
       createArtefact({
         ...base,
@@ -52,7 +77,8 @@ describe("createArtefact", () => {
     ).toThrow(InvariantViolation);
   });
 
-  it("requires an owner (AH1)", () => {
+  // r[verify hosting.artefact.owner-required]
+  it("requires an owner", () => {
     expect(() => createArtefact({ ...base, ownerId: "" })).toThrow(
       InvariantViolation,
     );
@@ -60,32 +86,39 @@ describe("createArtefact", () => {
 });
 
 describe("shareArtefact / unshareArtefact (S5)", () => {
-  it("mints the supplied slug on first share and sets the tier (AH4)", () => {
+  // r[verify hosting.slug.shared-has-slug]
+  // r[verify hosting.share.sets-tier]
+  it("mints the supplied slug on first share and sets the tier", () => {
     const a = createArtefact(base);
     const shared = shareArtefact(a, { tier: "public", newSlug: "abc123" });
     expect(shared.visibility).toBe("public");
     expect(shared.publicSlug).toBe("abc123");
   });
 
-  it("retains the existing slug when re-sharing, ignoring a new one (AH5)", () => {
+  // r[verify hosting.slug.minted-once-retained]
+  it("retains the existing slug when re-sharing, ignoring a new one", () => {
     const a = { ...createArtefact(base), publicSlug: "kept", visibility: "private" as const };
     const shared = shareArtefact(a, { tier: "authenticated", newSlug: "ignored" });
     expect(shared.publicSlug).toBe("kept");
     expect(shared.visibility).toBe("authenticated");
   });
 
-  it("changes tier between authenticated and public (AH6)", () => {
+  // r[verify hosting.share.sets-tier]
+  it("changes tier between authenticated and public", () => {
     const a = { ...createArtefact(base), publicSlug: "s", visibility: "authenticated" as const };
     expect(shareArtefact(a, { tier: "public" }).visibility).toBe("public");
   });
 
-  it("requires a slug to share an artefact that has none (AH4)", () => {
+  // r[verify hosting.slug.shared-has-slug]
+  it("requires a slug to share an artefact that has none", () => {
     expect(() => shareArtefact(createArtefact(base), { tier: "public" })).toThrow(
       InvariantViolation,
     );
   });
 
-  it("unshare returns to private but retains the slug (AH5)", () => {
+  // r[verify hosting.slug.minted-once-retained]
+  // r[verify hosting.unshare.sets-private]
+  it("unshare returns to private but retains the slug", () => {
     const shared = shareArtefact(createArtefact(base), {
       tier: "public",
       newSlug: "slug9",
@@ -95,24 +128,107 @@ describe("shareArtefact / unshareArtefact (S5)", () => {
     expect(unshared.publicSlug).toBe("slug9");
   });
 
-  it("blocks share/unshare while archived (AH7)", () => {
+  // r[verify hosting.lifecycle.archived-frozen]
+  it("blocks share/unshare while archived", () => {
     const archived = { ...createArtefact(base), status: "archived" as const };
     expect(() => shareArtefact(archived, { tier: "public", newSlug: "x" })).toThrow(
       InvariantViolation,
     );
     expect(() => unshareArtefact(archived)).toThrow(InvariantViolation);
   });
+});
 
-  it("bumps updatedAt on transition", () => {
-    const a = createArtefact({ ...base, now: new Date("2026-01-01T00:00:00Z") });
-    const later = new Date("2026-02-01T00:00:00Z");
-    expect(shareArtefact(a, { tier: "public", newSlug: "s", now: later }).updatedAt).toEqual(
-      later,
-    );
+describe("updatedAt (every change)", () => {
+  const created = new Date("2026-01-01T00:00:00Z");
+  const later = new Date("2026-02-01T00:00:00Z");
+  const fresh = () => createArtefact({ ...base, now: created });
+  const shared = () => shareArtefact(fresh(), { tier: "public", newSlug: "s", now: created });
+  const collection = createCollection({ id: "c1", ownerId: "u1", name: "Folder" });
+  const contained = () => moveArtefactToCollection(fresh(), collection, { now: created });
+  const gated = (): Artefact => ({
+    ...shared(),
+    linkGate: { passwordHash: "h", expiresAt: null, version: 2 },
+  });
+
+  // r[verify hosting.artefact.updated-at-bumped+2]
+  it.each([
+    ["edit", () => editArtefact(fresh(), { title: "Renamed", now: later })],
+    ["share", () => shareArtefact(fresh(), { tier: "public", newSlug: "s", now: later })],
+    ["change tier", () => shareArtefact(shared(), { tier: "authenticated", now: later })],
+    ["unshare", () => unshareArtefact(shared(), { now: later })],
+    ["grant access", () => grantAccess(fresh(), "u2", later)],
+    ["revoke access", () => revokeAccess(grantAccess(fresh(), "u2", created), "u2", later)],
+    ["clear the link gate", () =>
+      clearArtefactLinkGate(gated(), { requesterId: "u1", now: later })],
+    ["set data visibility", () => setDataVisibility(fresh(), "u1", "shared", { now: later })],
+    ["archive", () => archiveArtefact(fresh(), { now: later })],
+    ["restore", () =>
+      restoreArtefact(archiveArtefact(fresh(), { now: created }), { now: later })],
+    ["move into a collection", () => moveArtefactToCollection(fresh(), collection, { now: later })],
+    ["move to top level", () => moveArtefactToCollection(contained(), null, { now: later })],
+    ["evict from a collection", () => evictFromCollection(contained(), { now: later })],
+  ])("%s sets updatedAt to the time of the change", (_, change) => {
+    expect(change().updatedAt).toEqual(later);
+  });
+
+  // r[verify hosting.artefact.updated-at-bumped+2]
+  it.each([
+    ["granting an existing member", () => grantAccess(grantAccess(fresh(), "u2", created), "u2", later)],
+    ["revoking a non-member", () => revokeAccess(fresh(), "u2", later)],
+    ["setting the current data visibility", () =>
+      setDataVisibility(fresh(), "u1", fresh().dataVisibility, { now: later })],
+    ["moving to the collection it is in", () =>
+      moveArtefactToCollection(contained(), collection, { now: later })],
+    ["evicting a top-level artefact", () => evictFromCollection(fresh(), { now: later })],
+  ])("%s is a no-op that leaves updatedAt alone", (_, change) => {
+    expect(change().updatedAt).toEqual(created);
+  });
+
+  const authenticated = () =>
+    shareArtefact(fresh(), { tier: "authenticated", newSlug: "s", now: created });
+
+  // r[verify hosting.artefact.updated-at-bumped+2]
+  it.each([
+    ["unsharing a private artefact", fresh, (a: Artefact) => unshareArtefact(a, { now: later })],
+    ["sharing at the current tier", authenticated, (a: Artefact) =>
+      shareArtefact(a, { tier: "authenticated", now: later })],
+    ["sharing public → public with a gate set", gated, (a: Artefact) =>
+      shareArtefact(a, { tier: "public", now: later })],
+    ["an edit with no fields", fresh, (a: Artefact) => editArtefact(a, { now: later })],
+    ["clearing an unset link gate", shared, (a: Artefact) =>
+      clearArtefactLinkGate(a, { requesterId: "u1", now: later })],
+  ])("%s returns the artefact itself", (_, make, change) => {
+    const a = make();
+    expect(change(a)).toBe(a);
+  });
+
+  // r[verify hosting.artefact.updated-at-bumped+2]
+  it("changed() returns the input when every change equals the current value", () => {
+    const a = fresh();
+    expect(changed(a, {}, later)).toBe(a);
+    expect(changed(a, { visibility: a.visibility }, later)).toBe(a);
+    const next = changed(a, { visibility: "public" }, later);
+    expect(next).not.toBe(a);
+    expect(next.visibility).toBe("public");
+    expect(next.updatedAt).toEqual(later);
+  });
+});
+
+describe("identity", () => {
+  // r[verify hosting.artefact.identity-fixed]
+  it("lets no transition's changes name the id or the creation time", () => {
+    expectTypeOf<OwnerChanges>().not.toHaveProperty("id");
+    expectTypeOf<OwnerChanges>().not.toHaveProperty("createdAt");
+  });
+
+  // r[verify hosting.tenant.id-fixed]
+  it("lets no transition's changes name the tenant", () => {
+    expectTypeOf<OwnerChanges>().not.toHaveProperty("tenantId");
   });
 });
 
 describe("editArtefact (S3)", () => {
+  // r[verify hosting.edit.fields-and-timestamp+2]
   it("updates only the provided fields and bumps updatedAt", () => {
     const a = createArtefact({ ...base, now: new Date("2026-01-01T00:00:00Z") });
     const later = new Date("2026-03-01T00:00:00Z");
@@ -122,7 +238,17 @@ describe("editArtefact (S3)", () => {
     expect(edited.updatedAt).toEqual(later);
   });
 
-  it("replaces the payload when given a new one (AH2)", () => {
+  // r[verify hosting.edit.fields-and-timestamp+2]
+  it("leaves the artefact itself when no field changes", () => {
+    const a = createArtefact({ ...base, now: new Date("2026-01-01T00:00:00Z") });
+    const later = new Date("2026-03-01T00:00:00Z");
+    expect(editArtefact(a, { now: later })).toBe(a);
+    expect(editArtefact(a, { title: `  ${a.title} `, kind: a.kind, now: later })).toBe(a);
+    expect(editArtefact(a, { title: "New", now: later }).updatedAt).toEqual(later);
+  });
+
+  // r[verify hosting.edit.fields-and-timestamp+2]
+  it("replaces the payload when given a new one", () => {
     const a = createArtefact(base);
     const edited = editArtefact(a, {
       payload: { ref: "r2", bytes: 2048, hash: "newhash" },
@@ -132,7 +258,9 @@ describe("editArtefact (S3)", () => {
     expect(edited.payloadHash).toBe("newhash");
   });
 
-  it("rejects an empty title and oversize payload (AH2, AH3)", () => {
+  // r[verify hosting.payload.size-bounds]
+  // r[verify hosting.artefact.title-required]
+  it("rejects an empty title and oversize payload", () => {
     const a = createArtefact(base);
     expect(() => editArtefact(a, { title: "   " })).toThrow(InvariantViolation);
     expect(() =>
@@ -143,13 +271,15 @@ describe("editArtefact (S3)", () => {
     ).toThrow(InvariantViolation);
   });
 
-  it("is blocked while archived (AH7)", () => {
+  // r[verify hosting.lifecycle.archived-frozen]
+  it("is blocked while archived", () => {
     const archived = { ...createArtefact(base), status: "archived" as const };
     expect(() => editArtefact(archived, { title: "x" })).toThrow(InvariantViolation);
   });
 });
 
 describe("archiveArtefact / restoreArtefact (S7)", () => {
+  // r[verify hosting.lifecycle.archive-stamps-archived-at]
   it("archive marks inert and stamps archivedAt, keeping visibility", () => {
     const shared = shareArtefact(createArtefact(base), {
       tier: "public",
@@ -163,12 +293,14 @@ describe("archiveArtefact / restoreArtefact (S7)", () => {
     expect(archived.publicSlug).toBe("s");
   });
 
+  // r[verify hosting.lifecycle.archive-active-only]
   it("rejects archiving an already-archived artefact", () => {
     const archived = { ...createArtefact(base), status: "archived" as const };
     expect(() => archiveArtefact(archived)).toThrow(InvariantViolation);
   });
 
-  it("restore returns to active at the prior visibility and clears archivedAt (AH9)", () => {
+  // r[verify hosting.restore.prior-visibility]
+  it("restore returns to active at the prior visibility and clears archivedAt", () => {
     const shared = shareArtefact(createArtefact(base), {
       tier: "authenticated",
       newSlug: "s",
@@ -180,12 +312,14 @@ describe("archiveArtefact / restoreArtefact (S7)", () => {
     expect(restored.visibility).toBe("authenticated"); // prior tier
   });
 
+  // r[verify hosting.lifecycle.restore-archived-only]
   it("rejects restoring an artefact that is not archived", () => {
     expect(() => restoreArtefact(createArtefact(base))).toThrow(InvariantViolation);
   });
 });
 
-describe("assertDeletable (S15, AH11)", () => {
+// r[verify hosting.delete.archived-only]
+describe("assertDeletable (S15)", () => {
   it("permits deleting an archived artefact", () => {
     const archived = archiveArtefact(createArtefact(base));
     expect(() => assertDeletable(archived)).not.toThrow();
@@ -208,6 +342,8 @@ describe("InMemoryArtefactRepository", () => {
   });
 
   describe("listByOwner (S10)", () => {
+    // r[verify hosting.lifecycle.archived-hidden-from-listings]
+    // r[verify hosting.listing.own-only]
     it("returns only the owner's active artefacts, newest first", async () => {
       const repo = new InMemoryArtefactRepository();
       const t0 = new Date("2026-01-01T00:00:00Z");
@@ -215,7 +351,8 @@ describe("InMemoryArtefactRepository", () => {
       await repo.save(createArtefact({ ...base, id: "old", now: t0 }));
       await repo.save(createArtefact({ ...base, id: "new", now: t1 }));
       await repo.save(createArtefact({ ...base, id: "other", ownerId: "u2" }));
-      // An archived artefact of the same owner is hidden by default (AH7).
+      // An archived artefact of the same owner is hidden by default
+      // (hosting.lifecycle.archived-hidden-from-listings).
       const archived = {
         ...createArtefact({ ...base, id: "arch" }),
         status: "archived" as const,
@@ -224,6 +361,18 @@ describe("InMemoryArtefactRepository", () => {
 
       const list = await repo.listByOwner("u1", SINGLETON_SCOPE);
       expect(list.map((a) => a.id)).toEqual(["new", "old"]);
+    });
+
+    // r[verify hosting.listing.own-only]
+    it("orders by the last change, not by creation", async () => {
+      const repo = new InMemoryArtefactRepository();
+      await repo.save(createArtefact({ ...base, id: "old", now: new Date("2026-01-01T00:00:00Z") }));
+      await repo.save(createArtefact({ ...base, id: "new", now: new Date("2026-01-02T00:00:00Z") }));
+      const old = (await repo.findById("old", SINGLETON_SCOPE))!;
+      await repo.save(editArtefact(old, { title: "Edited", now: new Date("2026-01-03T00:00:00Z") }));
+
+      const list = await repo.listByOwner("u1", SINGLETON_SCOPE);
+      expect(list.map((a) => a.id)).toEqual(["old", "new"]);
     });
 
     it("includes archived artefacts when asked", async () => {
@@ -253,6 +402,7 @@ describe("InMemoryArtefactRepository", () => {
       return repo;
     };
 
+    // r[verify hosting.shared.others-viewable]
     it("returns active authenticated+public across owners, never private/archived", async () => {
       const repo = await seed();
       // Viewer owns none of them → sees every shared artefact across owners.
@@ -260,19 +410,42 @@ describe("InMemoryArtefactRepository", () => {
       expect(shared.map((a) => a.id).sort()).toEqual(["auth", "pub"]);
     });
 
+    // r[verify hosting.shared.others-viewable]
     it("excludes the viewer's own shared artefacts (they live in Your artefacts)", async () => {
       const repo = await seed();
       // u1 owns "pub" → it drops out; only u2's "auth" remains.
       const shared = await repo.listShared("u1", SINGLETON_SCOPE);
       expect(shared.map((a) => a.id).sort()).toEqual(["auth"]);
     });
+
+    // r[verify hosting.shared.others-viewable]
+    it("lists top-level artefacts only: a contained one's own tier is dormant", async () => {
+      const repo = await seed();
+      await repo.save({
+        ...createArtefact({ ...base, id: "contained", ownerId: "u2" }),
+        visibility: "public",
+        collectionId: "c1",
+      });
+      const shared = await repo.listShared("u3", SINGLETON_SCOPE);
+      expect(shared.map((a) => a.id)).not.toContain("contained");
+    });
   });
 
-  // S22 (AH17/T2) — the read methods are tenant-scoped. OSS uses the singleton
-  // scope (every row is DEFAULT_TENANT), so these prove the *seam*: a stub
+  // S22 (hosting.tenant.invisible-to-oss) — the read methods are tenant-scoped. OSS uses the
+  // singleton scope (every row is DEFAULT_TENANT), so these prove the *seam*: a stub
   // multi-tenant scope never returns another tenant's rows. `findBySlug` is
-  // deliberately global (AH6) and is asserted to stay cross-tenant.
+  // deliberately global (hosting.slug.globally-unique) and is asserted to stay cross-tenant.
   describe("tenant scope (S22)", () => {
+    // r[verify hosting.tenant.invisible-to-oss]
+    it("puts an artefact created without a tenant in the default one, which the singleton scope reads", async () => {
+      const repo = new InMemoryArtefactRepository();
+      const a = createArtefact(base);
+      expect(a.tenantId).toBe(DEFAULT_TENANT);
+      await repo.save(a);
+      expect(await repo.findById("a1", SINGLETON_SCOPE)).toMatchObject({ id: "a1" });
+      expect((await repo.listByOwner("u1", SINGLETON_SCOPE)).map((x) => x.id)).toEqual(["a1"]);
+    });
+
     const TENANT_A = { tenantId: "org-a" };
     const TENANT_B = { tenantId: "org-b" };
 
@@ -307,12 +480,14 @@ describe("InMemoryArtefactRepository", () => {
       return repo;
     };
 
+    // r[verify hosting.tenant.scope-excludes-other-tenants+2]
     it("findById returns null for an out-of-scope artefact", async () => {
       const repo = await seedTwoTenants();
       expect(await repo.findById("a-priv", TENANT_A)).not.toBeNull();
       expect(await repo.findById("a-priv", TENANT_B)).toBeNull();
     });
 
+    // r[verify hosting.tenant.scope-excludes-other-tenants+2]
     it("listByOwner excludes other-tenant artefacts", async () => {
       const repo = await seedTwoTenants();
       const inA = await repo.listByOwner("u1", TENANT_A);
@@ -321,6 +496,7 @@ describe("InMemoryArtefactRepository", () => {
       expect(await repo.listByOwner("u1", TENANT_B)).toEqual([]);
     });
 
+    // r[verify hosting.tenant.scope-excludes-other-tenants+2]
     it("listShared only returns artefacts within the scope's tenant", async () => {
       const repo = await seedTwoTenants();
       // A viewer scoped to org-b sees only org-b's shared artefact, not org-a's.
@@ -328,7 +504,9 @@ describe("InMemoryArtefactRepository", () => {
       expect(shared.map((a) => a.id)).toEqual(["b-shared"]);
     });
 
-    it("findBySlug stays global (AH6) — a slug resolves across tenants", async () => {
+    // r[verify hosting.slug.globally-unique]
+    // r[verify hosting.tenant.scope-excludes-other-tenants+2]
+    it("findBySlug stays global — a slug resolves across tenants", async () => {
       const repo = await seedTwoTenants();
       expect((await repo.findBySlug("slug-a"))?.id).toBe("a-shared");
       expect((await repo.findBySlug("slug-b"))?.id).toBe("b-shared");
@@ -336,19 +514,22 @@ describe("InMemoryArtefactRepository", () => {
   });
 });
 
-describe("thumbnailHash (S35, AH25/AH26)", () => {
+describe("thumbnailHash (S35)", () => {
+  // r[verify hosting.thumbnail.stale-while-hash-differs]
   it("starts null at create, so a new artefact's thumbnail is stale", () => {
     const a = createArtefact(base);
     expect(a.thumbnailHash).toBeNull();
     expect(isThumbnailStale(a)).toBe(true);
   });
 
+  // r[verify hosting.thumbnail.stale-while-hash-differs]
   it("is fresh only while it equals the payload hash", () => {
     const a = createArtefact(base);
     expect(isThumbnailStale({ ...a, thumbnailHash: "deadbeef" })).toBe(false);
     expect(isThumbnailStale({ ...a, thumbnailHash: "older" })).toBe(true);
   });
 
+  // r[verify hosting.thumbnail.stale-while-hash-differs]
   it("is left untouched by an edit, including a payload replacement", () => {
     const a = { ...createArtefact(base), thumbnailHash: "deadbeef" };
     const retitled = editArtefact(a, { title: "Renamed" });

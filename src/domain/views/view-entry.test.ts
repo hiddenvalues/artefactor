@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { recordView } from "./view-entry";
 
-describe("recordView (VT1)", () => {
+describe("recordView", () => {
+  // r[verify views.entry.one-per-pair]
   it("creates an entry on the first view", () => {
     const at = new Date("2026-01-01T10:00:00Z");
     const entry = recordView({
@@ -18,6 +19,7 @@ describe("recordView (VT1)", () => {
     });
   });
 
+  // r[verify views.entry.one-per-pair]
   it("upserts a later view — preserves id, bumps viewedAt (latest only)", () => {
     const first = recordView({
       id: "v1",

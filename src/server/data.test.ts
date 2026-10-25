@@ -61,6 +61,8 @@ describe("artefact data store — /data/me (S11)", () => {
     other = await signUp("data-other@example.com");
   });
 
+  // r[verify data.me.own-entry-endpoint]
+  // r[verify data.entry.one-per-pair]
   it("upserts and reads back the caller's blob", async () => {
     const { slug } = await makeShared(owner);
     const put = await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
@@ -77,6 +79,7 @@ describe("artefact data store — /data/me (S11)", () => {
     );
   });
 
+  // r[verify data.me.own-entry-endpoint]
   it("returns blob: null when the caller has no entry", async () => {
     const { slug } = await makeShared(owner);
     const get = await dataMe(slug, { method: "GET", cookie: owner });
@@ -84,7 +87,8 @@ describe("artefact data store — /data/me (S11)", () => {
     expect((await get.json()) as DataEntryResponse).toEqual({ blob: null, updatedAt: null });
   });
 
-  it("keeps each author's blob separate (AD2)", async () => {
+  // r[verify data.write.author-is-caller]
+  it("keeps each author's blob separate", async () => {
     const { slug } = await makeShared(owner, "authenticated");
     await dataMe(slug, { method: "PUT", body: '{"who":"owner"}', cookie: owner });
     await dataMe(slug, { method: "PUT", body: '{"who":"other"}', cookie: other });
@@ -96,26 +100,33 @@ describe("artefact data store — /data/me (S11)", () => {
     );
   });
 
-  it("rejects invalid JSON (400) and unauthenticated writes (401) (AD3, AD8)", async () => {
+  // r[verify data.write.requires-auth]
+  // r[verify data.blob.bounded-opaque-json]
+  // r[verify data.me.own-entry-endpoint]
+  it("rejects invalid JSON (400) and unauthenticated writes (401)", async () => {
     const { slug } = await makeShared(owner);
     expect((await dataMe(slug, { method: "PUT", body: "not json", cookie: owner })).status).toBe(400);
     expect((await dataMe(slug, { method: "PUT", body: "{}", cookie: null })).status).toBe(401);
   });
 
-  it("rejects an oversize blob with 413 (AD8)", async () => {
+  // r[verify data.blob.bounded-opaque-json]
+  // r[verify data.me.own-entry-endpoint]
+  it("rejects an oversize blob with 413", async () => {
     const { slug } = await makeShared(owner);
     const huge = JSON.stringify("x".repeat(5 * 1024 * 1024 + 1));
     expect((await dataMe(slug, { method: "PUT", body: huge, cookie: owner })).status).toBe(413);
   });
 
-  it("returns 404 for an archived artefact (AD6)", async () => {
+  // r[verify data.lifecycle.archived-inert]
+  it("returns 404 for an archived artefact", async () => {
     const { id, slug } = await makeShared(owner);
     await app.request(`/api/artefacts/${id}/archive`, { method: "POST", headers: { cookie: owner } });
     expect((await dataMe(slug, { method: "GET", cookie: owner })).status).toBe(404);
     expect((await dataMe(slug, { method: "PUT", body: "{}", cookie: owner })).status).toBe(404);
   });
 
-  it("hides a private artefact's data from a non-owner (AD4)", async () => {
+  // r[verify hosting.access.no-existence-leak]
+  it("hides a private artefact's data from a non-owner", async () => {
     const { id, slug } = await makeShared(owner);
     // Unshare → private, slug retained.
     await app.request(`/api/artefacts/${id}/visibility`, {
@@ -123,6 +134,7 @@ describe("artefact data store — /data/me (S11)", () => {
       headers: { "Content-Type": "application/json", cookie: owner },
       body: JSON.stringify({ visibility: "private" }),
     });
+    expect((await dataMe(slug, { method: "GET", cookie: other })).status).toBe(404);
     expect((await dataMe(slug, { method: "PUT", body: "{}", cookie: other })).status).toBe(404);
     expect((await dataMe(slug, { method: "PUT", body: "{}", cookie: owner })).status).toBe(200);
   });
@@ -134,10 +146,10 @@ describe("artefact data store — /data/me (S11)", () => {
     expect(((await (await dataMe(slug, { method: "GET", cookie: owner })).json()) as DataEntryResponse).blob).toBeNull();
   });
 
-  // S19a (AD9) — against the real Drizzle adapter, because the upsert is an
+  // S19a — against the real Drizzle adapter, because the upsert is an
   // INSERT … ON CONFLICT DO UPDATE whose SET clause must carry the pin too:
   // otherwise it is stamped on the first write and frozen on every later one.
-  describe("payload version pin (S19a/AD9)", () => {
+  describe("payload version pin (S19a)", () => {
     // The owner's pin, read back through the Drizzle adapter.
     async function pinOf(artefactId: string) {
       const { dataRepository } = await import("./adapters");
@@ -158,6 +170,8 @@ describe("artefact data store — /data/me (S11)", () => {
       return (await artefactRepository.findById(artefactId, SINGLETON_SCOPE))!.payloadHash;
     }
 
+    // r[verify data.pin.stamped-on-write]
+    // r[verify data.pin.adapter-restamps]
     it("stamps the payload hash on write and re-stamps it after a payload edit", async () => {
       const { id, slug } = await makeShared(owner);
       await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
@@ -179,6 +193,7 @@ describe("artefact data store — /data/me (S11)", () => {
       expect(await pinOf(id)).toBe(second);
     });
 
+    // r[verify data.pin.null-before-pin]
     it("an entry predating the column reads null and is served normally", async () => {
       const { id, slug } = await makeShared(owner);
       await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
@@ -206,6 +221,7 @@ describe("artefact data store — /data/me (S11)", () => {
       });
     }
 
+    // r[verify mcp.data-write.http-conditional]
     it("If-Match the current updatedAt → 200", async () => {
       const { slug } = await makeShared(owner);
       const first = (await (
@@ -216,6 +232,7 @@ describe("artefact data store — /data/me (S11)", () => {
       expect(((await res.json()) as DataEntryResponse).blob).toBe('{"v":2}');
     });
 
+    // r[verify mcp.data-write.http-conditional]
     it("If-Match a stale updatedAt → 412, nothing written", async () => {
       const { slug } = await makeShared(owner);
       await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });
@@ -227,12 +244,14 @@ describe("artefact data store — /data/me (S11)", () => {
       expect(get.blob).toBe('{"v":1}');
     });
 
+    // r[verify mcp.data-write.http-conditional]
     it("If-None-Match: * → 200 when there is no entry, 412 once one exists", async () => {
       const { slug } = await makeShared(owner);
       expect((await pinnedPut(slug, '{"v":1}', { "If-None-Match": "*" })).status).toBe(200);
       expect((await pinnedPut(slug, '{"v":2}', { "If-None-Match": "*" })).status).toBe(412);
     });
 
+    // r[verify mcp.data-write.http-conditional]
     it("an unparseable If-Match → 400, never an unconditional write", async () => {
       const { slug } = await makeShared(owner);
       await dataMe(slug, { method: "PUT", body: '{"v":1}', cookie: owner });

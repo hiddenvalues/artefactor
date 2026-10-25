@@ -8,10 +8,12 @@ describe("theme preference (S45)", () => {
   const stored = (value: string | null) =>
     vi.stubGlobal("localStorage", { getItem: (k: string) => (k === "artefactor:theme" ? value : null) });
 
+  // r[verify platform.theme.resolve]
   it("offers light, dark and system", () => {
     expect(THEMES).toEqual(["light", "dark", "system"]);
   });
 
+  // r[verify platform.theme.resolve]
   it("resolves system against the OS and an explicit choice regardless of it", () => {
     expect(resolveTheme("system", true)).toBe("dark");
     expect(resolveTheme("system", false)).toBe("light");
@@ -19,16 +21,19 @@ describe("theme preference (S45)", () => {
     expect(resolveTheme("dark", false)).toBe("dark");
   });
 
+  // r[verify platform.theme.resolve]
   it("restores an unknown stored value as system", () => {
     stored("blue");
     expect(restoreTheme()).toBe("system");
   });
 
+  // r[verify platform.theme.resolve]
   it("restores nothing stored as system", () => {
     stored(null);
     expect(restoreTheme()).toBe("system");
   });
 
+  // r[verify platform.theme.resolve]
   it("restores a stored choice", () => {
     stored("dark");
     expect(restoreTheme()).toBe("dark");
