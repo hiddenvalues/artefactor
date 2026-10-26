@@ -35,14 +35,45 @@ const FIXTURE = `<!doctype html><html><head><title>fixture</title></head><body>
 <form id="archive" method="POST"></form>
 </body></html>`;
 
+// S83 (`mcp.guide.write-at-once`) — an artefact that follows the guide's debounced snippet: a
+// 400 ms timer, flushed on beforeunload (listened to only while a write waits) and on
+// visibilitychange to hidden, setItem only in save().
+const DEBOUNCED_FIXTURE = `<!doctype html><html><head><title>debounced</title></head><body>
+<h1 id="seeded"></h1>
+<script>
+var value = localStorage.getItem("k");
+document.getElementById("seeded").textContent = value || "empty";
+function save(v) { try { localStorage.setItem("k", v); } catch (e) {} }
+var t = null;
+function saveSoon() {
+  if (t) clearTimeout(t);
+  t = setTimeout(flush, 400);
+  window.addEventListener("beforeunload", flush);
+}
+function flush() {
+  if (!t) return;
+  clearTimeout(t); t = null;
+  window.removeEventListener("beforeunload", flush);
+  save(value);
+}
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "hidden") flush();
+});
+window.change = function (v) { value = v; saveSoon(); };
+</script>
+</body></html>`;
+
 describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)", { timeout: 30_000 }, () => {
   let app: Hono;
   let server: ServerType;
   let browser: Browser;
   let cookie: string;
   let artefact: ArtefactSummary;
+  let debounced: ArtefactSummary;
   // Cookie headers seen on /api/me requests: the canary for a leaked session.
   const meCookies: (string | null)[] = [];
+  // Paths of the data saves the browser sends.
+  const puts: string[] = [];
 
   beforeAll(async () => {
     const { migrate } = await import("drizzle-orm/better-sqlite3/migrator");
@@ -54,7 +85,9 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
     server = serve({
       port,
       fetch: (req: Request) => {
-        if (new URL(req.url).pathname === "/api/me") meCookies.push(req.headers.get("cookie"));        return app.fetch(req);
+        if (new URL(req.url).pathname === "/api/me") meCookies.push(req.headers.get("cookie"));
+        if (req.method === "PUT") puts.push(new URL(req.url).pathname);
+        return app.fetch(req);
       },
     });
 
@@ -64,20 +97,24 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
       body: JSON.stringify({ email: "browser-s36@example.com", password: "correct-horse-battery", name: "b" }),
     });
     cookie = signUp.headers.get("set-cookie")!.split(";")[0]!;
-    const form = new FormData();
-    form.set("title", "browser fixture");
-    form.set("kind", "form");
-    form.set("payload", new File([FIXTURE], "fixture.html"));
-    const created = (await (
-      await app.request("/api/artefacts", { method: "POST", body: form, headers: { cookie } })
-    ).json()) as ArtefactSummary;
-    artefact = (await (
-      await app.request(`/api/artefacts/${created.id}/visibility`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", cookie },
-        body: JSON.stringify({ visibility: "authenticated" }),
-      })
-    ).json()) as ArtefactSummary;
+    const publish = async (html: string) => {
+      const form = new FormData();
+      form.set("title", "browser fixture");
+      form.set("kind", "form");
+      form.set("payload", new File([html], "fixture.html"));
+      const created = (await (
+        await app.request("/api/artefacts", { method: "POST", body: form, headers: { cookie } })
+      ).json()) as ArtefactSummary;
+      return (await (
+        await app.request(`/api/artefacts/${created.id}/visibility`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", cookie },
+          body: JSON.stringify({ visibility: "authenticated" }),
+        })
+      ).json()) as ArtefactSummary;
+    };
+    artefact = await publish(FIXTURE);
+    debounced = await publish(DEBOUNCED_FIXTURE);
 
     browser = await chromium.launch();
   });
@@ -89,7 +126,7 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
   });
 
   // A signed-in browser page on the artefact's shell, and its artefact frame.
-  async function openShell(): Promise<{ page: Page; frame: () => Promise<Frame> }> {
+  async function openShell(target = artefact): Promise<{ page: Page; frame: () => Promise<Frame> }> {
     const context = await browser.newContext();
     const eq = cookie.indexOf("=");
     await context.addCookies([
@@ -103,7 +140,7 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
       },
     ]);
     const page = await context.newPage();
-    await page.goto(`${ORIGIN}/a/${artefact.publicSlug}`);
+    await page.goto(`${ORIGIN}/a/${target.publicSlug}`);
     const frame = async () => {
       const f = (await (await page.waitForSelector("#ae-frame")).contentFrame())!;
       await f.waitForSelector("#seeded");
@@ -113,8 +150,8 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
     return { page, frame };
   }
 
-  async function savedBlob(): Promise<string | null> {
-    const res = await app.request(`/api/artefacts/${artefact.id}/data/me`, { headers: { cookie } });
+  async function savedBlob(target = artefact): Promise<string | null> {
+    const res = await app.request(`/api/artefacts/${target.id}/data/me`, { headers: { cookie } });
     return ((await res.json()) as { blob: string | null }).blob;
   }
 
@@ -217,7 +254,7 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
   // residual loss of data.shell.writes-pinned, not asserted either way.
   // r[verify data.shell.debounces-and-flushes]
   // r[verify data.shim.writes-through-shell+2]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("a change made just before the artefact reloads its own frame is saved", async () => {
     const { page } = await openShell();
     // What the frame's current document shows, or null while it is still the
@@ -270,6 +307,85 @@ describe.skipIf(!runBrowserTests)("isolated artefact serving in Chromium (S36)",
         expect(await (await frame()).textContent("#seeded")).toBe(value);
         expect(await savedBlob()).toBe(JSON.stringify({ k: value }));
       }
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  // r[verify mcp.guide.write-at-once]
+  // r[verify data.shell.writes-pinned+3]
+  it("a debounced change, flushed as the guide says, survives a reload of the top page", async () => {
+    const { page, frame } = await openShell(debounced);
+    try {
+      for (let i = 0; i < 5; i++) {
+        const value = `debounced-${i}`;
+        await (await frame()).evaluate(`window.change(${JSON.stringify(value)})`);
+        await page.reload();
+        expect(await (await frame()).textContent("#seeded")).toBe(value);
+        expect(await savedBlob(debounced)).toBe(JSON.stringify({ k: value }));
+      }
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  // r[verify mcp.guide.write-at-once]
+  // r[verify data.shell.writes-pinned+3]
+  it("a debounced change, flushed as the guide says, survives closing the page", async () => {
+    for (let i = 0; i < 5; i++) {
+      const value = `closed-${i}`;
+      const { page, frame } = await openShell(debounced);
+      try {
+        await (await frame()).evaluate(`window.change(${JSON.stringify(value)})`);
+        await page.close({ runBeforeUnload: true });
+        expect(await until(() => savedBlob(debounced), (b) => b === JSON.stringify({ k: value }))).toBe(
+          JSON.stringify({ k: value }),
+        );
+      } finally {
+        await page.context().close();
+      }
+    }
+  });
+
+  // r[verify mcp.guide.write-at-once]
+  it("the guide's flush writes nothing when no change is waiting", async () => {
+    const { page, frame } = await openShell(debounced);
+    try {
+      await frame();
+      const before = puts.length;
+      await page.close({ runBeforeUnload: true });
+      await new Promise((r) => setTimeout(r, 1_500));
+      expect(puts.slice(before).filter((p) => p.endsWith("/data/me"))).toEqual([]);
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  // r[verify mcp.guide.write-at-once]
+  it("the guide's snippet listens for beforeunload only while a write is waiting", async () => {
+    const { page, frame } = await openShell(debounced);
+    try {
+      const f = await frame();
+      // The frame shares its page's CDP session: find its main world among the contexts that
+      // Runtime.enable reports, and ask DevTools for the listeners on its window.
+      const cdp = await page.context().newCDPSession(page);
+      const { frameTree } = await cdp.send("Page.getFrameTree");
+      const frameId = frameTree.childFrames!.find((c) => c.frame.url === f.url())!.frame.id;
+      const contexts: { id: number; frameId?: string; isDefault?: boolean }[] = [];
+      cdp.on("Runtime.executionContextCreated", ({ context }) =>
+        contexts.push({ id: context.id, ...(context.auxData as { frameId?: string; isDefault?: boolean }) }),
+      );
+      await cdp.send("Runtime.enable");
+      const executionContextId = contexts.find((c) => c.frameId === frameId && c.isDefault)!.id;
+      const beforeUnloadListeners = async () => {
+        const { result } = await cdp.send("Runtime.evaluate", { expression: "window", contextId: executionContextId });
+        const { listeners } = await cdp.send("DOMDebugger.getEventListeners", { objectId: result.objectId! });
+        return listeners.filter((l) => l.type === "beforeunload").length;
+      };
+      expect(await beforeUnloadListeners()).toBe(0);
+      await f.evaluate(`window.change("waiting")`);
+      expect(await beforeUnloadListeners()).toBe(1);
+      expect(await until(beforeUnloadListeners, (n) => n === 0)).toBe(0);
     } finally {
       await page.context().close();
     }

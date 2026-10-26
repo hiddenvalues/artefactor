@@ -2,12 +2,13 @@ import type { ArtefactSummary } from "../../../shared/contracts";
 import { definePreview } from "../../design/preview";
 import { Launcher } from "../../design/Launcher";
 import { artefact, gates, noop, people } from "../../design/fixtures";
-import { chooseLevel, type AccessDraft } from "../access-dialog";
+import { addInvitation, chooseLevel, type AccessDraft } from "../access-dialog";
 import { enablePassword } from "../link-protection";
 import { ArtefactAccessDialog, type AccessDialogInitial } from "./ArtefactAccessDialog";
 
 // S55 — the hand-back's States, each opened part-way through an edit. The
 // catalog's fixture API answers the directory search (try "a"); nothing saves.
+// S33b's variants offer invites, with the saved invitations given up front.
 
 const PRIVATE = artefact();
 const SELECTED = artefact({ visibility: "selected", publicSlug: "0nb0ard1ng" });
@@ -15,16 +16,28 @@ const MEMBERS = artefact({ visibility: "authenticated", publicSlug: "0nb0ard1ng"
 const PUBLIC = artefact({ visibility: "public", publicSlug: "0nb0ard1ng", usesStorage: true });
 const PROTECTED = { ...PUBLIC, linkGate: gates.both };
 
-function dialog(label: string, a: ArtefactSummary, initial: AccessDialogInitial, primary = false) {
+function dialog(label: string, a: ArtefactSummary, initial: AccessDialogInitial, primary = false, invites = false) {
   return {
     name: label,
     render: () => (
       <Launcher label={`Open: ${label}`} primary={primary}>
-        {(close) => <ArtefactAccessDialog artefact={a} onClose={close} onSaved={noop} initial={initial} />}
+        {(close) => (
+          <ArtefactAccessDialog artefact={a} onClose={close} onSaved={noop} shareInvitations={invites} initial={initial} />
+        )}
       </Launcher>
     ),
   };
 }
+
+// S33b — a deployment that invites emails with no Account.
+const inviting = (label: string, a: ArtefactSummary, initial: AccessDialogInitial) =>
+  dialog(label, a, initial, false, true);
+const INVITED = {
+  id: "inv-ada",
+  email: "ada@newco.io",
+  createdAt: "2026-10-01T09:00:00.000Z",
+  expiresAt: "2026-10-15T09:00:00.000Z",
+};
 
 const to = (level: AccessDraft["level"]) => (saved: AccessDraft) => chooseLevel(saved, saved, level);
 const withPassword = (password: string) => (saved: AccessDraft) => {
@@ -47,5 +60,11 @@ export default definePreview({
     dialog("Invalid protection", PRIVATE, { members: [], draft: withPassword("abcde") }),
     dialog("Level list open", PROTECTED, { members: [], levelsOpen: true }),
     dialog("Loading", SELECTED, { members: null }),
+    inviting("Invite offered", SELECTED, { members: [people[0]!], invitations: [], query: "lin@newco.io" }),
+    inviting("Pending invitations", SELECTED, {
+      members: [people[0]!],
+      invitations: [INVITED],
+      draft: (saved) => addInvitation(saved, "lin@newco.io"),
+    }),
   ],
 });

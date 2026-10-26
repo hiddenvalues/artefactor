@@ -7,6 +7,8 @@ import type {
   SharedArtefactSummary,
   UserSearchResponse,
 } from "../shared/contracts";
+import type { TenantScope } from "../domain/artefact/tenant-scope";
+import type { UserDirectory } from "./data/user-directory";
 import { openFrame } from "../test/frame";
 
 // End-to-end S16: share with specific people. An owner creates an artefact,
@@ -154,7 +156,7 @@ describe("share with specific people (S16)", () => {
   });
 
   // r[verify hosting.shared.selected-members+2]
-  // r[verify hosting.shared.others-viewable]
+  // r[verify hosting.shared.others-viewable+2]
   it("surfaces a selected artefact to its members in Shared with you", async () => {
     const a = await createSelected();
     await grant(a.id, memberId);
@@ -169,8 +171,39 @@ describe("share with specific people (S16)", () => {
     expect(outList.artefacts.some((x) => x.id === a.id)).toBe(false);
   });
 
+  // r[verify hosting.access-list.directory-search+3]
+  it("searches the directory under the resolved tenant scope; a refusal answers instead", async () => {
+    const { createApp } = await import("./app");
+    const { defaultAdapters } = await import("./adapters");
+    const { HTTPException } = await import("hono/http-exception");
+    const calls: { query: string; scope: TenantScope }[] = [];
+    const userDirectory: UserDirectory = {
+      lookup: async () => new Map(),
+      search: async (query, scope) => {
+        calls.push({ query, scope });
+        return [];
+      },
+    };
+    const scoped = createApp({ ...defaultAdapters, userDirectory }, undefined, () => ({
+      tenantId: "t-1",
+    }));
+    const res = await scoped.request("/api/users/search?q=x", { headers: { cookie: owner } });
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([{ query: "x", scope: { tenantId: "t-1" } }]);
+
+    calls.length = 0;
+    const refusing = createApp({ ...defaultAdapters, userDirectory }, undefined, () => {
+      throw new HTTPException(403, { message: "no organization" });
+    });
+    const refused = await refusing.request("/api/users/search?q=x", {
+      headers: { cookie: owner },
+    });
+    expect(refused.status).toBe(403);
+    expect(calls).toEqual([]);
+  });
+
   // r[verify hosting.access-list.members-from-directory]
-  // r[verify hosting.access-list.directory-search+2]
+  // r[verify hosting.access-list.directory-search+3]
   it("searches the user directory by name/email, excluding the caller", async () => {
     const res = await app.request("/api/users/search?q=member-s16", {
       headers: { cookie: owner },
@@ -185,6 +218,10 @@ describe("share with specific people (S16)", () => {
     });
     const selfUsers = ((await self.json()) as UserSearchResponse).users;
     expect(selfUsers.some((u) => u.email === "owner-s16@example.com")).toBe(false);
+
+    // A blank query finds nobody.
+    const blank = await app.request("/api/users/search?q=%20", { headers: { cookie: owner } });
+    expect(((await blank.json()) as UserSearchResponse).users).toEqual([]);
 
     // Auth required.
     expect((await app.request("/api/users/search?q=x")).status).toBe(401);

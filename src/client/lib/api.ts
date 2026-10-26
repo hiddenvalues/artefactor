@@ -9,6 +9,7 @@ import type {
   CreateCollectionRequest,
   EditCollectionRequest,
   InviteRequest,
+  InviteResult,
   MeResponse,
   MyViewsResponse,
   OrganizationSettings,
@@ -17,6 +18,7 @@ import type {
   SetLinkGateRequest,
   SetSharingRequest,
   SetVisibilityRequest,
+  ShareInvitation,
   SharedArtefactSummary,
   SharedCollectionSummary,
   SharedCollectionsResponse,
@@ -236,6 +238,25 @@ export const api = {
     return fetch(`/api/artefacts/${id}/access`)
       .then(json<AccessListResponse>)
       .then((r) => r.members);
+  },
+
+  // S33b — an artefact's pending share invitations, where the deployment
+  // offers them (`capabilities.shareInvitations`); owner-only.
+  getArtefactInvitations(id: string): Promise<ShareInvitation[]> {
+    return fetch(`/api/artefacts/${id}/invitations`).then(json<ShareInvitation[]>);
+  },
+
+  inviteToArtefact(id: string, email: string): Promise<InviteResult> {
+    return fetch(`/api/artefacts/${id}/invitations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    }).then(json<InviteResult>);
+  },
+
+  async revokeArtefactInvitation(id: string, invitationId: string): Promise<void> {
+    const res = await fetch(`/api/artefacts/${id}/invitations/${encodeURIComponent(invitationId)}`,{ method: "DELETE" });
+    if (!res.ok) await fail(res);
   },
 
   async grantAccess(id: string, userId: string): Promise<void> {

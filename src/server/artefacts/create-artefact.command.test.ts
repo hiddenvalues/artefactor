@@ -5,6 +5,11 @@ import { createArtefactCommand } from "./create-artefact.command";
 import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-artefact-repository";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 import { InvariantViolation } from "../../domain/artefact/errors";
+import {
+  ossEnforcement,
+  QuotaDenied,
+  type EnforcementPolicies,
+} from "../../domain/artefact/enforcement";
 import type { PayloadStore, StoredPayload } from "../../domain/artefact/ports";
 
 // Recording in-memory payload store: tracks what is currently stored so tests
@@ -95,7 +100,7 @@ describe("createArtefactCommand (S2)", () => {
     expect(d.payloadStore.live.size).toBe(0);
   });
 
-  // r[verify hosting.payload.size-bounds]
+  // r[verify hosting.payload.size-bounds+2]
   it("rejects an empty payload before writing anything", async () => {
     const d = deps();
     await expect(
@@ -178,5 +183,45 @@ describe("createArtefactCommand (S2)", () => {
       ).rejects.toBeInstanceOf(InvariantViolation);
       expect(thumbnails.jobs).toEqual([]);
     });
+  });
+});
+
+// S23 — EE enforcement policy seams (quota / payload-size / branding): the command asks the
+// payload-size and quota policies before it stores anything.
+describe("createArtefactCommand under enforcement policies (S23)", () => {
+  const MB = 1024 * 1024;
+  const deny: EnforcementPolicies = {
+    ...ossEnforcement,
+    quota: {
+      check: async () => ({ decision: "deny", reason: "Over your allowance.", upgradePath: "/billing" }),
+    },
+  };
+
+  // r[verify platform.enforcement.quota-denies-create+2]
+  it("throws QuotaDenied on a deny, before any payload file is written", async () => {
+    const d = { ...deps(), enforcement: deny };
+    const err = await createArtefactCommand(
+      { ownerId: "user_1", title: "Denied", kind: "other", payload: html },
+      d,
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(QuotaDenied);
+    expect(err).toMatchObject({ reason: "Over your allowance.", upgradePath: "/billing" });
+    expect(d.payloadStore.live.size).toBe(0);
+    expect(await d.repo.listByOwner("user_1", SINGLETON_SCOPE)).toEqual([]);
+  });
+
+  // r[verify hosting.payload.cap-policy-decided+2]
+  it("rejects a payload over the policy's cap before writing anything", async () => {
+    const d = {
+      ...deps(),
+      enforcement: { ...ossEnforcement, payloadSize: { maxBytes: async () => MB } },
+    };
+    await expect(
+      createArtefactCommand(
+        { ownerId: "user_1", title: "Big", kind: "other", payload: new Uint8Array(2 * MB).fill(0x20) },
+        d,
+      ),
+    ).rejects.toThrow("payload exceeds the 1 MB cap");
+    expect(d.payloadStore.live.size).toBe(0);
   });
 });

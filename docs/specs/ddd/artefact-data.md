@@ -276,7 +276,7 @@ changed it. The shim never calls the API: the sandboxed frame has no session
 viewer's session, and flushes with `keepalive` on its own `pagehide` / `visibilitychange: hidden`
 (`data.shell.debounces-and-flushes`).
 
-r[data.shell.writes-pinned+2]
+r[data.shell.writes-pinned+3]
 **Only changes are written, and every write is pinned (S31).** Because the saved data can
 also be replaced from outside the tab (the connector's `set_artefact_data`), a tab must not
 act on a stale copy. The shell owns this discipline (`data.shim.posts-never-fetches`): a flush
@@ -293,7 +293,7 @@ was replaced since the tab loaded: the shell **stops writing** (the artefact kee
 in-memory copy, so it doesn't break) and shows a banner offering a reload, which mints a fresh
 frame URL and re-seeds the latest data. A tab can therefore never silently revert a write made
 outside it (the connector, another tab or device). The residual losses: a change the artefact
-makes while the page is already unloading (in its own `pagehide` or `beforeunload`), an unload
+makes while the page is already unloading (in its own `pagehide`), an unload
 flush over the keepalive cap that the browser drops, a change still held behind a save in flight
 when the page unloads (the forced flush is pinned before that save lands, so it is refused),
 unsaved edits when the tab is closed right after a conflicting write (the shell's keepalive

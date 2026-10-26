@@ -17,6 +17,8 @@ import type { UserDirectory } from "../data/user-directory";
 import type { LinkPasswordHasher } from "../../domain/artefact/link-gate";
 import { ScryptLinkPasswordHasher } from "../../infra/crypto/link-password-hasher";
 import { linkGateSummary, parseLinkGate } from "../link-gate/http";
+import { linkPassesOf } from "../link-gate/passes";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import {
   clearCollectionLinkGateCommand,
   createCollectionCommand,
@@ -63,6 +65,9 @@ export interface CollectionRoutesDeps {
   resolveScope: TenantScopeResolver;
   // S32b — hashes a root's link password (default: scrypt).
   linkPasswordHasher?: LinkPasswordHasher;
+  // The deployment's policy for the `authenticated` tier (hosting.access.policy-decided), asked by
+  // the collection read decision behind the bookmark routes; the OSS default when absent.
+  accessPolicy?: AccessPolicy;
 }
 
 // BFF routes for the Artefact Collections context (S25/S26/S27) — all
@@ -361,6 +366,7 @@ export function createCollectionRoutes(deps: CollectionRoutesDeps) {
           requesterId: ownerId(c),
           bookmarked: true,
           scope: await deps.resolveScope(c),
+          passes: linkPassesOf(c),
         },
         deps,
       );

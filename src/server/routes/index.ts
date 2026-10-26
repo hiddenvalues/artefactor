@@ -22,10 +22,12 @@ import { createBookmarkRoutes } from "./bookmarks";
 import { createPublicCollectionRoutes } from "./public-collections";
 import { listEffectivelyShared } from "../collections/shared.query";
 import { listSharedCollections } from "../collections/shared-collections.query";
+import { linkPassesOf } from "../link-gate/passes";
 import { createDataRoutes } from "./data";
 import { createDownloadRoutes } from "./download";
 import { createThumbnailRoutes } from "./thumbnail";
 import type { ThumbnailQueue } from "../thumbnails/thumbnail-service";
+import { ossEnforcement, type EnforcementPolicies } from "../../domain/artefact/enforcement";
 import { createViewRoutes } from "./views";
 import { listMyViews } from "../views/views.command";
 import { createFrameTokenRoutes } from "./frame-token";
@@ -36,6 +38,8 @@ import { ossCapabilities } from "../capabilities";
 import { noOrganizationContext, type OrganizationContextProvider } from "../org-context";
 import { noOrganizationAdministration, type OrganizationAdministration } from "../org-admin";
 import { createOrganizationRoutes } from "./organization";
+import { noShareInvitations, type ShareInvitations } from "../share-invitations";
+import { createInvitationRoutes } from "./invitations";
 import type {
   Capabilities,
   MeResponse,
@@ -65,12 +69,17 @@ export function createApiRoutes(
   thumbnails?: ThumbnailQueue,
   // S36 — frame URLs and tokens for the shells and the mint endpoint.
   framing: Framing = framingFromEnv(env),
-  // S33a — the injected capabilities, reported on /api/config unchanged.
+  // S33a — the injected capabilities, reported on /api/config unchanged but for
+  // S33b's `shareInvitations`, which also needs the port.
   capabilities: Capabilities = ossCapabilities,
   // S53 — the caller's organization context; default = none (OSS).
   organizations: OrganizationContextProvider = noOrganizationContext,
   // S58 — the active org's administration; default = none (OSS).
   administration: OrganizationAdministration = noOrganizationAdministration,
+  // S23 — the quota and payload-size policies the create/edit routes consult; default = OSS.
+  enforcement: EnforcementPolicies = ossEnforcement,
+  // S33b — the artefact share invitations; default = none (OSS).
+  shareInvitations: ShareInvitations | null = noShareInvitations,
 ) {
   const {
     artefactRepository,
@@ -125,6 +134,13 @@ export function createApiRoutes(
   // enforcement: the env guard and the user-create hook remain the boundaries.
   // The same goes for the injected capabilities (S33a). The allowed email
   // domains are never advertised.
+  // S33b — share invitations are offered only where a port carries them out, so
+  // the flag and the port can't disagree.
+  // r[impl hosting.invitations.oss-default-off+3]
+  const advertised: Capabilities = {
+    ...capabilities,
+    shareInvitations: capabilities.shareInvitations && shareInvitations !== null,
+  };
   // r[impl identity.config.advertises-methods+3]
   api.get("/config", (c) =>
     c.json<PublicConfigResponse>({
@@ -132,7 +148,7 @@ export function createApiRoutes(
       emailPasswordEnabled: authConfig.emailPasswordEnabled,
       googleEnabled: authConfig.googleEnabled,
       signupAllowed: authConfig.signupAllowed,
-      capabilities,
+      capabilities: advertised,
       // r[impl identity.config.legal-links]
       legal: legalLinks,
     }),
@@ -203,10 +219,12 @@ export function createApiRoutes(
   // r[impl hosting.shared.selected-members+2]
   api.get("/shared", requireAuth, async (c) => {
     const scope = await resolveScope(c);
-    const shared = await listEffectivelyShared(c.get("user")!.id, scope, {
-      artefactRepo: artefactRepository,
-      collectionRepo: collectionRepository,
-    });
+    const shared = await listEffectivelyShared(
+      c.get("user")!.id,
+      scope,
+      { artefactRepo: artefactRepository, collectionRepo: collectionRepository, accessPolicy },
+      { passes: linkPassesOf(c) },
+    );
     // Enrich with owner display identity so the gallery can attribute each
     // artefact ("Shared by …"). The artefact ids/owner ids come from Hosting;
     // names/emails are composed from Identity via the user directory.
@@ -230,9 +248,12 @@ export function createApiRoutes(
   // unchanged (both-way listing).
   api.get("/shared/collections", requireAuth, async (c) => {
     const scope = await resolveScope(c);
-    const nodes = await listSharedCollections(c.get("user")!.id, scope, {
-      collectionRepo: collectionRepository,
-    });
+    const nodes = await listSharedCollections(
+      c.get("user")!.id,
+      scope,
+      { collectionRepo: collectionRepository, accessPolicy },
+      { passes: linkPassesOf(c) },
+    );
     const identities = await userDirectory.lookup(
       nodes.map((n) => n.collection.ownerId),
     );
@@ -252,18 +273,24 @@ export function createApiRoutes(
   // for Home's Recent row and Last viewed sort. Signed-in only; only artefacts
   // the caller can open now.
   api.get("/views/mine", requireAuth, async (c) => {
-    const views = await listMyViews(c.get("user")!.id, await resolveScope(c), {
-      artefactRepo: artefactRepository,
-      collectionRepo: collectionRepository,
-      viewRepo: viewRepository,
-    });
+    const views = await listMyViews(
+      c.get("user")!.id,
+      await resolveScope(c),
+      {
+        artefactRepo: artefactRepository,
+        collectionRepo: collectionRepository,
+        viewRepo: viewRepository,
+        accessPolicy,
+      },
+      { passes: linkPassesOf(c) },
+    );
     return c.json<MyViewsResponse>({
       views: views.map((v) => ({ artefactId: v.artefactId, viewedAt: v.viewedAt.toISOString() })),
     });
   });
 
   // S16 — user directory search for the share-with-specific-people picker.
-  api.route("/users", createUserRoutes({ userDirectory }));
+  api.route("/users", createUserRoutes({ userDirectory, resolveScope }));
 
   // S58 — the Organization settings screen's routes.
   api.route("/organization", createOrganizationRoutes({ organizations, administration }));
@@ -284,7 +311,14 @@ export function createApiRoutes(
       thumbnails,
       framing,
       accessPolicy,
+      enforcement,
     }),
+  );
+
+  // S33b — an artefact's share invitations (owner-only; none mounted in OSS).
+  api.route(
+    "/artefacts",
+    createInvitationRoutes({ repo: artefactRepository, resolveScope, invitations: shareInvitations }),
   );
 
   // S36 — a fresh, tokened frame URL for the host shell (author switch, conflict
@@ -314,6 +348,7 @@ export function createApiRoutes(
       thumbnailStore,
       userDirectory,
       resolveScope,
+      accessPolicy,
     }),
   );
 

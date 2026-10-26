@@ -16,7 +16,18 @@ describe("admitInvite", () => {
     expect(admitInvite("  Ada@Acme.se ", ORG)).toEqual({ email: "ada@acme.se" });
   });
 
-  it.each(["not-an-email", "", "ada@", "@acme.se", "a b@acme.se", "ada@acme"])(
+  it.each([
+    "not-an-email",
+    "",
+    "ada@",
+    "@acme.se",
+    "a b@acme.se",
+    "ada@acme",
+    // Over SMTP's 254 characters, and a long one that backtracks for seconds uncapped.
+    `${"a".repeat(250)}@acme.se`,
+    `a@${".a".repeat(100_000)} x`,
+    '"x"<ada@acme.se>',
+  ])(
     "refuses %j as invalid-email",
     (email) => {
       expect(admitInvite(email, ORG)).toEqual({ refused: "invalid-email" });

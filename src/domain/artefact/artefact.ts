@@ -4,25 +4,24 @@ import type { DataVisibility, Status, Visibility } from "./visibility";
 import type { StoredPayload } from "./ports";
 import { NO_LINK_GATE, clearedGate, type LinkGate } from "./link-gate";
 import { changed, type OwnerChanges } from "./changed";
-
-// The payload size cap (hosting.payload.size-bounds).
-export const MAX_PAYLOAD_BYTES = 100 * 1024 * 1024; // 100 MB
+import { capMessage, DEFAULT_MAX_PAYLOAD_BYTES, effectivePayloadCap } from "./enforcement";
 
 // r[impl hosting.artefact.title-required]
 // The trimmed title; an empty one is rejected. Create and edit both go through it.
-function requireTitle(title: string): string {
+export function requireTitle(title: string): string {
   const trimmed = title.trim();
   if (trimmed.length === 0) throw new InvariantViolation("title must not be empty");
   return trimmed;
 }
 
-// r[impl hosting.payload.size-bounds]
-// A payload is non-empty and within the cap. Create and edit both go through it.
-function assertPayloadSize(payload: StoredPayload): void {
+// r[impl hosting.payload.size-bounds+2]
+// A payload is non-empty and within the cap, which the payload-size policy decides and the caller
+// passes in (the OSS default when absent), held to the 100 MB ceiling here too
+// (hosting.payload.cap-policy-decided). Create and edit both go through it.
+function assertPayloadSize(payload: StoredPayload, cap = DEFAULT_MAX_PAYLOAD_BYTES): void {
+  const maxBytes = effectivePayloadCap(cap);
   if (payload.bytes <= 0) throw new InvariantViolation("payload must not be empty");
-  if (payload.bytes > MAX_PAYLOAD_BYTES) {
-    throw new InvariantViolation("payload exceeds the 100 MB cap");
-  }
+  if (payload.bytes > maxBytes) throw new InvariantViolation(capMessage(maxBytes));
 }
 
 // r[impl hosting.lifecycle.archived-frozen]
@@ -100,6 +99,9 @@ export interface CreateArtefactInput {
   // Computed by the command from the raw payload bytes (hosting.uses-storage.chrome-only). Optional
   // so tests/fixtures can omit it; defaults to false.
   usesStorage?: boolean;
+  // S23 (hosting.payload.cap-policy-decided) — the payload-size policy's cap for this owner and
+  // tenant; the OSS 100 MB when absent.
+  maxPayloadBytes?: number;
   now?: Date;
 }
 
@@ -112,7 +114,7 @@ export function createArtefact(input: CreateArtefactInput): Artefact {
     throw new InvariantViolation("ownerId is required");
   }
   const title = requireTitle(input.title);
-  assertPayloadSize(input.payload);
+  assertPayloadSize(input.payload, input.maxPayloadBytes);
 
   const now = input.now ?? new Date();
   // r[impl hosting.create.active-private]
@@ -223,6 +225,9 @@ export interface EditArtefactChanges {
   // Recomputed `usesStorage` (hosting.uses-storage.chrome-only), supplied by the command alongside
   // a payload replacement. Ignored when no payload is provided (title/kind-only edits).
   usesStorage?: boolean;
+  // S23 (hosting.payload.cap-policy-decided) — the cap a replacement payload is checked against; the
+  // OSS 100 MB when absent.
+  maxPayloadBytes?: number;
   now?: Date;
 }
 
@@ -246,7 +251,7 @@ export function editArtefact(a: Artefact, changes: EditArtefactChanges): Artefac
   }
 
   if (changes.payload !== undefined) {
-    assertPayloadSize(changes.payload);
+    assertPayloadSize(changes.payload, changes.maxPayloadBytes);
     next.payloadRef = changes.payload.ref;
     next.payloadBytes = changes.payload.bytes;
     next.payloadHash = changes.payload.hash;

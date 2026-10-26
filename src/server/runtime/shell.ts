@@ -28,6 +28,7 @@
 // tokens are shell-theme.ts). The frame never does: its payload is the same
 // whatever the viewer's theme.
 
+import type { Badge } from "../../domain/artefact/enforcement";
 import type { ArtefactKind } from "../../domain/artefact/kind";
 import { kindPresentation } from "../../shared/kind-presentation";
 import { THEME_BOOT_JS } from "../../shared/theme-boot";
@@ -71,6 +72,9 @@ export interface HostShellContext {
   // S32a (hosting.link-gate.expiry-reads-as-private) — the owner is previewing a public artefact
   // whose link has expired: a banner says visitors can no longer open it. Owner-only.
   linkExpired?: boolean;
+  // S23 — the branding policy's badge for a public serve, a link in the top bar. Absent or null on
+  // every other serve and under the OSS default, when the shell renders nothing for it.
+  badge?: Badge | null;
 }
 
 // S36 — what the shell's frame controller needs.
@@ -128,7 +132,7 @@ export const MINT_WAIT_MAX_MS = 3000;
 // r[impl hosting.shell.hold-until-frame]
 // r[impl hosting.frame.shell-saves-for-frame+2]
 // r[impl data.shim.writes-through-shell+2]
-// r[impl data.shell.writes-pinned+2]
+// r[impl data.shell.writes-pinned+3]
 // r[impl data.shell.saves-only-own-frame]
 // r[impl data.shell.debounces-and-flushes]
 export function shellFrameJs(cfg: ShellFrameConfig): string {
@@ -417,6 +421,23 @@ export function renderHostShell(ctx: HostShellContext): string {
   </div>`
     : "";
 
+  // S23 — the badge, at the bar's right end before the host tools, and its one rule. Both are
+  // empty without a badge, so the shell is byte-identical to one rendered without the seam.
+  // A badge missing its label or href renders nothing rather than failing the serve.
+  const shown =
+    ctx.badge && typeof ctx.badge.label === "string" && typeof ctx.badge.href === "string"
+      ? ctx.badge
+      : null;
+  const badge = shown
+    ? `<a class="ae-badge" href="${escapeAttr(shown.href)}" target="_blank" rel="noopener">${escapeHtml(shown.label)}</a>
+    `
+    : "";
+  const badgeCss = shown
+    ? `
+  .ae-badge { flex: 0 0 auto; font-size: 12px; color: var(--muted-foreground); text-decoration: none; white-space: nowrap; }
+  .ae-badge:hover { color: var(--foreground); text-decoration: underline; }`
+    : "";
+
   const linkExpiredBanner = ctx.linkExpired
     ? `<div class="ae-conflict ae-expired" role="status">
     <span><strong>Link expired.</strong> Visitors can no longer open this public link. Extend or clear the expiry under Link protection in Artefactor.</span>
@@ -488,7 +509,7 @@ export function renderHostShell(ctx: HostShellContext): string {
   .ae-conflict[hidden] { display: none; }
   .ae-conflict span { margin-right: auto; }
   .ae-conflict button { font: inherit; font-size: 13px; font-weight: 500; height: 28px; padding: 0 .7rem; border: 1px solid var(--warn-border); border-radius: 7px; background: var(--card); color: var(--foreground); cursor: pointer; }
-  .ae-conflict button:hover { background: var(--muted); }
+  .ae-conflict button:hover { background: var(--muted); }${badgeCss}
 </style>
 </head>
 <body>
@@ -503,7 +524,7 @@ export function renderHostShell(ctx: HostShellContext): string {
         <div class="ae-sub">${escapeHtml(subLabel)}</div>
       </div>
     </div>
-    ${hostTools}
+    ${badge}${hostTools}
   </div>
   ${linkExpiredBanner}
   ${conflictBanner}
@@ -680,4 +701,9 @@ function escapeHtml(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+// For a double-quoted attribute value.
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/"/g, "&quot;");
 }

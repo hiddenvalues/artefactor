@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { defaultAccessPolicy, type AccessPolicy } from "../../domain/artefact/access";
+import { ossEnforcement, type BrandingPolicy } from "../../domain/artefact/enforcement";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import { isLinkExpired, type LinkPasswordHasher } from "../../domain/artefact/link-gate";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
@@ -38,6 +39,8 @@ export interface ServingDeps {
   linkPasswordHasher?: LinkPasswordHasher;
   // S32a — unlock attempts per holder + client IP (default: in-process).
   unlockLimiter?: UnlockRateLimiter;
+  // S23 — the badge on a public serve (default: OSS, none).
+  branding?: BrandingPolicy;
 }
 
 // S6 + S12 — Serve artefact by slug. The shared links point at `/a/:slug`, which
@@ -57,6 +60,7 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
   const accessPolicy = deps.accessPolicy ?? defaultAccessPolicy;
   const hasher = deps.linkPasswordHasher ?? new ScryptLinkPasswordHasher();
   const limiter = deps.unlockLimiter ?? new UnlockRateLimiter();
+  const branding = deps.branding ?? ossEnforcement.branding;
   const passKeys = {
     secret: deps.framing.secret,
     now: deps.framing.now,
@@ -137,6 +141,22 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
             ...(gate !== undefined ? { gate, gateHolder: decision!.linkGate.holderId } : {}),
           })
         : null;
+    // S23 — only a public serve asks for a badge, whoever is viewing: the tier is the effective one
+    // the access decision used. Best-effort, like the view record: a failing policy serves the
+    // artefact without a badge rather than failing the serve.
+    // r[impl platform.enforcement.branding-badge-on-public+2]
+    const badge =
+      decision!.tier === "public"
+        ? await Promise.resolve()
+            .then(() =>
+              branding.badgeFor({
+                ownerId: artefact.ownerId,
+                tenantId: artefact.tenantId,
+                artefactId: artefact.id,
+              }),
+            )
+            .catch(() => null)
+        : null;
     return c.html(
       renderHostShell({
         title: artefact.title,
@@ -153,6 +173,7 @@ export function createArtefactServingRoutes(deps: ServingDeps) {
         ownerId: artefact.ownerId,
         usesStorage: artefact.usesStorage,
         linkExpired: viewerId === artefact.ownerId && isLinkExpired(artefact, new Date(deps.framing.now())),
+        badge,
       }),
     );
   });

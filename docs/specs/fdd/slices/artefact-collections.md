@@ -193,7 +193,9 @@ The S25 edge is for bookmarkable collections; artefact bookmarks alone would onl
 Relaxes the audience of `collections.access.no-existence-leak` to `collections.read.follows-root`.
 
 - **Query** — `listSharedCollections(viewerId, scope)`: the shared roots
-  (`listSharedRoots`) expanded to full trees (`listByRoots`); every node returned with the
+  (`listSharedRoots`) the read decision grants (`collections.read.follows-root` — the access
+  policy and the root's link gate, with the request's passes) expanded to full trees
+  (`listByRoots`); every node returned with the
   root owner's display identity and a `canContribute` flag
   (`collections.contributor.on-root-access-list`) — never the grantee list. No new ports; no
   schema change.
@@ -227,17 +229,18 @@ Relaxes the audience of `collections.access.no-existence-leak` to `collections.r
 
 Relaxes `collections.tree.single-owner`'s artefact placement to contributors.
 
-- **Domain** — pure `canViewCollection(root, viewerId)` (matrix semantics, signed-in only,
-  archived → no one) and `canContributeToTree(root, userId)` (owner, or listed **and**
-  viewing); `moveArtefactToCollection` drops the same-owner requirement (tenant + active
-  checks stay; authority moves to the command); `evictFromCollection` — guard-free
-  containment termination (works on archived artefacts; `collections.containment.co-owned`,
+- **Domain** — `authorizeCollectionRead` (the artefact read decision on the root: the matrix
+  under the access policy, then the root's link gate; signed-in only, archived → no one) and
+  `canContributeToTree(root, userId, canRead)` (owner, or listed **and** granted the read);
+  `moveArtefactToCollection` drops the same-owner requirement (tenant + active checks stay;
+  authority moves to the command); `evictFromCollection` — guard-free containment termination
+  (works on archived artefacts; `collections.containment.co-owned`,
   `collections.lifecycle.cascades-evict-foreign`).
 - **Commands** — move-in gate becomes: artefact owner **and** (own collection or
   contributor of the target's root); create-in = create + move-in (no create change).
   New eject command (collection-owner-only, direct containment). Archive/delete cascades
   **evict foreign artefacts first** (any status), then cascade over the owner's own;
-  cascade counts report `evicted` alongside. Collection bookmarks gate on `canViewCollection`.
+  cascade counts report `evicted` alongside. Collection bookmarks gate on the same read decision.
 - **BFF** — the endpoint below; the owner-list read path drops its "containers are all mine"
   batching assumption (a contributed artefact's container belongs to someone else — resolve those
   roots by id).

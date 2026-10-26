@@ -50,13 +50,11 @@ Two thin core seams that let a superset be **multi-tenant**, byte-identical in O
 > `canViewArtefact` stays the OSS default form). `hosting.lifecycle.archived-not-served`,
 > `hosting.access.matrix`, `hosting.authority.owner-only` are fixed **by construction**: the policy
 > is never asked about the anonymous, the owner's own view, other tiers, or archived. Injected
-> through `createApp`/`createApiRoutes` (default `defaultAccessPolicy`, byte-identical) into the
-> paths where the **slug capability crosses tenants**: serving (`/a/:slug` shell + frame) and the
-> slug-resolved data/viewers reads. Deliberately **not** threaded into id-addressed reads
-> (bookmarks, dashboards) or `canViewCollection`: those resolve via the tenant-scoped repo (the EE
-> Tenancy context's scoped-read rule), and within a scope the viewer is a co-member by construction
-> (collections additionally have no slugs and are signed-in only), so a policy there could never
-> decide differently. C — the sign-up allowlist accepts the `"*"` allow-all sentinel
+> through `createApp`/`createApiRoutes` (default `defaultAccessPolicy`, byte-identical) into every
+> read gate that decides an `authenticated` cell: serving (`/a/:slug` shell + frame), the
+> slug-resolved data/viewers reads, and the id-addressed reads inside the tenant-scoped repo —
+> bookmarks, "Shared with you", collection reads (`collections.read.follows-root`) and the move into
+> a contributed tree. C — the sign-up allowlist accepts the `"*"` allow-all sentinel
 > (`identity.signup.allow-all`). Route-level tests (`server/access-policy.test.ts`) prove a stub
 > co-member policy grants a member, denies a signed-in non-member with a flat 404
 > (`hosting.access.no-existence-leak`), keeps the anonymous redirect uniform, never denies the
@@ -86,35 +84,69 @@ the BFF's own list, "Shared with you" and id-addressed reads exclude the first t
 
 ### S23 — EE enforcement policy seams (quota / payload-size / branding)
 
-- **Status:** specced
+- **Status:** done
 - **Depends on:** S2, S3, S12
+- **Linear:** ALI-297
 - **Delivers:** hosting.payload.cap-policy-decided
 
 *Enabler; behaviour-preserving.*
 
 The core seams the **EE Usage & Quota** context plugs into — all **no-op in OSS**. (DDD:
 `ee/docs/specs/ddd/usage-quota.md`; size-cap amendment `ddd/artefact-hosting.md`
-`hosting.payload.cap-policy-decided`.)
+`hosting.payload.cap-policy-decided`.) The ports and their OSS defaults live in
+`src/domain/artefact/enforcement.ts` as one `EnforcementPolicies` bundle, injected through
+`createApp`'s trailing `enforcement` parameter (default `ossEnforcement`) into the artefact routes,
+the MCP tools and the serve route. Each policy is asked with an `EnforcementContext`
+(`{ ownerId, tenantId }`): the creator and the tenant the artefact is created in, or the edited
+artefact's owner and tenant.
 
-- **QuotaPolicy.** A `QuotaPolicy` port consulted at `createArtefactCommand` (+ payload-replacing
-  edit for the storage fence). OSS default = **allow / unlimited**. *(the EE Usage & Quota
-  context's quota gate)*
-- **Payload-size policy.** Extract `MAX_PAYLOAD_BYTES` into a policy; **OSS default keeps 100 MB**.
+- **QuotaPolicy.** `quota.check({ ownerId, tenantId, action, bytes })` returns a verdict: `allow`,
+  `warn` or `deny`. `createArtefactCommand` asks it with `action: "create"`, and
+  `editArtefactCommand` with `action: "edit"` on a **payload-replacing** edit only (a title or kind
+  edit asks nothing), after the size check and before the payload is stored. A `deny` throws
+  `QuotaDenied` carrying its `reason`, `upgradePath` and optional `retryAfter`, so nothing is
+  written; `warn` proceeds exactly like `allow`. The upload routes answer a deny with
+  `402 { error: reason, upgradePath }`, or `429` with a `Retry-After` header and
+  `{ error, upgradePath, retryAfter }` when the verdict carries `retryAfter`; the MCP
+  `create_artefact`/`update_artefact` tools return the reason, upgrade path and retry-after as a
+  tool error. OSS default = **allow**. *(the EE Usage & Quota context's quota gate)*
+- **Payload-size policy.** `payloadSize.maxBytes(ctx)` is the cap, held between 1 MB and the
+  100 MB ceiling by the one resolver every caller uses (`resolvePayloadCap`; a non-finite value
+  reads as 100 MB). The commands resolve it and pass it to the domain factories
+  (`maxPayloadBytes`); the upload routes check an uploaded file's size against it before copying
+  it into a payload. An oversize payload is a `400` whose message
+  names the cap (`payload exceeds the N MB cap`). **OSS default keeps 100 MB** (`DEFAULT_MAX_PAYLOAD_BYTES`).
   EE drives it from the *Large Artefacts* entitlement (10 MB / 100 MB).
   *(`hosting.payload.cap-policy-decided`)*
-- **BrandingPolicy.** A `BrandingPolicy` consulted by the host shell on **public** serves; **OSS
-  default = no badge**. EE shows the Artefactor badge unless *Remove branding* is held.
+- **BrandingPolicy.** `branding.badgeFor({ ownerId, tenantId, artefactId })` returns a badge
+  (`{ label, href }`) or `null`. The `/a/:slug` serve asks it only when the artefact's effective
+  tier is `public`, whoever the viewer is, and the host shell renders the badge as a link in its
+  top bar. **OSS default = no badge**. EE shows the Artefactor badge unless *Remove branding* is
+  held.
 - **Acceptance:** the size cap is checked by `hosting.payload.cap-policy-decided`, which it
   delivers; and:
 
 r[platform.enforcement.oss-defaults+2]
 Under the OSS defaults, creates are unlimited and no badge renders — byte-identical.
 
-r[platform.enforcement.quota-denies-create]
-A stub deny-quota makes `create` return `402`.
+r[platform.enforcement.quota-denies-create+2]
+A stub deny-quota makes `create` return `402` with its reason and upgrade path, writing nothing; the
+MCP `create_artefact` tool returns them as a tool error.
 
-r[platform.enforcement.branding-badge-on-public]
-A stub branding policy renders the badge on a public serve.
+r[platform.enforcement.quota-retry-after]
+A stub deny verdict carrying `retryAfter` makes `create` return `429` with a matching `Retry-After`
+header.
+
+r[platform.enforcement.quota-edit-payload-only]
+A stub deny-quota makes a payload-replacing edit return `402`, leaving the artefact unchanged; a
+title or kind edit never consults the quota.
+
+r[platform.enforcement.warn-proceeds]
+A stub `warn` verdict proceeds exactly like `allow`: the create succeeds.
+
+r[platform.enforcement.branding-badge-on-public+2]
+A stub branding policy renders its badge on a public serve, for any viewer, and is never consulted
+on a non-public serve.
 
 - **Boundary:** **OSS** (the seams sit at the create/edit commands and the S12 shell). The metering,
   plan-aware policy, entitlements, and soft fences are the **EE Usage & Quota** context (its

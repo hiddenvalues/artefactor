@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
   createArtefact,
-  MAX_PAYLOAD_BYTES,
+  DEFAULT_TENANT,
+  requireTitle,
   type Artefact,
 } from "../../domain/artefact/artefact";
+import {
+  enforcePayload,
+  ossEnforcement,
+  type EnforcementPolicies,
+} from "../../domain/artefact/enforcement";
 import { isArtefactKind } from "../../domain/artefact/kind";
 import { payloadUsesStorage } from "../../domain/artefact/uses-storage";
 import { InvariantViolation } from "../../domain/artefact/errors";
@@ -36,6 +42,8 @@ export interface CreateArtefactDeps {
   now?: () => Date;
   // S35 — renders the thumbnail after the save; absent = none.
   thumbnails?: ThumbnailQueue;
+  // S23 — the payload-size and quota policies; the OSS defaults when absent.
+  enforcement?: EnforcementPolicies;
 }
 
 // r[impl hosting.ingestion.parity]
@@ -54,9 +62,15 @@ export async function createArtefactCommand(
   if (input.payload.byteLength === 0) {
     throw new InvariantViolation("payload must not be empty"); // hosting.payload.size-bounds
   }
-  if (input.payload.byteLength > MAX_PAYLOAD_BYTES) {
-    throw new InvariantViolation("payload exceeds the 100 MB cap"); // hosting.payload.size-bounds
-  }
+  // A blank title is refused here too, so it reads as the 400 it is rather than reaching the quota.
+  requireTitle(input.title); // hosting.artefact.title-required
+  // S23 — the policies are asked about the creator in the tenant the artefact is created in.
+  const maxPayloadBytes = await enforcePayload(
+    deps.enforcement ?? ossEnforcement,
+    { ownerId: input.ownerId, tenantId: input.tenantId ?? DEFAULT_TENANT },
+    "create",
+    input.payload.byteLength,
+  );
 
   const stored = await deps.payloadStore.put(input.payload);
   let artefact: Artefact;
@@ -67,6 +81,7 @@ export async function createArtefactCommand(
       title: input.title,
       kind: input.kind,
       payload: stored,
+      maxPayloadBytes,
       // undefined ⇒ DEFAULT_TENANT in OSS (hosting.tenant.invisible-to-oss)
       tenantId: input.tenantId,
       // r[impl hosting.uses-storage.computed-at-create]

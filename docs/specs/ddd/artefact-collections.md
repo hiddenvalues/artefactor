@@ -146,17 +146,24 @@ r[collections.access.no-existence-leak]
 **No existence leak**: to a user the root does **not** grant, a collection is indistinguishable from
 a missing one (uniform not-found), mirroring `hosting.access.no-existence-leak`.
 
-r[collections.read.follows-root]
-**Viewer reads follow the root (S28)**: a **signed-in** user whom the root's `(visibility,
-sharedWith)` grants view (the same matrix semantics as artefacts; an archived root grants no one)
-may read the whole tree — nodes, breadcrumbs, contained artefacts. Anonymous users read a tree only
-by its **root slug**, only while the root is `public`, active and ungated, and only as the anonymous
-projection (`collections.public-link.anonymous-tree-read`, S44); otherwise artefact links only.
+r[collections.read.follows-root+2]
+**Viewer reads follow the root (S28)**: a **signed-in** user whom the one read decision grants the
+root may read the whole tree — nodes, breadcrumbs, contained artefacts. That decision is the one
+artefact reads make, with the root standing in for the artefact: the matrix on the root's
+`(visibility, sharedWith)` under the `AccessPolicy` (`hosting.access.policy-decided`; an archived
+root grants no one), then the root's link gate with the request's pass for the root, for the
+audience of `hosting.link-gate.narrows-public-audience`. Every refused outcome reads as missing
+(`collections.access.no-existence-leak`): a collection read never answers with a challenge — the
+unlock happens at an artefact link, and the root's pass then opens the whole tree. Anonymous users
+read a tree only by its **root slug**, only while the root is `public`, active and ungated, and only
+as the anonymous projection (`collections.public-link.anonymous-tree-read`, S44); otherwise
+artefact links only.
 Recipients never receive the root's grantee list (`sharedWith` ships empty to them, as in every
 shared read).
 
-r[collections.contributor.on-root-access-list]
-**Contributors (S29)**: the users on the **root's access list** who can also view the tree (so:
+r[collections.contributor.on-root-access-list+2]
+**Contributors (S29)**: the users on the **root's access list** whom the read decision of
+`collections.read.follows-root` also grants the tree (so:
 `sharedWith` members under `selected`/`authenticated`/`public` roots — under a `private` root the
 list grants nothing), plus the owner. A contributor may **create or move artefacts they own into any
 node of the tree** (create-in = create top-level + move-in, so `hosting.artefact.owner-required`,
@@ -196,9 +203,9 @@ bookmark to a non-viewable artefact is a uniform not-found (no leak,
 `hosting.access.no-existence-leak`); **removing** one's own bookmark row is always allowed (it is
 the user's own data — e.g. cleanup after access was revoked).
 
-r[collections.bookmark.collection-view-gated]
-Collections follow the same rule via `collections.read.follows-root`: any collection whose root
-grants the signed-in user view may be bookmarked.
+r[collections.bookmark.collection-view-gated+2]
+Collections follow the same rule via `collections.read.follows-root`: a collection may be
+bookmarked when that read decision grants the signed-in user its root, with the request's passes.
 
 r[collections.bookmark.hidden-not-pruned]
 **No access semantics**: bookmarks never affect visibility, serving, or listings other than the

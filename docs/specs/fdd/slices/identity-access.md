@@ -318,10 +318,12 @@ and every account a link creates still passes the one `user.create.before` gate
 
 **Acceptance:**
 
-r[identity.capabilities.oss-default-off+2]
+r[identity.capabilities.oss-default-off+3]
 `GET /api/config` reports `capabilities` as `createApp` was given them, injected `true` values as
-`true`, and `{ magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false }` when given
-none; under the OSS auth `POST /api/auth/set-password` → 404 and
+`true` — except `shareInvitations`, `true` only when a `ShareInvitations` port is injected too
+(`hosting.invitations.oss-default-off`) — and
+`{ magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, shareInvitations: false }`
+when given none; under the OSS auth `POST /api/auth/set-password` → 404 and
 `POST /api/auth/request-password-reset` → 400 `RESET_PASSWORD_DISABLED`.
 
 r[identity.auth-screen.verified-sign-up]

@@ -389,7 +389,7 @@ describe("contributors (S29)", () => {
 
   // r[verify hosting.slug.minted-on-move-into-shared-tree]
   // r[verify hosting.collection.move-into-own-or-contributed]
-  // r[verify collections.contributor.on-root-access-list]
+  // r[verify collections.contributor.on-root-access-list+2]
   it("a listed member moves their own artefact in, minting its slug", async () => {
     const root = await seedContributable();
     const moved = await moveArtefactCommand(
@@ -402,13 +402,25 @@ describe("contributors (S29)", () => {
   });
 
   // r[verify hosting.collection.move-into-own-or-contributed]
-  // r[verify collections.contributor.on-root-access-list]
+  // r[verify collections.contributor.on-root-access-list+2]
   it("an unlisted signed-in viewer cannot move in (uniform 404)", async () => {
     const root = await makeCollection("Team", { visibility: "authenticated" });
     await artefactRepo.save(baseArtefact("mine", { ownerId: "stranger" }));
     await expect(
       moveArtefactCommand(
         { artefactId: "mine", requesterId: "stranger", collectionId: root.id, scope: SCOPE },
+        { artefactRepo, collectionRepo, generateSlug },
+      ),
+    ).rejects.toBeInstanceOf(CollectionNotFound);
+  });
+
+  // r[verify collections.contributor.on-root-access-list+2]
+  it("a private root's retained list lets no member move in (uniform 404)", async () => {
+    const root = await seedContributable();
+    await collectionRepo.save({ ...root, visibility: "private" });
+    await expect(
+      moveArtefactCommand(
+        { artefactId: "mine", requesterId: VIEWER, collectionId: root.id, scope: SCOPE },
         { artefactRepo, collectionRepo, generateSlug },
       ),
     ).rejects.toBeInstanceOf(CollectionNotFound);
@@ -480,7 +492,7 @@ describe("contributors (S29)", () => {
     expect(payloadStore.deleted).toEqual(["ref-owners-own"]);
   });
 
-  // r[verify collections.read.follows-root]
+  // r[verify collections.read.follows-root+2]
   it("the shared-collections read reports contributor-ness without the grantee list", async () => {
     const root = await seedContributable();
     const asMember = await listSharedCollections(VIEWER, SCOPE, { collectionRepo });

@@ -7,8 +7,10 @@ import type { ArtefactRepository } from "../../domain/artefact/artefact-reposito
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import { loadArtefactRoot } from "../collections/effective";
 import { effectiveVisibility } from "../../domain/collection/effective-access";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { PayloadStore } from "../../domain/artefact/ports";
+import { QuotaDenied, type EnforcementPolicies } from "../../domain/artefact/enforcement";
 import type { DataRepository } from "../../domain/data/data-repository";
 import {
   ArtefactConflict,
@@ -80,6 +82,12 @@ export interface McpToolDeps {
   userDirectory: UserDirectory;
   // S35 — create/update enqueue a thumbnail render through the same commands.
   thumbnails?: ThumbnailQueue;
+  // S23 — the quota and payload-size policies those commands consult; the OSS defaults when absent.
+  enforcement?: EnforcementPolicies;
+  // The deployment's policy for the `authenticated` tier (hosting.access.policy-decided), asked by
+  // the collection read decision behind `list_collections` and `move_artefact`; the OSS default
+  // when absent.
+  accessPolicy?: AccessPolicy;
 }
 
 // S30 — caps on what a read-back tool may return. An MCP result lands in the
@@ -200,6 +208,16 @@ async function run<T>(body: () => Promise<T>) {
         `No collection '${err.message}' that you can use here. Call list_collections to find one: you can place an artefact into any listed collection, and create under or change only your own (own: true). Archived collections aren't listed: restore one by the id archive_collection returned.`,
       );
     }
+    // S23 — a quota deny carries why and where to lift the limit (quota.verdict.never-silent), so
+    // the model can tell the user; a rate fence also says how long to wait. An app path becomes a
+    // full link on this deployment, since the model can't open a bare path.
+    if (err instanceof QuotaDenied) {
+      const s = err.retryAfter;
+      const wait = s === undefined ? "" : ` Try again in ${s} second${s === 1 ? "" : "s"}.`;
+      const path = err.upgradePath;
+      const link = path.startsWith("/") ? `${env.BETTER_AUTH_URL}${path}` : path;
+      return fail(`${err.reason}${wait}${link === "" ? "" : ` Upgrade: ${link}`}`);
+    }
     if (
       err instanceof ArtefactNotFound ||
       err instanceof LinkGateChallenge ||
@@ -221,7 +239,7 @@ export function registerArtefactTools(
   deps: McpToolDeps,
   scope: TenantScope,
 ): void {
-  const { repo, payloadStore, dataRepo, thumbnails } = deps;
+  const { repo, payloadStore, dataRepo, thumbnails, enforcement } = deps;
   const dataDeps = {
     artefactRepo: repo,
     collectionRepo: deps.collectionRepo,
@@ -279,7 +297,7 @@ export function registerArtefactTools(
             payload: new TextEncoder().encode(html),
             tenantId: scope.tenantId,
           },
-          { repo, payloadStore, thumbnails },
+          { repo, payloadStore, thumbnails, enforcement },
         );
         if (!visibility || visibility === "private") return withAppUrl(created);
         // Fold the initial share into create as one logical operation: if the
@@ -329,7 +347,7 @@ export function registerArtefactTools(
             // r[impl mcp.tools.update-replaces-html]
             payload: html === undefined ? undefined : new TextEncoder().encode(html),
           },
-          { repo, payloadStore, thumbnails },
+          { repo, payloadStore, thumbnails, enforcement },
         );
         return withDataCount(updated);
       }),
@@ -713,6 +731,7 @@ export function registerArtefactTools(
       run(async () => {
         const rows = await listPlaceableCollections(userId, scope, {
           collectionRepo: deps.collectionRepo,
+          accessPolicy: deps.accessPolicy,
         });
         return {
           collections: rows.map(({ collection, path, own, visibility }) => ({
@@ -747,7 +766,7 @@ export function registerArtefactTools(
         // r[impl mcp.collections.move-runs-command]
         const moved = await moveArtefactCommand(
           { artefactId: id, requesterId: userId, collectionId: collection_id, scope },
-          { artefactRepo: repo, collectionRepo: deps.collectionRepo },
+          { artefactRepo: repo, collectionRepo: deps.collectionRepo, accessPolicy: deps.accessPolicy },
         );
         return withDataCount(moved);
       }),
@@ -781,7 +800,7 @@ export function registerArtefactTools(
         // contract the server already advertises rather than erroring out, so
         // the model still gets the rules that matter.
         return fail(
-          "The full authoring guide is unavailable. Follow the persistence contract in the connector's instructions: persist only via localStorage (one versioned JSON key), wrap every read/write in try/catch with an in-memory fallback, stay under 5 MB, and debounce frequent writes.",
+          "The full authoring guide is unavailable. Follow the persistence contract in the connector's instructions: persist only via localStorage (one versioned JSON key), wrap every read/write in try/catch with an in-memory fallback, stay under 5 MB, and write each change to localStorage at once (if you debounce a write, flush it yourself on beforeunload and on visibilitychange to hidden; pagehide is too late).",
         );
       }
     },

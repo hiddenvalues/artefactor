@@ -15,6 +15,7 @@ import {
   defaultAccessPolicy,
   type AccessPolicy,
 } from "../domain/artefact/access";
+import { ossEnforcement, type EnforcementPolicies } from "../domain/artefact/enforcement";
 import { createApiRoutes } from "./routes";
 import { createArtefactServingRoutes } from "./routes/serve";
 import { createFrameRoutes } from "./routes/frame";
@@ -25,6 +26,7 @@ import { createMcpRoutes, type McpScopeResolver } from "./mcp/routes";
 import { ossCapabilities } from "./capabilities";
 import { noOrganizationContext, type OrganizationContextProvider } from "./org-context";
 import { noOrganizationAdministration, type OrganizationAdministration } from "./org-admin";
+import { noShareInvitations, type ShareInvitations } from "./share-invitations";
 import type { Capabilities, HealthResponse } from "../shared/contracts";
 import { SHARE_LINK_BASE } from "../shared/share-link";
 import type { ThumbnailQueue } from "./thumbnails/thumbnail-service";
@@ -43,7 +45,8 @@ export type UnhandledErrorReporter = (err: Error) => void;
 // superset injects an active-org resolver (ET2) without editing core route handlers.
 //
 // S22 (hosting.access.policy-decided) — so is the access policy: the one overridable matrix cell
-// (the `authenticated` tier) on the slug-addressed read paths (serve, data, views). Default = the
+// (the `authenticated` tier) on every read gate (serve, data, views, bookmarks, Shared with you,
+// collection reads and the move into a contributed tree, here and in the MCP tools). Default = the
 // OSS matrix (any signed-in user); a superset injects an org-membership policy (ET3) without
 // editing core.
 //
@@ -60,6 +63,14 @@ export type UnhandledErrorReporter = (err: Error) => void;
 // S24 (platform.composition.unhandled-error-reporter) — and so is a reporter for
 // the errors the app answers with a 500 (default = none); a superset hands them to
 // its error monitoring.
+//
+// S23 — and so are the enforcement policies: the quota gate and payload-size cap
+// the create/edit commands consult (upload routes and MCP alike), and the badge on
+// public serves. Default = OSS (allow, 100 MB, no badge), byte-identical.
+//
+// S33b — and so are the share invitations the `/api/artefacts/:id/invitations`
+// routes drive (default = none, so every one answers 404); a superset supplies
+// the invitation aggregate and its mail (EI2).
 // r[impl platform.composition.injected-adapters-serve]
 export function createApp(
   adapters: Adapters = defaultAdapters,
@@ -73,11 +84,15 @@ export function createApp(
   // S35 — the thumbnail queue the create/edit commands enqueue into (UI and MCP
   // alike). The entry constructs and starts it; absent = no renders.
   thumbnails?: ThumbnailQueue,
-  // r[impl identity.capabilities.oss-default-off+2]
+  // r[impl identity.capabilities.oss-default-off+3]
   capabilities: Capabilities = ossCapabilities,
   organizations: OrganizationContextProvider = noOrganizationContext,
   administration: OrganizationAdministration = noOrganizationAdministration,
   onUnhandledError: UnhandledErrorReporter = () => {},
+  enforcement: EnforcementPolicies = ossEnforcement,
+  // S33b — none by default, so every invitation route answers 404 and
+  // `/api/config` reports `shareInvitations: false` (`createApiRoutes`).
+  shareInvitations: ShareInvitations | null = noShareInvitations,
 ) {
   const app = new Hono();
   // S60 — a save conflict that survived its command's retries is a 409 on every route, logged so a
@@ -160,6 +175,8 @@ export function createApp(
       capabilities,
       organizations,
       administration,
+      enforcement,
+      shareInvitations,
     ),
   );
 
@@ -175,6 +192,7 @@ export function createApp(
       auth,
       accessPolicy,
       framing,
+      branding: enforcement.branding,
     }),
   );
 
@@ -192,6 +210,8 @@ export function createApp(
         dataRepo: adapters.dataRepository,
         userDirectory: adapters.userDirectory,
         thumbnails,
+        accessPolicy,
+        enforcement,
       },
       auth,
       resolveMcpScope,

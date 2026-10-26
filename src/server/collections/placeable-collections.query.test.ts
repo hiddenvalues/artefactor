@@ -7,6 +7,7 @@ import {
   type Collection,
 } from "../../domain/collection/collection";
 import type { Visibility } from "../../domain/artefact/visibility";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import { SINGLETON_SCOPE } from "../../domain/artefact/tenant-scope";
 import { listPlaceableCollections } from "./placeable-collections.query";
 
@@ -69,6 +70,24 @@ describe("listPlaceableCollections (S75)", () => {
     await make("Elsewhere", "u1", { tenantId: "another-tenant" });
 
     expect(await ids("u1")).toEqual([["Contributed", false]]);
+  });
+
+  // r[verify collections.contributor.on-root-access-list+2]
+  it("leaves out a tree the read decision refuses a listed contributor", async () => {
+    const gated = await make("Gated", "u2", { visibility: "public", grant: ["u1"] });
+    await collectionRepo.save({
+      ...gated,
+      linkGate: { passwordHash: "scrypt$hash", expiresAt: null, version: 1 },
+    });
+    const refuseU1: AccessPolicy = { grantsAuthenticatedTier: (viewerId) => viewerId !== "u1" };
+
+    const rows = await listPlaceableCollections("u1", SINGLETON_SCOPE, {
+      collectionRepo,
+      accessPolicy: refuseU1,
+    });
+    expect(rows).toEqual([]);
+    // The OSS default admits u1, so the gate does not apply and the tree is placeable.
+    expect(await ids("u1")).toEqual([["Gated", false]]);
   });
 
   // r[verify mcp.collections.list-placeable]

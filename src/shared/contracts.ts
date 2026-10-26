@@ -42,6 +42,24 @@ export interface Capabilities {
   // and password reset; the endpoints exist only there.
   verifiedSignUp: boolean;
   passwordReset: boolean;
+  // S33b — a superset invites an email with no Account yet to an artefact; the
+  // invitation routes answer only there.
+  shareInvitations: boolean;
+}
+
+// S33b — a pending share invitation to an artefact, as the superset's port reports it.
+export interface ShareInvitation {
+  id: string;
+  email: string;
+  createdAt: string; // ISO-8601
+  expiresAt: string; // ISO-8601
+}
+
+// S33b — `POST /api/artefacts/:id/invitations` (body: `InviteRequest`). `granted`:
+// the email already had an Account and was added to `sharedWith`.
+export interface InviteResult {
+  status: "granted" | "pending";
+  invitation?: ShareInvitation;
 }
 
 // S1 — Identity. The current authenticated identity, as returned by the
@@ -98,7 +116,8 @@ export interface OrganizationSettings {
   // Owner/admin only; empty = no one can be invited.
   inviteDomains?: string[];
 }
-// S58 — `PATCH /api/organization` and `POST /api/organization/invitations`.
+// S58 — `PATCH /api/organization` and `POST /api/organization/invitations`;
+// S33b — `POST /api/artefacts/:id/invitations` too.
 export interface RenameOrganizationRequest {
   name: string;
 }

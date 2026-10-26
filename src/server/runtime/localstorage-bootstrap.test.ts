@@ -220,7 +220,7 @@ describe("localStorage shim — persists through the host shell (S36)", () => {
 
   // r[verify hosting.frame.shim-posts-to-shell+2]
   // r[verify data.shim.posts-never-fetches+2]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("reports the updatedAt it was seeded with, or null with no entry", async () => {
     const { ls, parent } = runShim({ ...baseCtx, seedUpdatedAt: null });
     ls.setItem("a", "1");

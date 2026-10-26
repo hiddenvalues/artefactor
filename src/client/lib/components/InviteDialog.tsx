@@ -11,11 +11,10 @@ import {
 import { Input } from "$lib/components/ui/input";
 import { Label } from "$lib/components/ui/label";
 import { FieldError } from "./UploadDialog";
+import { wellFormedEmail } from "../../../shared/email";
 
 // What the server may refuse an invite with (`identity.org-admin.invite-domain`).
 export type InviteRefusal = "invalid-email" | "outside-domains" | "already-member" | "already-invited";
-
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const domainList = (domains: readonly string[]) => domains.join(", ");
 
@@ -59,7 +58,7 @@ export function InviteDialog({
   );
 
   const address = email.trim().toLowerCase();
-  const valid = EMAIL.test(address);
+  const valid = wellFormedEmail(address) !== null;
   const atDomain = valid && domains.some((d) => d.toLowerCase() === address.slice(address.lastIndexOf("@") + 1));
   const canSend = !busy && atDomain;
   // A refusal shown for an address no longer in the field is stale.

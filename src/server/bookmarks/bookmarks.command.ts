@@ -1,7 +1,7 @@
 import type { Artefact } from "../../domain/artefact/artefact";
 import type { Collection } from "../../domain/collection/collection";
 import type { Visibility } from "../../domain/artefact/visibility";
-import type { AccessPolicy } from "../../domain/artefact/access";
+import { defaultAccessPolicy, type AccessPolicy } from "../../domain/artefact/access";
 import { ArtefactNotFound } from "../../domain/artefact/errors";
 import { CollectionNotFound } from "../../domain/collection/errors";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
@@ -9,8 +9,7 @@ import type { CollectionRepository } from "../../domain/collection/collection-re
 import type { BookmarkRepository } from "../../domain/bookmark/bookmark-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import { resolveEffectiveViewable } from "../collections/effective";
-import { canViewCollection } from "../../domain/collection/collection-access";
-import { authorizeRead } from "../link-gate/authorize";
+import { authorizeRead, decideCollectionRead, memoizedPolicy } from "../link-gate/authorize";
 import type { PassLookup } from "../link-gate/passes";
 
 // Application commands for S27 — Bookmarks. Per-user pins with set semantics
@@ -54,24 +53,22 @@ async function assertViewableArtefact(
   }
 }
 
-// Resolve a collection and decide viewability against its tree root
-// (collections.read.follows-root). Returns null for missing / archived-node /
+// Resolve a collection and decide it by the one read decision on its tree root
+// (collections.read.follows-root — the access policy, then the root's link gate
+// with the request's passes). Returns null for missing / archived-node /
 // non-granting — the callers treat all three uniformly (no leak,
 // collections.access.no-existence-leak).
 async function loadViewableCollection(
   collectionId: string,
   userId: string,
   scope: TenantScope,
+  passes: PassLookup | undefined,
   deps: BookmarkDeps,
 ): Promise<Collection | null> {
   const collection = await deps.collectionRepo.findById(collectionId, scope);
   if (!collection || collection.status !== "active") return null;
-  const root =
-    collection.parentId === null
-      ? collection
-      : await deps.collectionRepo.findById(collection.rootId, scope);
-  if (!root || !canViewCollection(root, userId)) return null;
-  return collection;
+  const { granted } = await decideCollectionRead(deps, collection, userId, { scope, passes });
+  return granted ? collection : null;
 }
 
 // r[impl collections.bookmark.artefact-view-gated]
@@ -104,13 +101,15 @@ export async function setArtefactBookmark(
   }
 }
 
-// r[impl collections.bookmark.collection-view-gated]
+// r[impl collections.bookmark.collection-view-gated+2]
 export async function setCollectionBookmark(
   input: {
     collectionId: string;
     requesterId: string;
     bookmarked: boolean;
     scope: TenantScope;
+    // The request's link passes (S32b); a tree whose gated root the caller unlocked can be added.
+    passes?: PassLookup;
   },
   deps: BookmarkDeps,
 ): Promise<void> {
@@ -120,6 +119,7 @@ export async function setCollectionBookmark(
       input.collectionId,
       input.requesterId,
       input.scope,
+      input.passes,
       deps,
     );
     if (!viewable) throw new CollectionNotFound(input.collectionId);
@@ -143,6 +143,8 @@ export async function listBookmarks(
   deps: BookmarkDeps,
 ): Promise<{ artefacts: BookmarkedArtefact[]; collections: Collection[] }> {
   const marks = await deps.bookmarkRepo.listByUser(input.requesterId);
+  // One policy answer per (viewer, tenant) for the whole list.
+  deps = { ...deps, accessPolicy: memoizedPolicy(deps.accessPolicy ?? defaultAccessPolicy) };
 
   const artefacts: BookmarkedArtefact[] = [];
   for (const id of marks.artefactIds) {
@@ -164,6 +166,7 @@ export async function listBookmarks(
       id,
       input.requesterId,
       input.scope,
+      input.passes,
       deps,
     );
     if (collection) collections.push(collection);

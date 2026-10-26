@@ -143,7 +143,7 @@ describe("create artefact (S2)", () => {
     expect(res.status).toBe(400);
   });
 
-  // r[verify hosting.payload.size-bounds]
+  // r[verify hosting.payload.size-bounds+2]
   it("rejects a missing payload file with 400", async () => {
     const res = await postArtefact({ title: "No file", kind: "form", html: null });
     expect(res.status).toBe(400);

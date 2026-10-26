@@ -170,6 +170,12 @@ user asked to share it — never to choose a shared tier on the user's behalf, n
 to give the user `appUrl` for a private artefact, and to set `public` only when the user asked
 for it.
 
+r[mcp.guide.write-at-once]
+The authoring contract, in both channels, tells the agent to write each change to `localStorage`
+at once, and, if it debounces a write anyway, to flush it on `beforeunload` and on
+`visibilitychange` to `hidden`, never relying on `pagehide`. It says the platform's flush on hide
+or close covers only what is already in `localStorage`.
+
 ### Invariants — read-back
 
 r[mcp.read.html-exact]

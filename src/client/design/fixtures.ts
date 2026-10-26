@@ -239,7 +239,7 @@ export const publicConfig: PublicConfigResponse = {
   emailPasswordEnabled: true,
   googleEnabled: true,
   signupAllowed: true,
-  capabilities: { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: true },
+  capabilities: { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: true, shareInvitations: true },
   legal: { termsUrl: "https://example.com/terms", privacyUrl: "https://example.com/privacy" },
 };
 

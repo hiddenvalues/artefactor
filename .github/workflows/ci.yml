@@ -29,6 +29,14 @@ on:
   pull_request: {}
   workflow_call: {}
 
+# A new push to a pull request cancels the run it supersedes. Off a pull request (a
+# workflow_call from a deploy) the group is the run's own id, so a deploy's gate is never
+# cancelled. The literal `ci-` prefix keeps it apart from a caller's other gates: inside a
+# workflow_call, github.workflow names the caller.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Checkout only — least privilege for the token. A workflow_call caller grants
 # the called workflow at most this, so no job may ask for more.
 permissions:

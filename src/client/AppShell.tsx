@@ -112,6 +112,15 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
   const [managing, setManaging] = useState<AccessTarget | null>(null);
   // S55 — the top-level artefact whose Manage access dialog is open.
   const [sharing, setSharing] = useState<ArtefactSummary | null>(null);
+  // S33b — whether the deployment invites emails with no Account; a failed
+  // config call reads as off.
+  const [shareInvitations, setShareInvitations] = useState(false);
+  useEffect(() => {
+    api
+      .config()
+      .then((c) => setShareInvitations(c.capabilities.shareInvitations === true))
+      .catch(() => {});
+  }, []);
   const [movingArtefact, setMovingArtefact] = useState<ArtefactSummary | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
   const [editor, setEditor] = useState<{ editing: CollectionSummary | null; parent: CollectionSummary | null } | null>(
@@ -740,6 +749,8 @@ export function AppShell({ user }: { user: { id: string; name: string; email: st
       {sharing && (
         <ArtefactAccessDialog
           artefact={sharing}
+          shareInvitations={shareInvitations}
+          ownerEmail={user.email}
           onClose={() => setSharing(null)}
           onSaved={async () => {
             await Promise.all([lib.loadOwned(), lib.loadShared(), lib.loadCollections()]);

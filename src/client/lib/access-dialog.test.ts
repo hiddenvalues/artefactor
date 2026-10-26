@@ -1,13 +1,21 @@
 import { describe, expect, it } from "vitest";
-import type { ArtefactSummary, UserRef } from "../../shared/contracts";
+import type { ArtefactSummary, ShareInvitation, UserRef } from "../../shared/contracts";
 import {
+  addInvitation,
+  addMember,
   chooseLevel,
   draftGateOf,
   draftOf,
+  invitationChangesOf,
+  doneToastOf,
+  inviteOfferOf,
+  pendingInvitationsOf,
   protectionError,
+  removeInvitation,
   saveToastOf,
   sectionsOf,
   sharingRequestOf,
+  withLoadedInvitations,
   withLoadedMembers,
   type AccessDraft,
 } from "./access-dialog";
@@ -260,5 +268,108 @@ describe("protectionError (S55)", () => {
     expect(protectionError(withPassword(pub), NOW)).toBeNull();
     // Only Public has protection to get wrong.
     expect(protectionError({ ...withPassword(pub, "abcde"), level: "private" }, NOW)).toBeNull();
+  });
+});
+
+describe("share invitations (S33b)", () => {
+  const pending: ShareInvitation = {
+    id: "inv-1",
+    email: "pending@b.co",
+    createdAt: NOW.toISOString(),
+    expiresAt: LATER,
+  };
+  const sel = draftOf(summary({ visibility: "selected", effectiveVisibility: "selected" }), [u1], [pending]);
+
+  // r[verify hosting.invitations.sent-on-done+3]
+  it("sends an added email, and nothing for one added and removed again before Done", () => {
+    const added = addInvitation(addInvitation(sel, "a@b.co"), "c@d.co");
+    const removed = removeInvitation(added, { email: "c@d.co", saved: null });
+    expect(invitationChangesOf(sel, removed)).toEqual({ invite: ["a@b.co"], revoke: [] });
+    expect(invitationChangesOf(sel, sel)).toEqual({ invite: [], revoke: [] });
+  });
+
+  // r[verify hosting.invitations.sent-on-done+3]
+  it("revokes a removed saved invitation, and keeps it when it is invited again", () => {
+    const row = pendingInvitationsOf(sel)[0]!;
+    const removed = removeInvitation(sel, row);
+    expect(pendingInvitationsOf(removed)).toEqual([]);
+    expect(invitationChangesOf(sel, removed)).toEqual({ invite: [], revoke: [pending] });
+    const back = addInvitation(removed, "pending@b.co");
+    expect(invitationChangesOf(sel, back)).toEqual({ invite: [], revoke: [] });
+  });
+
+  // r[verify hosting.invitations.sent-on-done+3]
+  it("invites only from Specific people, but revokes at any level", () => {
+    const added = addInvitation(sel, "a@b.co");
+    expect(invitationChangesOf(sel, { ...added, level: "public" })).toEqual({ invite: [], revoke: [] });
+    const removed = removeInvitation(sel, pendingInvitationsOf(sel)[0]!);
+    expect(invitationChangesOf(sel, { ...removed, level: "private" })).toEqual({ invite: [], revoke: [pending] });
+  });
+
+  // r[verify hosting.invitations.invite-affordance+3]
+  it("offers a well-formed email no result, person or pending invitation has", () => {
+    expect(inviteOfferOf(" A@B.co ", [], sel)).toBe("a@b.co");
+    expect(inviteOfferOf("nope", [], sel)).toBeNull();
+    // A query matching a directory user by email offers no Invite.
+    expect(inviteOfferOf("BO@example.com", [u2], sel)).toBeNull();
+    expect(inviteOfferOf(u1.email, [], sel)).toBeNull();
+    expect(inviteOfferOf("pending@b.co", [], sel)).toBeNull();
+    expect(inviteOfferOf("a@b.co", [], addInvitation(sel, "a@b.co"))).toBeNull();
+  });
+
+  // r[verify hosting.invitations.sent-on-done+3]
+  it("reports a Done in one toast that keeps the save's Undo", () => {
+    const none = { sent: [], removed: 0, failed: [] };
+    const undo = { visibility: "public" as const };
+    const save = { message: "“P” is now shared with specific people", undo };
+    expect(doneToastOf(null, none)).toBeNull();
+    expect(doneToastOf(save, none)).toEqual({ message: save.message, error: false, undo });
+    // Invitations only: just their part, without Undo.
+    expect(doneToastOf(null, { ...none, sent: ["a@b.co"] })).toEqual({
+      message: "Invitation sent to a@b.co",
+      error: false,
+      undo: null,
+    });
+    expect(doneToastOf(null, { ...none, removed: 1 })?.message).toBe("Invitation removed");
+    expect(doneToastOf(null, { ...none, removed: 3 })?.message).toBe("3 invitations removed");
+    // With a save: its message first, then the invitations, Undo kept.
+    expect(doneToastOf(save, { ...none, sent: ["a@b.co", "c@d.co"], removed: 1 })).toEqual({
+      message: `${save.message} · 2 invitations sent · Invitation removed`,
+      error: false,
+      undo,
+    });
+    // A failure makes it an error naming the email, still with the save and its Undo.
+    expect(
+      doneToastOf(save, { sent: ["c@d.co"], removed: 0, failed: ["Couldn't send the invitation to a@b.co."] }),
+    ).toEqual({ message: `${save.message} · Couldn't send the invitation to a@b.co.`, error: true, undo });
+  });
+
+  it("keeps invites made while the saved invitations load", () => {
+    const loading = addInvitation(draftOf(summary(), []), "a@b.co");
+    expect(pendingInvitationsOf(withLoadedInvitations(loading, [pending])).map((p) => p.email)).toEqual([
+      "pending@b.co",
+      "a@b.co",
+    ]);
+  });
+
+  it("folds an invite made while loading into the saved invitation with that email", () => {
+    const loading = addInvitation(draftOf(summary(), []), "pending@b.co");
+    const loaded = withLoadedInvitations(loading, [pending]);
+    expect(pendingInvitationsOf(loaded).map((p) => p.saved?.id ?? null)).toEqual([pending.id]);
+    // Removing that one row revokes it, with nothing left to invite.
+    const removed = removeInvitation(loaded, pendingInvitationsOf(loaded)[0]!);
+    expect(pendingInvitationsOf(removed)).toEqual([]);
+  });
+
+  it("drops an unsaved invite of a person then added from the directory", () => {
+    const invited = addInvitation(sel, "bo@example.com");
+    const added = addMember(invited, u2);
+    expect(added.members).toContainEqual(u2);
+    expect(pendingInvitationsOf(added).map((p) => p.email)).toEqual(["pending@b.co"]);
+  });
+
+  it("offers no Invite for the owner's own email, which the route refuses", () => {
+    expect(inviteOfferOf(" Me@Acme.se ", [], sel, "me@acme.se")).toBeNull();
+    expect(inviteOfferOf("a@b.co", [], sel, "me@acme.se")).toBe("a@b.co");
   });
 });

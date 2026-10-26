@@ -10,9 +10,9 @@ import {
   shareArtefact,
   unshareArtefact,
   DEFAULT_TENANT,
-  MAX_PAYLOAD_BYTES,
   type Artefact,
 } from "./artefact";
+import { DEFAULT_MAX_PAYLOAD_BYTES } from "./enforcement";
 import { grantAccess, revokeAccess } from "./access-list";
 import { clearArtefactLinkGate } from "./link-gate";
 import { changed, type OwnerChanges } from "./changed";
@@ -60,21 +60,34 @@ describe("createArtefact", () => {
     );
   });
 
-  // r[verify hosting.payload.size-bounds]
+  // r[verify hosting.payload.size-bounds+2]
   it("rejects an empty payload", () => {
     expect(() =>
       createArtefact({ ...base, payload: { ref: "r", bytes: 0, hash: "h" } }),
     ).toThrow(InvariantViolation);
   });
 
-  // r[verify hosting.payload.size-bounds]
+  // r[verify hosting.payload.size-bounds+2]
   it("rejects a payload over the 100 MB cap", () => {
     expect(() =>
       createArtefact({
         ...base,
-        payload: { ref: "r", bytes: MAX_PAYLOAD_BYTES + 1, hash: "h" },
+        payload: { ref: "r", bytes: DEFAULT_MAX_PAYLOAD_BYTES + 1, hash: "h" },
       }),
     ).toThrow(InvariantViolation);
+  });
+
+  // r[verify hosting.payload.cap-policy-decided+2]
+  it("checks the payload against the cap it is given", () => {
+    const MB = 1024 * 1024;
+    const create = (bytes: number) =>
+      createArtefact({ ...base, payload: { ref: "r", bytes, hash: "h" }, maxPayloadBytes: 10 * MB });
+    expect(() => create(11 * MB)).toThrow("payload exceeds the 10 MB cap");
+    expect(create(9 * MB).payloadBytes).toBe(9 * MB);
+    const a = createArtefact(base);
+    expect(() =>
+      editArtefact(a, { payload: { ref: "r", bytes: 11 * MB, hash: "h" }, maxPayloadBytes: 10 * MB }),
+    ).toThrow("payload exceeds the 10 MB cap");
   });
 
   // r[verify hosting.artefact.owner-required]
@@ -258,13 +271,13 @@ describe("editArtefact (S3)", () => {
     expect(edited.payloadHash).toBe("newhash");
   });
 
-  // r[verify hosting.payload.size-bounds]
+  // r[verify hosting.payload.size-bounds+2]
   // r[verify hosting.artefact.title-required]
   it("rejects an empty title and oversize payload", () => {
     const a = createArtefact(base);
     expect(() => editArtefact(a, { title: "   " })).toThrow(InvariantViolation);
     expect(() =>
-      editArtefact(a, { payload: { ref: "r", bytes: MAX_PAYLOAD_BYTES + 1, hash: "h" } }),
+      editArtefact(a, { payload: { ref: "r", bytes: DEFAULT_MAX_PAYLOAD_BYTES + 1, hash: "h" } }),
     ).toThrow(InvariantViolation);
     expect(() =>
       editArtefact(a, { payload: { ref: "r", bytes: 0, hash: "h" } }),
@@ -402,7 +415,7 @@ describe("InMemoryArtefactRepository", () => {
       return repo;
     };
 
-    // r[verify hosting.shared.others-viewable]
+    // r[verify hosting.shared.others-viewable+2]
     it("returns active authenticated+public across owners, never private/archived", async () => {
       const repo = await seed();
       // Viewer owns none of them → sees every shared artefact across owners.
@@ -410,7 +423,7 @@ describe("InMemoryArtefactRepository", () => {
       expect(shared.map((a) => a.id).sort()).toEqual(["auth", "pub"]);
     });
 
-    // r[verify hosting.shared.others-viewable]
+    // r[verify hosting.shared.others-viewable+2]
     it("excludes the viewer's own shared artefacts (they live in Your artefacts)", async () => {
       const repo = await seed();
       // u1 owns "pub" → it drops out; only u2's "auth" remains.
@@ -418,7 +431,7 @@ describe("InMemoryArtefactRepository", () => {
       expect(shared.map((a) => a.id).sort()).toEqual(["auth"]);
     });
 
-    // r[verify hosting.shared.others-viewable]
+    // r[verify hosting.shared.others-viewable+2]
     it("lists top-level artefacts only: a contained one's own tier is dormant", async () => {
       const repo = await seed();
       await repo.save({

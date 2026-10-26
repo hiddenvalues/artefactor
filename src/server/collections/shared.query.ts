@@ -3,6 +3,10 @@ import type { Visibility } from "../../domain/artefact/visibility";
 import type { ArtefactRepository } from "../../domain/artefact/artefact-repository";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
+import { defaultAccessPolicy, type AccessPolicy } from "../../domain/artefact/access";
+import { authorizeRead, memoizedPolicy } from "../link-gate/authorize";
+import { listGrantedSharedRoots } from "./shared-collections.query";
+import type { PassLookup } from "../link-gate/passes";
 
 export interface EffectivelySharedArtefact {
   artefact: Artefact;
@@ -17,23 +21,43 @@ export interface EffectivelySharedArtefact {
 // there); others' artefacts inside trees whose root grants the viewer; and — with contributors
 // (S29/collections.contributor.on-root-access-list) — others' artefacts inside the viewer's **own** trees. The viewer's own artefacts
 // never appear (they live in "Your artefacts"), including ones they contributed into someone else's
-// tree.
+// tree. The repo queries yield tier-based candidates only (SQL cannot ask the policy): each one is
+// kept only when the one read decision grants it — the access policy, then the link gate with the
+// request's passes — a top-level artefact by its own gate, a shared tree by its root's.
 // r[impl hosting.shared.lists-effectively-shared]
+// r[impl hosting.shared.others-viewable+2]
 export async function listEffectivelyShared(
   viewerId: string,
   scope: TenantScope,
   deps: {
     artefactRepo: ArtefactRepository;
     collectionRepo: CollectionRepository;
+    accessPolicy?: AccessPolicy;
   },
+  options: { passes?: PassLookup } = {},
 ): Promise<EffectivelySharedArtefact[]> {
-  const topLevel = (await deps.artefactRepo.listShared(viewerId, scope)).map(
-    (artefact) => ({ artefact, effectiveVisibility: artefact.visibility }),
-  );
+  // One policy answer per (viewer, tenant) for the whole listing.
+  const decide = {
+    collectionRepo: deps.collectionRepo,
+    accessPolicy: memoizedPolicy(deps.accessPolicy ?? defaultAccessPolicy),
+  };
+  // The candidate rows ship with an empty grantee list (recipients never see it); each decision
+  // re-loads the full aggregate, whose `sharedWith` the matrix's member cell reads.
+  const topLevel: EffectivelySharedArtefact[] = [];
+  for (const artefact of await deps.artefactRepo.listShared(viewerId, scope)) {
+    const full = await deps.artefactRepo.findById(artefact.id, scope);
+    if (!full) continue;
+    const verdict = await authorizeRead(decide, full, viewerId, { passes: options.passes });
+    if (verdict === "granted") {
+      topLevel.push({ artefact, effectiveVisibility: artefact.visibility });
+    }
+  }
 
-  // Trees granting the viewer: shared-to-them roots plus their own roots (the
-  // owner always views their tree — where contributors' artefacts live, collections.containment.co-owned).
-  const sharedRoots = await deps.collectionRepo.listSharedRoots(viewerId, scope);
+  // Trees granting the viewer: shared-to-them roots the read decision grants (one decision per
+  // root, sharing this listing's policy answers), plus their own roots (the owner is never refused
+  // — where contributors' artefacts live, collections.containment.co-owned). The roots stay
+  // server-side: only their ids and tiers shape the result.
+  const sharedRoots = await listGrantedSharedRoots(viewerId, scope, decide, options);
   const ownRoots = (
     await deps.collectionRepo.listByOwner(viewerId, scope)
   ).filter((c) => c.parentId === null);

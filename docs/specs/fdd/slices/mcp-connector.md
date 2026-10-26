@@ -472,3 +472,49 @@ hand the user.
 - **Out of scope:** a connector tool that renders the artefact for the agent; a deep link to one
   artefact in the web app (the SPA has no per-artefact route); any server-side enforcement.
 - **Boundary:** **OSS**.
+
+### S83 — Agent writes artefacts that keep a change made just before a reload
+
+- **Status:** done
+- **Depends on:** S18, S81
+- **Optional:** S78
+- **Linear:** ALI-681
+- **Delivers:** mcp.guide.write-at-once
+
+The authoring contract told artefacts to debounce frequent writes and promised a flush on page
+hide, but that flush covers only what is already in `localStorage`: a change still waiting in the
+artefact's own timer is lost on a reload. Flushing that timer on `pagehide` doesn't help — the
+frame's `pagehide` posts to a shell that is already unloading (S81). A Chromium probe, with an
+artefact debouncing a write by 400 ms and the top page reloaded or closed at once:
+
+| Artefact flushes its timer on | Reload: saved | Close: saved |
+| -- | -- | -- |
+| nothing | 0 / 8 | 0 / 5 |
+| `pagehide` + `visibilitychange: hidden` | 0 / 8 | 0 / 5 |
+| `beforeunload` | 8 / 8 | 5 / 5 |
+
+Since S81 the shell debounces the network save, so writing each change at once is the simplest
+correct pattern.
+
+- **The contract** — rule 5 of both channels (`PERSISTENCE_CONTRACT_SUMMARY` and
+  `skills/artefactor/SKILL.md`) becomes *write each change to `localStorage` at once*, carrying
+  word for word *"If you debounce a write, flush it on beforeunload and on visibilitychange
+  to hidden — a change still waiting in your timer when the page goes away is lost, and pagehide
+  is too late."* Both say the platform's flush covers what is in `localStorage`, not a change the
+  code still holds in a timer — the guide on its *writes save automatically* line, the summary in
+  rule 5, inside the first 4,000 characters clients keep. The guide's template writes
+  through `save()` at once; a snippet under rule 5 shows the debounced variant with its flush,
+  listening for `beforeunload` only while a write waits (a permanent listener costs the page its
+  back/forward cache in Firefox); the shipping checklist's *debounced* item becomes *each change
+  is written at once — or, if debounced, flushed on beforeunload and on visibilitychange to
+  hidden*.
+  *(`mcp.guide.write-at-once`)*
+- **Proof in Chromium** — `src/server/isolation.browser.test.ts` serves a fixture that follows the
+  debounced snippet: a change followed at once by a top-level reload comes back seeded and saved,
+  and one followed at once by closing the page is saved, five times running each; an idle page
+  sends no save when it closes, and listens for `beforeunload` only while a write waits.
+  *(`mcp.guide.write-at-once`)*
+- **Out of scope:** rewriting artefacts already published with the old template; a platform-side
+  fix (the pending change lives in the artefact's own JavaScript); `freeze` / bfcache handling
+  beyond `visibilitychange: hidden`.
+- **Boundary:** **OSS** (the EE *Welcome to Artefactor* starter follows in ET9).

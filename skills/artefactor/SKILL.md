@@ -345,8 +345,9 @@ manage who it belongs to.
 
 - Reads are **synchronous and instant** — the server seeds the saved data into the page before
   your script runs, so `localStorage.getItem(...)` returns the saved value on first paint.
-- Writes (`setItem`/`removeItem`/`clear`) save to the backend automatically, debounced, with a
-  flush when the page is hidden/closed.
+- Writes (`setItem`/`removeItem`/`clear`) save to the backend automatically, debounced, and are
+  flushed when the page is hidden or closed. That covers what is in `localStorage`, not a change
+  your code still holds in a timer.
 - Sometimes the loaded data is **read-only** and writes are rejected. That decision is made by
   Artefactor *outside* your artefact — your code must simply tolerate a failed write (see rule
   3). You never detect or control this yourself.
@@ -397,8 +398,31 @@ manage who it belongs to.
    Don't stuff large base64 images/files into saved state — keep those in the HTML itself or
    reference them by URL.
 
-5. **Debounce frequent writes.** For things like typing in a textarea, debounce ~300–500 ms
-   before saving. It keeps the artefact snappy and avoids hammering the store.
+5. **Write each change to `localStorage` at once.** Artefactor already batches the network save
+   and flushes it when the page is hidden or closed, so don't debounce `setItem` for the store's
+   sake. A heavy write (a large state stringified on every keystroke) may still be debounced, as
+   below. If you debounce a write, flush it on `beforeunload` and on `visibilitychange` to
+   `hidden` — a change still waiting in your timer when the page goes away is lost, and
+   `pagehide` is too late. Attach the `beforeunload` listener only while a write is waiting, as
+   below: a permanent one costs the page its back/forward cache in Firefox.
+
+   ```js
+   var t = null;
+   function saveSoon() {
+     if (t) clearTimeout(t);
+     t = setTimeout(flush, 400);
+     window.addEventListener("beforeunload", flush);
+   }
+   function flush() {
+     if (!t) return;
+     clearTimeout(t); t = null;
+     window.removeEventListener("beforeunload", flush);
+     save(state);
+   }
+   document.addEventListener("visibilitychange", function () {
+     if (document.visibilityState === "hidden") flush();
+   });
+   ```
 
 6. **Don't depend on `storage` events or cross-tab sync.** The shim doesn't guarantee them.
 
@@ -444,18 +468,12 @@ manage who it belongs to.
     catch (e) { return null; }                 // storage unavailable -> in-memory
   }
 
-  var t = null;
-  function saveSoon() {                         // debounce writes
-    if (t) clearTimeout(t);
-    t = setTimeout(save, 400);
-  }
   function save() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
     catch (e) { /* read-only / quota / disabled -> keep working in memory */ }
   }
 
-  // ... wire UI: on change -> mutate `state` -> saveSoon()
-  // flush is handled by Artefactor on page hide; calling save() on submit is fine too.
+  // ... wire UI: on change -> mutate `state` -> save()
 })();
 </script>
 ```
@@ -467,7 +485,8 @@ manage who it belongs to.
 - [ ] Every `getItem`/`setItem` is in try/catch with an in-memory fallback.
 - [ ] The artefact still works when a save fails (file mode, read-only, quota).
 - [ ] Saved state stays well under 5 MB (no big base64 blobs).
-- [ ] Frequent writes are debounced.
+- [ ] Each change is written to localStorage at once — or, if debounced, flushed on beforeunload
+      and on visibilitychange to hidden.
 - [ ] The artefact declares its data shape in an `application/artefactor-schema+json` block,
       with an invented (never real) `example`.
 - [ ] The declared schema agrees with the code — same key, same version, same shape.

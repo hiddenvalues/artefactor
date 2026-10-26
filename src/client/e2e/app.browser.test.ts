@@ -8,7 +8,7 @@ import { chromium, type Browser, type BrowserContext, type Locator, type Page, t
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { FRAME_HOLD_MAX_MS } from "../../server/runtime/shell";
 import { SHELL_TOKENS } from "../../server/runtime/shell-theme";
-import type { ArtefactSummary } from "../../shared/contracts";
+import type { ArtefactSummary, InviteResult, ShareInvitation } from "../../shared/contracts";
 import { MCP_REDIRECT, pkce, registerClient } from "../../test/mcp-oauth";
 
 // S43 — React client on stock shadcn/ui: the behaviour suite. It drives the
@@ -469,8 +469,8 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
 
     // The screen never names the allowed email domains, even fed a config that
     // still carries them (a server from before the field was dropped).
-    const NO_LINKS = { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false };
-    const ALL_LINKS = { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: true };
+    const NO_LINKS = { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, shareInvitations: false };
+    const ALL_LINKS = { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: true, shareInvitations: false };
     it.each([
       ["Google on", true, NO_LINKS],
       ["Google off", false, NO_LINKS],
@@ -619,7 +619,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
               emailPasswordEnabled: true,
               googleEnabled: true,
               signupAllowed: true,
-              capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, ...capabilities },
+              capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, shareInvitations: false, ...capabilities },
               legal,
             },
           }),
@@ -712,7 +712,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
         emailPasswordEnabled: true,
         googleEnabled: true,
         signupAllowed: true,
-        capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false },
+        capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, shareInvitations: false },
       };
 
       async function stubbedPage(capabilities: Record<string, boolean>, u?: User): Promise<Page> {
@@ -1488,7 +1488,7 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
               emailPasswordEnabled: false,
               googleEnabled: true,
               signupAllowed: true,
-              capabilities: { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: false },
+              capabilities: { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: false, shareInvitations: false },
             },
           }),
         );
@@ -2440,6 +2440,217 @@ describe.skipIf(!runBrowserTests)("the client's flows in Chromium (S43)", { conc
       expect(await dialogOf(page).getByText(guest.email).count()).toBe(0);
       await visible(dialogOf(page).getByText("No people found."));
       await page.context().close();
+    });
+
+    // S33b — the share-invitation seam, against stub invitation endpoints: the
+    // OSS server mounts none, so a superset's are played by `page.route`.
+    describe("share invitations (S33b)", () => {
+      const searchField = (page: Page) => dialogOf(page).getByRole("combobox", { name: "Search people" });
+      const PENDING: ShareInvitation = {
+        id: "inv-1",
+        email: "pending@b.co",
+        createdAt: "2026-10-01T00:00:00.000Z",
+        expiresAt: "2030-10-15T00:00:00.000Z",
+      };
+
+      // Every sharing and invitation request the page sends, as "METHOD path[ body]".
+      function recorded(page: Page): string[] {
+        const seen: string[] = [];
+        page.on("request", (r) => {
+          const path = new URL(r.url()).pathname;
+          if (!/^\/api\/artefacts\/[^/]+\/(sharing|invitations|access)/.test(path)) return;
+          if (r.method() === "GET" && !path.endsWith("/access")) return;
+          seen.push(`${r.method()} ${path}${r.postData() ? ` ${r.postData()}` : ""}`);
+        });
+        return seen;
+      }
+
+      // The owner's dialog on `title` at Specific people, with the capability
+      // on: the stub lists `saved`, answers an invite with `answer(email)` (a
+      // number is a failed status) and a revoke with 204.
+      async function openInviting(
+        owner: User,
+        title: string,
+        { saved = [], answer = () => ({ status: "pending" }), visibility = "selected" }: {
+          // A number: the list fails with that status.
+          saved?: ShareInvitation[] | number;
+          answer?: (email: string) => InviteResult | number;
+          visibility?: string;
+        } = {},
+      ): Promise<{ page: Page; sent: string[]; id: string }> {
+        const { id } = await createArtefact(owner, title);
+        if (visibility !== "private") await setVisibility(owner, id, visibility);
+        const page = await (await context(owner)).newPage();
+        await page.route("**/api/config", async (route) => {
+          const res = await route.fetch();
+          const config = await res.json();
+          await route.fulfill({ json: { ...config, capabilities: { ...config.capabilities, shareInvitations: true } } });
+        });
+        await page.route(/\/api\/artefacts\/[^/]+\/invitations/, async (route) => {
+          const req = route.request();
+          if (req.method() === "GET") {
+            return typeof saved === "number"
+              ? route.fulfill({ status: saved, json: { error: "failed" } })
+              : route.fulfill({ json: saved });
+          }
+          if (req.method() === "DELETE") return route.fulfill({ status: 204 });
+          const result = answer((req.postDataJSON() as { email: string }).email);
+          return typeof result === "number"
+            ? route.fulfill({ status: result, json: { error: "failed" } })
+            : route.fulfill({ json: result });
+        });
+        const sent = recorded(page);
+        await page.goto(ORIGIN);
+        await page.getByRole("heading", { name: "Home" }).waitFor();
+        await mineOnly(page);
+        await control(listing(page), "Share").click();
+        if (visibility === "private") await chooseAccessLevel(page, "Specific people");
+        await visible(searchField(page));
+        return { page, sent, id };
+      }
+
+      // r[verify hosting.invitations.oss-default-off+3]
+      // r[verify hosting.invitations.invite-affordance+3]
+      it("offers no invite and asks for no invitations with the capability off", async () => {
+        const owner = await newUser();
+        const { id } = await createArtefact(owner, "No invites");
+        await setVisibility(owner, id, "selected");
+        const page = await openApp(owner);
+        const asked: string[] = [];
+        page.on("request", (r) => {
+          if (r.url().includes("/invitations")) asked.push(r.url());
+        });
+        await mineOnly(page);
+        await control(listing(page), "Share").click();
+        await searchField(page).fill("a@b.co");
+        await visible(page.getByRole("status").filter({ hasText: "No people found." }));
+        expect(await page.getByRole("option", { name: /Invite/ }).count()).toBe(0);
+        expect(asked).toEqual([]);
+        await page.context().close();
+      });
+
+      // r[verify hosting.invitations.invite-affordance+3]
+      // r[verify hosting.invitations.sent-on-done+3]
+      it("invites an unknown email: a Will be invited row, then Done saves sharing before the invite", async () => {
+        const owner = await newUser();
+        const { page, sent, id } = await openInviting(owner, "Invite one", { visibility: "private" });
+        await searchField(page).fill("a@b.co");
+        const invite = page.getByRole("option", { name: "Invite a@b.co" });
+        await visible(invite);
+        expect(await page.getByRole("status").filter({ hasText: "No people found." }).count()).toBe(0);
+        await invite.click();
+        await visible(dialogOf(page).getByText("Will be invited"));
+        expect(await searchField(page).inputValue()).toBe("");
+        await visible(dialogOf(page).getByText("People with access · 1"));
+        const writes = () => sent.filter((s) => !s.startsWith("GET"));
+        expect(writes()).toEqual([]);
+
+        await control(dialogOf(page), "Done").click();
+        // One toast: the level change with its Undo, then the invitation sent.
+        await visible(toast(page, "“Invite one” is now shared with specific people · Invitation sent to a@b.co"));
+        await visible(control(page, "Undo"));
+        expect(writes()).toEqual([
+          `PUT /api/artefacts/${id}/sharing {"visibility":"selected"}`,
+          `POST /api/artefacts/${id}/invitations {"email":"a@b.co"}`,
+        ]);
+        await page.context().close();
+      });
+
+      // r[verify hosting.invitations.sent-on-done+3]
+      it("refreshes the library after a granted invite", async () => {
+        const owner = await newUser();
+        const { page, sent, id } = await openInviting(owner, "Invite granted", { answer: () => ({ status: "granted" }) });
+        await searchField(page).fill("a@b.co");
+        await page.getByRole("option", { name: "Invite a@b.co" }).click();
+        const refreshed = page.waitForRequest(
+          (r) => r.method() === "GET" && new URL(r.url()).pathname === "/api/artefacts",
+        );
+        await control(dialogOf(page), "Done").click();
+        await gone(dialogOf(page));
+        await refreshed;
+        // The invite, and no reload of the closing dialog's members after it.
+        const post = `POST /api/artefacts/${id}/invitations {"email":"a@b.co"}`;
+        expect(sent.slice(sent.indexOf(post))).toEqual([post]);
+        await page.context().close();
+      });
+
+      // r[verify hosting.invitations.invite-affordance+3]
+      // r[verify hosting.invitations.sent-on-done+3]
+      it("shows a saved invitation, revokes it on Done, and sends nothing on Cancel", async () => {
+        const owner = await newUser();
+        const { page, sent, id } = await openInviting(owner, "Invite pending", { saved: [PENDING] });
+        await visible(dialogOf(page).getByText(/Invited · expires/));
+        await visible(dialogOf(page).getByText("People with access · 1"));
+        await dialogOf(page).getByRole("button", { name: "Remove invitation for pending@b.co" }).click();
+        expect(await dialogOf(page).getByText("pending@b.co").count()).toBe(0);
+        await control(dialogOf(page), "Cancel").click();
+        await gone(dialogOf(page));
+        expect(sent.filter((s) => !s.startsWith("GET"))).toEqual([]);
+
+        await control(listing(page), "Share").click();
+        await dialogOf(page).getByRole("button", { name: "Remove invitation for pending@b.co" }).click();
+        await control(dialogOf(page), "Done").click();
+        await gone(dialogOf(page));
+        await visible(toast(page, "Invitation removed"));
+        await eventually(() =>
+          expect(sent.filter((s) => !s.startsWith("GET"))).toEqual([`DELETE /api/artefacts/${id}/invitations/inv-1`]),
+        );
+        await page.context().close();
+      });
+
+      // r[verify hosting.invitations.sent-on-done+3]
+      it("shows a private artefact's pending invitation and revokes it from another level", async () => {
+        const owner = await newUser();
+        const { page, sent, id } = await openInviting(owner, "Invite kept", { saved: [PENDING], visibility: "private" });
+        await visible(dialogOf(page).getByText(/Invited · expires/));
+        await dialogOf(page).getByRole("button", { name: "Remove invitation for pending@b.co" }).click();
+        await chooseAccessLevel(page, "Private");
+        await control(dialogOf(page), "Done").click();
+        await gone(dialogOf(page));
+        await eventually(() =>
+          expect(sent.filter((s) => !s.startsWith("GET"))).toEqual([`DELETE /api/artefacts/${id}/invitations/inv-1`]),
+        );
+        await page.context().close();
+      });
+
+      // r[verify hosting.invitations.invite-affordance+3]
+      // r[verify hosting.invitations.sent-on-done+3]
+      it("hides invitations whose list failed to load, and Done still saves the sharing", async () => {
+        const owner = await newUser();
+        const { page, sent, id } = await openInviting(owner, "Invites down", { saved: 500 });
+        await searchField(page).fill("a@b.co");
+        await visible(page.getByRole("status").filter({ hasText: "No people found." }));
+        expect(await page.getByRole("option", { name: /Invite/ }).count()).toBe(0);
+        expect(await dialogOf(page).getByText("Couldn't load who has access.").count()).toBe(0);
+        await chooseAccessLevel(page, "Private");
+        await control(dialogOf(page), "Done").click();
+        await gone(dialogOf(page));
+        await eventually(() =>
+          expect(sent.filter((s) => !s.startsWith("GET"))).toEqual([
+            `PUT /api/artefacts/${id}/sharing {"visibility":"private"}`,
+          ]),
+        );
+        await page.context().close();
+      });
+
+      // r[verify hosting.invitations.sent-on-done+3]
+      it("names a failed invite in an error toast and still sends the others", async () => {
+        const owner = await newUser();
+        const { page, sent, id } = await openInviting(owner, "Invite two", {
+          answer: (email) => (email === "bad@b.co" ? 500 : { status: "pending" }),
+        });
+        for (const email of ["bad@b.co", "good@b.co"]) {
+          await searchField(page).fill(email);
+          await page.getByRole("option", { name: `Invite ${email}` }).click();
+        }
+        await control(dialogOf(page), "Done").click();
+        await visible(toast(page, /Couldn't send the invitation to bad@b\.co/));
+        expect(sent.filter((s) => s.startsWith("POST"))).toEqual([
+          `POST /api/artefacts/${id}/invitations {"email":"bad@b.co"}`,
+          `POST /api/artefacts/${id}/invitations {"email":"good@b.co"}`,
+        ]);
+        await page.context().close();
+      });
     });
   });
 

@@ -1,5 +1,11 @@
-import { Hono } from "hono";
-import { MAX_PAYLOAD_BYTES, type Artefact } from "../../domain/artefact/artefact";
+import { Hono, type Context } from "hono";
+import type { Artefact } from "../../domain/artefact/artefact";
+import {
+  capMessage,
+  ossEnforcement,
+  QuotaDenied,
+  resolvePayloadCap,
+} from "../../domain/artefact/enforcement";
 import {
   ArtefactNotFound,
   InvariantViolation,
@@ -95,6 +101,12 @@ export type ArtefactRoutesDeps = CreateArtefactDeps & {
 export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   const r = new Hono<AuthEnv>();
   const hasher = deps.linkPasswordHasher ?? new ScryptLinkPasswordHasher();
+  const enforcement = deps.enforcement ?? ossEnforcement;
+
+  // S23 (hosting.payload.cap-policy-decided) — the caller's cap, checked against an upload's size
+  // before it is copied into a payload; the command re-checks it against the artefact's own tenant.
+  const maxPayloadBytes = (owner: string, scope: TenantScope) =>
+    resolvePayloadCap(enforcement, { ownerId: owner, tenantId: scope.tenantId });
 
   // Resolve one owned artefact's effective tier (hosting.access.effective-from-tree-root) for a
   // summary response.
@@ -466,17 +478,17 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
   // hosting.lifecycle.archived-not-served, hosting.access.no-existence-leak).
   r.patch("/:id", requireAuth, async (c) => {
     const body = await c.req.parseBody();
+    const scope = await deps.resolveScope(c);
     const input: EditArtefactInput = {
       artefactId: c.req.param("id"),
       requesterId: ownerId(c),
-      scope: await deps.resolveScope(c),
+      scope,
     };
     if (typeof body.title === "string") input.title = body.title;
     if (typeof body.kind === "string") input.kind = body.kind;
     if (body.payload instanceof File) {
-      if (body.payload.size > MAX_PAYLOAD_BYTES) {
-        return c.json({ error: "payload exceeds the 100 MB cap" }, 400);
-      }
+      const cap = await maxPayloadBytes(ownerId(c), scope);
+      if (body.payload.size > cap) return c.json({ error: capMessage(cap) }, 400);
       input.payload = new Uint8Array(await body.payload.arrayBuffer());
     }
     try {
@@ -487,6 +499,7 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     } catch (err) {
       if (err instanceof ArtefactNotFound) return c.json({ error: "not found" }, 404);
       if (err instanceof InvariantViolation) return c.json({ error: err.message }, 400);
+      if (err instanceof QuotaDenied) return quotaDeniedResponse(c, err);
       throw err;
     }
   });
@@ -584,8 +597,13 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
           requesterId: ownerId(c),
           collectionId: body.collectionId,
           scope: await deps.resolveScope(c),
+          passes: linkPassesOf(c),
         },
-        { artefactRepo: deps.repo, collectionRepo: deps.collectionRepo },
+        {
+          artefactRepo: deps.repo,
+          collectionRepo: deps.collectionRepo,
+          accessPolicy: deps.accessPolicy,
+        },
       );
       return c.json<ArtefactSummary>(
         toArtefactSummary(moved, await effectiveVisOf(moved), ownerId(c)),
@@ -664,14 +682,13 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
     if (!(file instanceof File)) {
       return c.json({ error: "an HTML payload file is required" }, 400);
     }
-    // Reject oversize before buffering the whole file into memory (hosting.payload.size-bounds).
-    if (file.size > MAX_PAYLOAD_BYTES) {
-      return c.json({ error: "payload exceeds the 100 MB cap" }, 400);
-    }
+    // Reject oversize before copying the file into a payload (hosting.payload.cap-policy-decided).
+    const scope = await deps.resolveScope(c);
+    const cap = await maxPayloadBytes(ownerId(c), scope);
+    if (file.size > cap) return c.json({ error: capMessage(cap) }, 400);
 
     const payload = new Uint8Array(await file.arrayBuffer());
     try {
-      const scope = await deps.resolveScope(c);
       const artefact = await createArtefactCommand(
         { ownerId: ownerId(c), title, kind, payload, tenantId: scope.tenantId },
         deps,
@@ -681,11 +698,22 @@ export function createArtefactRoutes(deps: ArtefactRoutesDeps) {
       if (err instanceof InvariantViolation) {
         return c.json({ error: err.message }, 400);
       }
+      if (err instanceof QuotaDenied) return quotaDeniedResponse(c, err);
       throw err;
     }
   });
 
   return r;
+}
+
+// S23 — a quota deny on the create and edit routes: 402 with the reason and upgrade path, or 429
+// with a Retry-After header when the policy names a wait (a rate fence).
+// r[impl platform.enforcement.quota-retry-after]
+function quotaDeniedResponse(c: Context, err: QuotaDenied) {
+  const body = { error: err.reason, upgradePath: err.upgradePath };
+  if (err.retryAfter === undefined) return c.json(body, 402);
+  c.header("Retry-After", String(err.retryAfter));
+  return c.json({ ...body, retryAfter: err.retryAfter }, 429);
 }
 
 // S55 — the shape of a `SetSharingRequest`; "invalid" on anything else.

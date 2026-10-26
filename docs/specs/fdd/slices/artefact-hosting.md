@@ -333,9 +333,10 @@ owner (`owner: { name, email }`).
 - `sharedWith` is retained across tier changes and archive/restore; only consulted under
   `selected` (empty list ⇒ owner-only; `hosting.access-list.retained`).
 
-r[hosting.access-list.directory-search+2]
+r[hosting.access-list.directory-search+3]
 `GET /api/users/search?q=` answers a signed-in caller with the directory users matching `q`
-(`hosting.access-list.members-from-directory`), and an anonymous one with 401.
+(`hosting.access-list.members-from-directory`) within the caller's tenant scope, resolved as for
+every scoped read; a caller the resolver refuses gets its refusal; an anonymous caller gets 401.
 
 r[hosting.shared.selected-members+2]
 A member's **"Shared with you"** (`GET /api/shared`, S14) shows a `selected` artefact they're a
@@ -630,43 +631,99 @@ r[hosting.magic-link.landing-error]
 
 ### S33b — Share-invitation seam
 
-- **Status:** specced
-- **Depends on:** S1, S16, S25, S33a
+- **Status:** done
+- **Depends on:** S1, S16, S25, S33a, S55
 - **Linear:** ALI-300
+- **Delivers:** hosting.authority.owner-only
 
 *Enabler; behaviour-preserving.*
 
-The core hook a superset uses to let an owner share with an **email that has no Account yet**
-(market analysis gap #1). **OSS does not invite anyone:** it has no transactional email, and its
-sign-up allowlist (`identity.signup.domain-allowlist`) stays the only way in. The invitation
-aggregate, mail delivery and cross-org grants are the EE **Share invitations** context
+The core hook a superset uses to let an owner share an artefact with an **email that has no
+Account yet** (market analysis gap #1). **OSS does not invite anyone:** it has no transactional
+email, and its sign-up allowlist (`identity.signup.domain-allowlist`) stays the only way in. The
+invitation aggregate, mail delivery and acceptance are the EE **Share invitations** context
 (`ee/docs/specs/ddd/share-invitations.md`) — in cloud, where sign-up is open
 (`identity.signup.allow-all`), an invited person becomes an ordinary Account, signing in through
 S33a's magic link. No DDD invariant changes: an accepted invitation is an ordinary
 `hosting.access-list.owner-managed-set` grant.
 
+It follows S58's split (`src/server/org-admin.ts`): **core decides, the port carries out.** Who
+may invite is the owner check every artefact command uses (`hosting.authority.owner-only`), and
+which artefacts take an invitation is decided by the route, so the access logic has one source.
+The superset's port only records the invitation and sends the mail, and never sees a request core
+refused.
+
 - **Capabilities** — adds `shareInvitations: boolean` to S33a's `Capabilities`, reported on
   `GET /api/config`. **OSS default: `false`.**
-- **Endpoint contract (not mounted in OSS)** — the client targets, and a superset mounts:
-  `POST|GET /api/artefacts/:id/invitations`, `POST|GET /api/collections/:id/invitations` (owner;
-  body `{ email }` → `{ status: "granted" | "pending", invitation? }`; `GET` lists pending
-  `{ id, email, createdAt, expiresAt }`), and `DELETE /api/invitations/:id`. `granted` means the
-  email already had an Account and was added to `sharedWith` directly.
-- **Client** — when `shareInvitations` is on, `ManageAccessModal`'s people picker offers "Invite
-  `<email>`" for a well-formed email with no directory match and shows pending invitations as chips
-  (resend = re-POST, revoke = DELETE) beside the access list; a `private` target prompts to share
-  as `selected` first. With it off, the UI renders exactly as today.
+- **Port** — `src/server/share-invitations.ts` exports `ShareInvitations { invite, list, revoke }`,
+  each taking the request context and the artefact id: `invite(c, artefactId, email)` records a
+  pending invitation and mails it, or grants an existing Account at once, and answers an
+  `InviteResult`; `list` answers the pending invitations, oldest first; `revoke(c, artefactId,
+  invitationId)` answers `false` when no such pending invitation is on the artefact. The OSS
+  default `noShareInvitations` is `null`: no port. `createApp` takes it as a new trailing
+  dependency (the S22/S24/S58 pattern). `src/shared/contracts.ts` defines
+  `ShareInvitation { id, email, createdAt, expiresAt }` and
+  `InviteResult { status: "granted" | "pending"; invitation? }`; `granted` means the email
+  already had an Account and was added to `sharedWith`.
+- **Routes** (`src/server/routes/invitations.ts`), all signed-in:
+  `POST /api/artefacts/:id/invitations` with `{ email }` → `200 InviteResult`;
+  `GET /api/artefacts/:id/invitations` → `200 ShareInvitation[]`;
+  `DELETE /api/artefacts/:id/invitations/:invitationId` → `204`. Only `POST` asks for an
+  invitable target; listing and revoking are owner-only at any artefact state.
+- **Client** — when `shareInvitations` is on, `ArtefactAccessDialog`'s **Viewers** search offers
+  "Invite `<email>`" and lists pending invitations under **People with access**; the dialog's
+  draft holds them, and **Done** sends them after the sharing save: invites from Specific people
+  only, revokes from any level. With it off, the dialog
+  renders exactly as it does without the seam and makes no invitation request.
 - **Acceptance:**
 
-r[hosting.invitations.oss-default-off]
-Under the OSS default `/api/config` reports `shareInvitations: false`, the modal renders unchanged,
-and no invitation route exists (404).
+r[hosting.invitations.oss-default-off+3]
+Under the OSS default `/api/config` reports `shareInvitations: false`, the access dialog renders
+unchanged, and no artefact invitation route exists: `POST` and `GET
+/api/artefacts/:id/invitations` and `DELETE /api/artefacts/:id/invitations/:invitationId` answer
+404, even to the owner of a `selected` artefact. `shareInvitations` is reported `true` only when
+the capability and a `ShareInvitations` port are both injected, so the dialog never offers what the
+routes would refuse.
 
-r[hosting.invitations.invite-affordance]
-With the stub capability on and stub endpoints, typing an unknown email shows "Invite", inviting
-renders a pending chip, `granted` refreshes the access list instead, and revoke removes the chip.
+r[hosting.invitations.route-decides-target+2]
+With a port injected, an invitation route decides before calling it. Every route first answers 404
+for an artefact that is missing or not the caller's, the same answer in both cases. `POST` then
+decides the target, in this order: an artefact that is archived, inside a collection or `private`
+→ 409 `{ error: "not-invitable" }`; an email that is not well-formed or is the owner's own → 400
+`{ error: "invalid-email" }`. `GET` and `DELETE` need ownership only, whatever the artefact's
+state: pending invitations are kept like the retained access list (`hosting.access-list.retained`),
+so the owner can list and withdraw them after the artefact went private, was archived or filed.
+The port is called only once its route's checks pass, with the email trimmed and lower-cased, and
+its `InviteResult` or list is the answer. A revoke the port answers `false` for → 404.
 
-- **Boundary:** **OSS** (the capabilities flag, client affordances and endpoint contract). The
+r[hosting.invitations.invite-affordance+3]
+With the capability on, a Viewers query that is a well-formed email which no result, pending
+invitation or draft entry has (case-insensitive) offers "Invite `<email>`" at the end of the
+results, in place of "No people found." when nothing else matched; selecting it adds a
+"Will be invited" row under People with access and clears the field, keeping focus. A saved
+pending invitation is a row reading "Invited · expires `<date>`", and each row's × ("Remove
+invitation for `<email>`") takes it out of the draft. The count includes them. When the saved
+invitations fail to load, the Invite option and the pending rows stay hidden and the rest of the
+dialog, Done included, works as it does without the capability.
+
+r[hosting.invitations.sent-on-done+3]
+The dialog loads the saved invitations whenever the capability is on, at every level; after a
+failed load, Done sends no invitation request. Done saves the sharing first, unchanged, then POSTs
+each email added while the draft is Specific people and DELETEs each saved invitation removed, at
+any level — an email added and removed again before Done sends nothing. A `granted` result
+refreshes the library, as a sharing save does. One toast reports the whole Done: the sharing save's
+message, keeping its Undo, then the invitations sent ("Invitation sent to `<email>`" or "`N`
+invitations sent") and removed ("Invitation removed" or "`N` invitations removed"); a Done that only
+changes invitations shows just that part, without Undo. When an invite or a removal fails, that one
+toast is an error naming each failed email, still after the save's message and with its Undo, and
+the others still go out. Cancel sends nothing.
+
+- **Out of scope:** collection-root invitations (their routes and the `ManageAccessDialog` UI:
+  EI3); a separate Resend action (removing and inviting again in a later save sends again); the
+  invitation aggregate, persistence, mail, rate limits and acceptance (EI2); invites offered from
+  the `authenticated` / `public` tiers (the route accepts them, but the UI offers invites only in
+  Viewers, shown at `selected`); MCP connector invitations.
+- **Boundary:** **OSS** (the capabilities flag, the port, the routes and the dialog). The
   invitation domain, persistence and mail are **EE** (the Share invitations context).
 
 ### S35 — Artefact thumbnails

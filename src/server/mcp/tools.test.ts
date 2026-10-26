@@ -8,6 +8,8 @@ import { InMemoryArtefactRepository } from "../../domain/artefact/in-memory-arte
 import { InMemoryCollectionRepository } from "../../domain/collection/in-memory-collection-repository";
 import { SINGLETON_SCOPE, type TenantScope } from "../../domain/artefact/tenant-scope";
 import { ArtefactConflict } from "../../domain/artefact/errors";
+import { ossEnforcement } from "../../domain/artefact/enforcement";
+import { env } from "../env";
 import {
   archiveCollection,
   createCollection,
@@ -104,6 +106,44 @@ describe("MCP artefact tools (S18)", () => {
   }
 
   const json = (r: ToolResult) => JSON.parse(r.content[0]!.text);
+
+  // S23 — EE enforcement policy seams (quota / payload-size / branding): the connector runs the
+  // same commands as the upload route, so a quota deny reaches the model as a tool error.
+  // r[verify platform.enforcement.quota-denies-create+2]
+  it("returns a quota deny from create_artefact as a tool error with the reason and upgrade path", async () => {
+    deps.enforcement = {
+      ...ossEnforcement,
+      quota: {
+        check: async () => ({
+          decision: "deny",
+          reason: "You have used all 20 artefacts on the Free plan.",
+          upgradePath: "https://app.example.com/settings/billing",
+          retryAfter: 30,
+        }),
+      },
+    };
+    const client = await clientFor("u1");
+    const r = await call(client, "create_artefact", { title: "T", kind: "other", html: "<h1>q</h1>" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0]!.text).toContain("You have used all 20 artefacts on the Free plan.");
+    expect(r.content[0]!.text).toContain("https://app.example.com/settings/billing");
+    expect(r.content[0]!.text).toContain("30 seconds");
+    expect(await deps.repo.listByOwner("u1", SINGLETON_SCOPE)).toEqual([]);
+  });
+
+  it("turns a quota deny's app path into a full link, and names none when the deny has none", async () => {
+    let upgradePath = "/settings/billing";
+    deps.enforcement = {
+      ...ossEnforcement,
+      quota: { check: async () => ({ decision: "deny", reason: "Over.", upgradePath }) },
+    };
+    const client = await clientFor("u1");
+    const args = { title: "T", kind: "other", html: "<h1>q</h1>" };
+    const linked = await call(client, "create_artefact", args);
+    expect(linked.content[0]!.text).toBe(`Over. Upgrade: ${env.BETTER_AUTH_URL}/settings/billing`);
+    upgradePath = "";
+    expect((await call(client, "create_artefact", args)).content[0]!.text).toBe("Over.");
+  });
 
   // r[verify mcp.tools.surface+4]
   // r[verify mcp.collections.web-app-only]
@@ -223,6 +263,46 @@ describe("MCP artefact tools (S18)", () => {
     ]) {
       expect(guide).toContain(item);
     }
+  });
+
+  // S83 — a change still waiting in the artefact's own timer is lost on a reload,
+  // and the frame's pagehide is too late to flush it.
+  const FLUSH_SENTENCE =
+    "If you debounce a write, flush it on beforeunload and on visibilitychange to hidden — a change still waiting in your timer when the page goes away is lost, and pagehide is too late.";
+  const COVERS_SENTENCE = "That covers what is in localStorage, not a change your code still holds in a timer.";
+  const unticked = (text: string) => text.replace(/`/g, "");
+
+  // r[verify mcp.guide.write-at-once]
+  it("tells the agent, in both the instructions and the guide, to flush a debounced write on beforeunload", async () => {
+    for (const text of (await bothChannels()).map(unticked)) {
+      expect(text).toContain(FLUSH_SENTENCE);
+      expect(text).toContain(COVERS_SENTENCE);
+    }
+  });
+
+  // r[verify mcp.guide.write-at-once]
+  it("puts both write-at-once sentences within the instructions' first 4,000 characters", async () => {
+    const client = await clientFor("u1");
+    const head = unticked(normalised(client.getInstructions()!.slice(0, 4000)));
+    expect(head).toContain(FLUSH_SENTENCE);
+    expect(head).toContain(COVERS_SENTENCE);
+  });
+
+  // r[verify mcp.guide.write-at-once]
+  it("the guide's checklist asks for writes at once and drops the debounce item", async () => {
+    const [, guide] = await bothChannels();
+    expect(guide).toContain(
+      "- [ ] Each change is written to localStorage at once — or, if debounced, flushed on beforeunload and on visibilitychange to hidden.",
+    );
+    expect(guide).not.toContain("- [ ] Frequent writes are debounced.");
+  });
+
+  // r[verify mcp.guide.write-at-once]
+  it("the guide's recommended template writes at once, with no saveSoon", async () => {
+    const [, guide] = await bothChannels();
+    const template = guide!.split("### Recommended template")[1]!.split("### Checklist")[0]!;
+    expect(template).not.toContain("saveSoon");
+    expect(template).not.toContain("flush is handled by Artefactor");
   });
 
   // r[verify mcp.guide.verify-rendered]

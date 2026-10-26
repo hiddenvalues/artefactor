@@ -28,8 +28,9 @@ invariants below.
 
 - **`ArtefactKind`** — the closed enum above. Pure metadata; used to group and distinguish
   artefacts when browsing.
-- **`HtmlPayload`** — trusted HTML, bounded by `MAX_PAYLOAD_BYTES` (**100 MB**), served as-is and
-  stored on the filesystem (see Persistence note), not inline in SQLite.
+- **`HtmlPayload`** — trusted HTML, bounded by the payload-size cap (**100 MB** in OSS,
+  `hosting.payload.cap-policy-decided`), served as-is and stored on the filesystem (see
+  Persistence note), not inline in SQLite.
 - **`Visibility`** — `private` | `selected` | `authenticated` | `public` (see access matrix below).
   `selected` shares the artefact with an explicit set of registered users (`sharedWith`) —
   a "shared" tier (it mints/retains a slug like the others), but gated by membership of the
@@ -44,8 +45,9 @@ invariants below.
 r[hosting.artefact.owner-required]
 **Ownership**: `ownerId` is always present and immutable; it references a valid Account.
 
-r[hosting.payload.size-bounds]
-**Payload**: `htmlPayload` is non-empty and ≤ `MAX_PAYLOAD_BYTES` (100 MB).
+r[hosting.payload.size-bounds+2]
+**Payload**: `htmlPayload` is non-empty and ≤ the payload-size cap
+(`hosting.payload.cap-policy-decided`; 100 MB in OSS).
 
 r[hosting.artefact.title-required]
 **Title**: non-empty.
@@ -362,13 +364,15 @@ r[hosting.listing.own-only]
 updated first — active ones by default, archived ones only when asked for
 (`hosting.lifecycle.archived-hidden-from-listings`).
 
-r[hosting.shared.others-viewable]
-**"Shared with you"** lists other owners' active **top-level** artefacts the viewer may view by
-their own tier: `authenticated` and `public` ones, and `selected` ones the viewer is a member of.
-The viewer's own artefacts never appear — they are in the owner's listing — and nor does a
-`private` one. An artefact inside a collection is listed by its tree root's tier instead, per
-`hosting.shared.lists-effectively-shared`; its own tier is dormant
-(`hosting.access.effective-from-tree-root`).
+r[hosting.shared.others-viewable+2]
+**"Shared with you"** lists other owners' active **top-level** artefacts whose own tier the
+read decision grants the viewer: `authenticated` ones under the `AccessPolicy`
+(`hosting.access.policy-decided`), `public` ones past their link gate
+(`hosting.link-gate.narrows-public-audience`, with the request's passes), and `selected` ones the
+viewer is a member of — not every artefact of a matching tier. The viewer's own artefacts never
+appear — they are in the owner's listing — and nor does a `private` one. An artefact inside a
+collection is listed by its tree root's tier instead, per `hosting.shared.lists-effectively-shared`;
+its own tier is dormant (`hosting.access.effective-from-tree-root`).
 
 r[hosting.listing.signed-in-only+2]
 **Unauthenticated access is by direct slug link only** — there is no public browse view beyond a
@@ -507,11 +511,12 @@ the access matrix or the repository.
   too, about a signed-in non-owner of a `public` artefact
   (`hosting.link-gate.narrows-public-audience`); that answer decides only whether the gate applies,
   never whether the `public` tier admits the viewer.
-- The policy is consulted where the **slug capability crosses tenants** (serving and the
-  slug-resolved data/viewers reads). Id-addressed reads and collection reads need no policy: they
-  resolve through the tenant-scoped repository (seam a), and within a scope the viewer is a
-  co-member by construction — collection reads are additionally signed-in only, except the S44
-  anonymous projection of a `public` root by its slug, which no `authenticated` cell decides.
+- The policy is consulted by **every read gate** that decides an `authenticated` cell: serving and
+  the slug-resolved data/viewers reads, where the slug capability crosses tenants, and the
+  id-addressed reads inside the tenant-scoped repository (seam a) — bookmarks, "Shared with you",
+  collection reads (`collections.read.follows-root`) and the move into a contributed tree. Collection
+  reads are signed-in only, except the S44 anonymous projection of a `public` root by its slug,
+  which no `authenticated` cell decides.
 
 ### Invariants — tenant scope and access policy
 
@@ -615,21 +620,28 @@ root's access changing to a shared tier (`collections.slug.minted-on-effective-s
 > **Status:** DDD amendment (FDD slice **S23**; EE context `ee/docs/specs/ddd/usage-quota.md`).
 > Behaviour-preserving in OSS.
 
-**Problem.** The per-artefact cap `MAX_PAYLOAD_BYTES` (**100 MB**, `hosting.payload.size-bounds`) is
-a hardcoded constant. The EE *Large Artefacts* add-on needs a tighter default (**10 MB**) liftable
+**Problem.** A per-artefact cap that is one constant (**100 MB**, `hosting.payload.size-bounds`)
+can't vary by plan. The EE *Large Artefacts* add-on needs a tighter default (**10 MB**) liftable
 to 100 MB per entitlement — without OSS losing its flat 100 MB.
 
-**Seam.** Extract the cap into a **payload-size policy** consulted by
-`createArtefact`/`editArtefact` when validating `HtmlPayload`. **OSS default keeps 100 MB**
-(`hosting.payload.size-bounds` unchanged). A superset drives the cap from plan entitlements (10 MB
-default, 100 MB with *Large Artefacts*).
+**Seam.** The cap comes from a **payload-size policy**, the `PayloadSizePolicy` port
+(`maxBytes({ ownerId, tenantId })`, in `src/domain/artefact/enforcement.ts`). Every read of the
+policy goes through one resolver (`resolvePayloadCap`), which holds its value within the
+**100 MB ceiling** (`effectivePayloadCap`): the create and edit commands and the upload routes'
+size pre-check all use it, and `createArtefact`/`editArtefact` take the resolved cap as an input
+(`maxPayloadBytes`) when validating `HtmlPayload`, holding it to the same ceiling. The **OSS
+default keeps 100 MB** (`DEFAULT_MAX_PAYLOAD_BYTES`). A superset drives the cap from plan
+entitlements (10 MB default, 100 MB with *Large Artefacts*); no policy can lift it past 100 MB.
 
 ### Invariants — payload size
 
-r[hosting.payload.cap-policy-decided]
-**Size cap is policy-decided, 100 MB in OSS.** The HtmlPayload invariant
+r[hosting.payload.cap-policy-decided+2]
+**Size cap is policy-decided, within a 100 MB ceiling; 100 MB in OSS.** The HtmlPayload invariant
 (`hosting.payload.size-bounds`: non-empty, ≤ cap) holds; only the *cap value* is supplied by the
-policy. The OSS policy returns the constant 100 MB, so OSS is byte-identical.
+policy, between a 1 MB floor and the 100 MB ceiling. A value above the ceiling, or one that is not
+a finite number (NaN, Infinity, missing), is read as 100 MB; one below 1 MB is read as 1 MB
+(refusing every create is the quota's job, not the size policy's). The OSS policy returns the
+constant 100 MB, so OSS is byte-identical.
 
 ## Amendment (post-v0.2) — link gate on public artefacts: password + expiry
 

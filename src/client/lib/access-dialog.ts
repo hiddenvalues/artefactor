@@ -1,4 +1,11 @@
-import type { ArtefactSummary, LinkGateSummary, SetSharingRequest, UserRef } from "../../shared/contracts";
+import type {
+  ArtefactSummary,
+  LinkGateSummary,
+  SetSharingRequest,
+  ShareInvitation,
+  UserRef,
+} from "../../shared/contracts";
+import { wellFormedEmail } from "../../shared/email";
 import type { DataVisibility, Visibility } from "./format";
 import {
   emptyForm,
@@ -21,6 +28,10 @@ export interface AccessDraft {
   // `current` is the saved gate (only while saved Public); `form` the draft of it.
   gate: { current: LinkGateSummary | null; form: LinkProtectionForm };
   dataVisibility: DataVisibility;
+  // S33b — the pending share invitations: the saved ones, the emails to invite
+  // on Done and the saved ones to revoke (by id). Empty where the deployment
+  // offers no invitations.
+  invitations: { saved: ShareInvitation[]; add: string[]; revoke: string[] };
 }
 
 export interface AccessSections {
@@ -33,13 +44,18 @@ export interface AccessSections {
 // The saved state as a draft. `members` is the retained access list
 // (hosting.access-list.retained),
 // whatever the saved level.
-export function draftOf(summary: ArtefactSummary, members: UserRef[]): AccessDraft {
+export function draftOf(
+  summary: ArtefactSummary,
+  members: UserRef[],
+  invitations: ShareInvitation[] = [],
+): AccessDraft {
   const current = summary.visibility === "public" ? (summary.linkGate ?? null) : null;
   return {
     level: summary.visibility,
     members,
     gate: { current, form: formFor(current) },
     dataVisibility: summary.dataVisibility,
+    invitations: { saved: invitations, add: [], revoke: [] },
   };
 }
 
@@ -50,7 +66,10 @@ export function draftOf(summary: ArtefactSummary, members: UserRef[]): AccessDra
 export function chooseLevel(draft: AccessDraft, saved: AccessDraft, level: Visibility): AccessDraft {
   if (level === draft.level) return draft;
   const next: AccessDraft = { ...draft, level };
-  if (level === "selected") next.members = saved.members;
+  if (level === "selected") {
+    next.members = saved.members;
+    next.invitations = saved.invitations;
+  }
   if (level === "public") {
     next.gate =
       saved.level === "public"
@@ -67,6 +86,112 @@ export function chooseLevel(draft: AccessDraft, saved: AccessDraft, level: Visib
 export function withLoadedMembers(draft: AccessDraft, loaded: UserRef[]): AccessDraft {
   const ids = new Set(loaded.map((u) => u.id));
   return { ...draft, members: [...loaded, ...draft.members.filter((u) => !ids.has(u.id))] };
+}
+
+// The draft once the saved invitations have loaded: the invites and revokes
+// made meanwhile stay, but an invite of an email already pending folds into
+// that saved invitation, so it shows one row.
+export function withLoadedInvitations(draft: AccessDraft, loaded: ShareInvitation[]): AccessDraft {
+  const pending = new Set(loaded.map((i) => i.email.toLowerCase()));
+  const add = draft.invitations.add.filter((email) => !pending.has(email));
+  return { ...draft, invitations: { ...draft.invitations, saved: loaded, add } };
+}
+
+// S33b — one pending invitation under People with access: a saved one, or an
+// email the draft will invite on Done.
+export interface PendingInvitation {
+  email: string;
+  saved: ShareInvitation | null;
+}
+
+// The draft's pending invitations: the saved ones still kept, then the new ones.
+export function pendingInvitationsOf(draft: AccessDraft): PendingInvitation[] {
+  const { saved, add, revoke } = draft.invitations;
+  return [
+    ...saved.filter((i) => !revoke.includes(i.id)).map((i) => ({ email: i.email, saved: i })),
+    ...add.map((email) => ({ email, saved: null })),
+  ];
+}
+
+// The email the Viewers search offers to invite, or null: a well-formed query
+// that no result, person or pending invitation in the draft already has, and
+// that isn't the owner's own (`ownEmail`; the directory search leaves the owner
+// out, and the route refuses it).
+export function inviteOfferOf(
+  query: string,
+  results: readonly UserRef[],
+  draft: AccessDraft,
+  ownEmail?: string,
+): string | null {
+  const email = wellFormedEmail(query);
+  if (!email || email === ownEmail?.trim().toLowerCase()) return null;
+  const taken = [...results, ...draft.members, ...pendingInvitationsOf(draft)].some(
+    (p) => p.email.trim().toLowerCase() === email,
+  );
+  return taken ? null : email;
+}
+
+// A directory person added as a viewer: an unsaved invite of their email is
+// dropped, since adding them grants the access the invite would have.
+export function addMember(draft: AccessDraft, person: UserRef): AccessDraft {
+  const email = person.email.trim().toLowerCase();
+  const add = draft.invitations.add.filter((e) => e !== email);
+  return { ...draft, members: [...draft.members, person], invitations: { ...draft.invitations, add } };
+}
+
+export function addInvitation(draft: AccessDraft, email: string): AccessDraft {
+  const { saved, add, revoke } = draft.invitations;
+  const kept = saved.find((i) => i.email.toLowerCase() === email);
+  // Inviting a saved invitation removed in this draft keeps it instead.
+  if (kept) return { ...draft, invitations: { ...draft.invitations, revoke: revoke.filter((id) => id !== kept.id) } };
+  if (add.includes(email)) return draft;
+  return { ...draft, invitations: { ...draft.invitations, add: [...add, email] } };
+}
+
+export function removeInvitation(draft: AccessDraft, pending: PendingInvitation): AccessDraft {
+  const { add, revoke } = draft.invitations;
+  return {
+    ...draft,
+    invitations: pending.saved
+      ? { ...draft.invitations, revoke: [...revoke, pending.saved.id] }
+      : { ...draft.invitations, add: add.filter((e) => e !== pending.email) },
+  };
+}
+
+// What Done sends after the sharing save: the emails to invite and the saved
+// invitations to revoke. Invites go out, like the viewers, only while the draft
+// is Specific people; a revoke goes out at any level, since pending invitations
+// are kept like the retained access list. An email invited and removed again
+// before Done sends nothing.
+// r[impl hosting.invitations.sent-on-done+3]
+export function invitationChangesOf(
+  saved: AccessDraft,
+  draft: AccessDraft,
+): { invite: string[]; revoke: ShareInvitation[] } {
+  const pending = new Set(saved.invitations.saved.map((i) => i.email.toLowerCase()));
+  return {
+    invite: draft.level === "selected" ? draft.invitations.add.filter((email) => !pending.has(email)) : [],
+    revoke: saved.invitations.saved.filter((i) => draft.invitations.revoke.includes(i.id)),
+  };
+}
+
+// The one toast a Done shows (toasts show one at a time): the sharing save's
+// message, keeping its Undo, then what happened to the invitations — or, when
+// one failed, an error naming each failed email in their place. Null when
+// nothing was saved or sent.
+export function doneToastOf(
+  save: { message: string; undo: SetSharingRequest | null } | null,
+  invited: { sent: readonly string[]; removed: number; failed: readonly string[] },
+): { message: string; error: boolean; undo: SetSharingRequest | null } | null {
+  const { sent, removed, failed } = invited;
+  const parts = save ? [save.message] : [];
+  if (failed.length) parts.push(...failed);
+  else {
+    if (sent.length) parts.push(sent.length === 1 ? `Invitation sent to ${sent[0]}` : `${sent.length} invitations sent`);
+    if (removed) parts.push(removed === 1 ? "Invitation removed" : `${removed} invitations removed`);
+  }
+  if (parts.length === 0) return null;
+  return { message: parts.join(" · "), error: failed.length > 0, undo: save?.undo ?? null };
 }
 
 // r[impl hosting.access-dialog.sections-by-level]

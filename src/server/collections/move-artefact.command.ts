@@ -9,7 +9,10 @@ import {
   evictFromCollection,
   moveArtefactToCollection,
 } from "../../domain/collection/move-artefact";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import { canContributeToTree } from "../../domain/collection/collection-access";
+import { decideCollectionRead } from "../link-gate/authorize";
+import type { PassLookup } from "../link-gate/passes";
 import { loadOwnActiveArtefact } from "../artefacts/get-own-artefact";
 import { loadOwnCollection } from "./get-own-collection";
 import { withEffectiveShareSlug } from "./share-slug";
@@ -25,11 +28,16 @@ export interface MoveArtefactInput {
   requesterId: string;
   collectionId: string | null;
   scope: TenantScope;
+  // The request's link passes (S32b) — none from an agent, which carries no link pass.
+  passes?: PassLookup;
 }
 
 export interface MoveArtefactDeps {
   artefactRepo: ArtefactRepository;
   collectionRepo: CollectionRepository;
+  // The deployment's policy for the `authenticated` tier (hosting.access.policy-decided);
+  // the OSS default when absent.
+  accessPolicy?: AccessPolicy;
   generateSlug?: () => string;
   maxSlugAttempts?: number;
   now?: () => Date;
@@ -52,21 +60,27 @@ export async function moveArtefactCommand(
       input.collectionId,
       input.scope,
     );
-    root =
-      collection && collection.parentId !== null
-        ? await deps.collectionRepo.findById(collection.rootId, input.scope)
-        : collection;
+    let canRead = false;
+    if (collection) {
+      ({ granted: canRead, root } = await decideCollectionRead(
+        deps,
+        collection,
+        input.requesterId,
+        { scope: input.scope, passes: input.passes },
+      ));
+    }
     // Missing, dangling-chain, and not-permitted are all one uniform not-found,
     // so a target's existence never leaks
     // (collections.access.no-existence-leak, hosting.access.no-existence-leak). Permitted = the mover's own
-    // collection, or a tree they contribute to (collections.contributor.on-root-access-list).
+    // collection, or a tree they contribute to (collections.contributor.on-root-access-list), whose
+    // read the one read decision grants them (collections.read.follows-root).
     // r[impl hosting.collection.move-into-own-or-contributed]
     if (
       !collection ||
       !root ||
       !(
         collection.ownerId === input.requesterId ||
-        canContributeToTree(root, input.requesterId)
+        canContributeToTree(root, input.requesterId, canRead)
       )
     ) {
       throw new CollectionNotFound(input.collectionId);

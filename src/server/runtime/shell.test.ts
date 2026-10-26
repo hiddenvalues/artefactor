@@ -31,6 +31,40 @@ const ctx: HostShellContext = {
   usesStorage: true,
 };
 
+// S23 — EE enforcement policy seams (quota / payload-size / branding): the badge a branding policy
+// returns for a public serve.
+describe("host shell — branding badge (S23)", () => {
+  const anon = { ...ctx, viewerId: null };
+
+  // r[verify platform.enforcement.branding-badge-on-public+2]
+  it("renders the badge as a link opening in a new tab, in the top bar", () => {
+    const html = renderHostShell({
+      ...anon,
+      badge: { label: "Made with <Artefactor>", href: "https://artefactor.cloud/?ref=badge&x=1" },
+    });
+    const bar = html.slice(html.indexOf('<div class="ae-bar">'), html.indexOf("<iframe"));
+    expect(bar).toContain(
+      '<a class="ae-badge" href="https://artefactor.cloud/?ref=badge&amp;x=1" target="_blank" rel="noopener">Made with &lt;Artefactor&gt;</a>',
+    );
+  });
+
+  it("renders nothing for a badge missing its label or href", () => {
+    const html = renderHostShell(anon);
+    for (const broken of [{}, { label: "Made with Artefactor" }, { href: "https://x.test" }]) {
+      expect(renderHostShell({ ...anon, badge: broken as never })).toBe(html);
+    }
+  });
+
+  // r[verify platform.enforcement.oss-defaults+2]
+  it("renders nothing for an absent or null badge, byte for byte", () => {
+    for (const c of [ctx, anon]) {
+      const html = renderHostShell(c);
+      expect(renderHostShell({ ...c, badge: null })).toBe(html);
+      expect(html).not.toContain("ae-badge");
+    }
+  });
+});
+
 describe("host shell — sandboxed frame (S36)", () => {
   // r[verify hosting.frame.sandboxed]
   it("frames the artefact with exactly the sandbox flags, never same-origin", () => {
@@ -268,7 +302,7 @@ describe("host shell — persistence through the shell (S36)", () => {
 
   // r[verify hosting.frame.shell-saves-for-frame+2]
   // r[verify data.shim.writes-through-shell+2]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("from its frame in the viewer's own context: one PUT to the fixed endpoint, pinned with If-Match", async () => {
     const s = runShell(frameCfg);
     s.changed({ a: "1" });
@@ -282,7 +316,7 @@ describe("host shell — persistence through the shell (S36)", () => {
   });
 
   // r[verify hosting.frame.shell-saves-for-frame+2]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("with no seeded entry, pins the write to 'none exists' (If-None-Match: *)", async () => {
     const s = runShell({ ...frameCfg, seedUpdatedAt: null });
     s.changed({ a: "1" });
@@ -352,7 +386,7 @@ describe("host shell — persistence through the shell (S36)", () => {
   });
 
   // r[verify hosting.frame.shell-saves-for-frame+2]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("pins the next write to the updatedAt its own save returned", async () => {
     const s = runShell(frameCfg, () => saved("2026-09-12T10:05:00.000Z"));
     s.changed({ a: "1" });
@@ -364,7 +398,7 @@ describe("host shell — persistence through the shell (S36)", () => {
   });
 
   // r[verify hosting.frame.shell-saves-for-frame+2]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("never overlaps saves: changes during a save go after it, with the new pin, carrying only the latest blob", async () => {
     let release!: (r: FakeResponse) => void;
     const s = runShell(frameCfg, (_u, _i, n) =>
@@ -415,7 +449,7 @@ describe("host shell — persistence through the shell (S36)", () => {
     release(saved("2026-09-12T10:08:00.000Z"));
   });
 
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("a pagehide with nothing unsent sends nothing", async () => {
     const s = runShell(frameCfg);
     s.listeners["pagehide"]!();
@@ -424,7 +458,7 @@ describe("host shell — persistence through the shell (S36)", () => {
   });
 
   // r[verify hosting.frame.shell-saves-for-frame+2]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("412 → shows the conflict banner and sends no further PUTs; Reload re-mints and re-seeds", async () => {
     const s = runShell(frameCfg, (url, _i, n) =>
       url === frameCfg.mintEndpoint
@@ -617,7 +651,7 @@ describe("host shell — debounces and flushes (S81)", () => {
   });
 
   // r[verify data.shell.debounces-and-flushes]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("an idle tab hidden or closed sends nothing", async () => {
     const s = runShell(frameCfg);
     s.hide();
@@ -630,7 +664,7 @@ describe("host shell — debounces and flushes (S81)", () => {
   // flight still settles, so the held change waits for it rather than racing it
   // under the same pin into a spurious 412. Only pagehide forces an overlap.
   // r[verify data.shell.debounces-and-flushes]
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it.each(["hidden", "beforeunload"])("%s during a save in flight doesn't overlap it: the held change goes after, with the new pin", async (ev) => {
     let release!: (r: FakeResponse) => void;
     const s = runShell(frameCfg, (_u, _i, n) =>
@@ -885,7 +919,7 @@ describe("host shell — debounces and flushes (S81)", () => {
   // A reload's shell can render its pin before the previous page's flush
   // lands, and its frame be seeded after: the frame's seed is what its blob
   // was built on.
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   // r[verify hosting.frame.shell-saves-for-frame+2]
   it("pins to the seed its frame document reports, then advances it by its own saves", async () => {
     const s = runShell({ ...frameCfg, seedUpdatedAt: null });
@@ -907,7 +941,7 @@ describe("host shell — debounces and flushes (S81)", () => {
     expect(headersOf(s.puts()[2]![1])["If-Match"]).toBe('"2026-09-12T13:00:00.000Z"');
   });
 
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("a frame seeded with no entry pins 'none exists', whatever was rendered", async () => {
     const s = runShell(frameCfg);
     s.fromFrame({ type: "artefactor:data-changed", blob: "{}", channel: frameCfg.channel, seed: null });
@@ -916,7 +950,7 @@ describe("host shell — debounces and flushes (S81)", () => {
     expect(headersOf(s.puts()[0]![1])["If-Match"]).toBeUndefined();
   });
 
-  // r[verify data.shell.writes-pinned+2]
+  // r[verify data.shell.writes-pinned+3]
   it("a seed that isn't a string or null is ignored: the rendered pin stays", async () => {
     const s = runShell(frameCfg);
     s.fromFrame({ type: "artefactor:data-changed", blob: "{}", channel: frameCfg.channel, seed: 42 });

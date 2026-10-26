@@ -125,7 +125,7 @@ describe("bookmarks (S27)", () => {
     ).rejects.toBeInstanceOf(ArtefactNotFound);
   });
 
-  // r[verify collections.bookmark.collection-view-gated]
+  // r[verify collections.bookmark.collection-view-gated+2]
   it("bookmarks a nested collection of a tree whose root grants the viewer", async () => {
     const root = createCollection({ id: "team", ownerId: OWNER, name: "Team" });
     await deps.collectionRepo.save({ ...root, visibility: "authenticated" });
@@ -140,7 +140,7 @@ describe("bookmarks (S27)", () => {
   });
 
   // r[verify collections.bookmark.artefact-view-gated]
-  // r[verify collections.bookmark.collection-view-gated]
+  // r[verify collections.bookmark.collection-view-gated+2]
   it("rejects bookmarking a non-viewable artefact / non-owned collection as not-found", async () => {
     await expect(
       setArtefactBookmark(

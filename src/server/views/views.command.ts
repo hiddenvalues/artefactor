@@ -106,6 +106,9 @@ export interface ListMyViewsDeps {
   // S14 under collections — "effectively shared" needs the collection trees.
   collectionRepo: CollectionRepository;
   viewRepo: ViewRepository;
+  // The deployment's policy for the `authenticated` tier (hosting.access.policy-decided), asked by
+  // the Shared-with-you list this composes from; the OSS default when absent.
+  accessPolicy?: AccessPolicy;
 }
 
 // S47 — the viewer's own views, newest first, kept only for artefacts they can
@@ -118,11 +121,14 @@ export async function listMyViews(
   viewerId: string,
   scope: TenantScope,
   deps: ListMyViewsDeps,
+  // The request's link passes (S32b), so an artefact or tree the caller unlocked stays listed, as
+  // it does in Shared with you.
+  options: { passes?: PassLookup } = {},
 ): Promise<OwnViewRef[]> {
   const [views, own, shared] = await Promise.all([
     deps.viewRepo.listByViewer(viewerId),
     deps.artefactRepo.listByOwner(viewerId, scope, { includeArchived: false }),
-    listEffectivelyShared(viewerId, scope, deps),
+    listEffectivelyShared(viewerId, scope, deps, options),
   ]);
   const visible = new Set([
     ...own.filter((a) => a.status === "active").map((a) => a.id),

@@ -1,8 +1,9 @@
+import { editArtefact, requireTitle, type Artefact } from "../../domain/artefact/artefact";
 import {
-  editArtefact,
-  MAX_PAYLOAD_BYTES,
-  type Artefact,
-} from "../../domain/artefact/artefact";
+  enforcePayload,
+  ossEnforcement,
+  type EnforcementPolicies,
+} from "../../domain/artefact/enforcement";
 import { InvariantViolation } from "../../domain/artefact/errors";
 import { isArtefactKind } from "../../domain/artefact/kind";
 import { payloadUsesStorage } from "../../domain/artefact/uses-storage";
@@ -34,6 +35,8 @@ export interface EditArtefactDeps {
   payloadStore: PayloadStore;
   // S35 — re-renders the thumbnail after a payload replacement.
   thumbnails?: ThumbnailQueue;
+  // S23 — the payload-size and quota policies; the OSS defaults when absent.
+  enforcement?: EnforcementPolicies;
 }
 
 export async function editArtefactCommand(
@@ -49,13 +52,22 @@ export async function editArtefactCommand(
   if (input.kind !== undefined && !isArtefactKind(input.kind)) {
     throw new InvariantViolation(`unknown artefact kind: ${input.kind}`);
   }
+  // A blank title is refused before the quota is asked, so a deny never hides it.
+  if (input.title !== undefined) requireTitle(input.title); // hosting.artefact.title-required
+  // S23 — only a payload-replacing edit asks the policies, about the artefact's owner and tenant;
+  // a title or kind edit asks neither.
+  // r[impl platform.enforcement.quota-edit-payload-only]
+  let maxPayloadBytes: number | undefined;
   if (input.payload !== undefined) {
     if (input.payload.byteLength === 0) {
       throw new InvariantViolation("payload must not be empty"); // hosting.payload.size-bounds
     }
-    if (input.payload.byteLength > MAX_PAYLOAD_BYTES) {
-      throw new InvariantViolation("payload exceeds the 100 MB cap"); // hosting.payload.size-bounds
-    }
+    maxPayloadBytes = await enforcePayload(
+      deps.enforcement ?? ossEnforcement,
+      { ownerId: existing.ownerId, tenantId: existing.tenantId },
+      "edit",
+      input.payload.byteLength,
+    );
   }
 
   // A payload edit swaps only the artefact's payload ref: the command takes no
@@ -87,6 +99,7 @@ export async function editArtefactCommand(
           title: input.title,
           kind: input.kind as Artefact["kind"] | undefined,
           payload: stored,
+          maxPayloadBytes,
           // Recompute usesStorage from the new bytes when the payload is replaced
           // (hosting.uses-storage.chrome-only).
           // r[impl hosting.uses-storage.recomputed-with-payload]

@@ -31,7 +31,7 @@ const FALLBACK: PublicConfigResponse = {
   emailPasswordEnabled: true,
   googleEnabled: true,
   signupAllowed: true,
-  capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false },
+  capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, shareInvitations: false },
   legal: { termsUrl: null, privacyUrl: null },
 };
 

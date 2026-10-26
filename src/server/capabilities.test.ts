@@ -23,7 +23,7 @@ describe("capabilities seam (S33a)", () => {
     return (await res.json()) as PublicConfigResponse;
   }
 
-  // r[verify identity.capabilities.oss-default-off+2]
+  // r[verify identity.capabilities.oss-default-off+3]
   // r[verify identity.capabilities.superset-only]
   // r[verify identity.config.advertises-methods+3]
   it("reports magicLinkSignIn: false by default, leaving the other fields unchanged", async () => {
@@ -31,13 +31,13 @@ describe("capabilities seam (S33a)", () => {
       emailPasswordEnabled: true,
       googleEnabled: false,
       signupAllowed: true,
-      capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false },
+      capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, shareInvitations: false },
       legal: { termsUrl: null, privacyUrl: null },
     });
   });
 
-  // r[verify identity.capabilities.oss-default-off+2]
-  it("reports the injected capabilities unchanged", async () => {
+  // r[verify identity.capabilities.oss-default-off+3]
+  it("reports the injected capabilities unchanged, but share invitations only with a port", async () => {
     const withMagicLink = createApp(
       undefined,
       undefined,
@@ -45,12 +45,14 @@ describe("capabilities seam (S33a)", () => {
       undefined,
       undefined,
       undefined,
-      { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: true },
+      { magicLinkSignIn: true, verifiedSignUp: true, passwordReset: true, shareInvitations: true },
     );
     expect((await config(withMagicLink)).capabilities).toEqual({
       magicLinkSignIn: true,
       verifiedSignUp: true,
       passwordReset: true,
+      // No `ShareInvitations` port is injected, so there are no invitations to offer.
+      shareInvitations: false,
     });
   });
 
@@ -74,13 +76,13 @@ describe("capabilities seam (S33a)", () => {
     });
   }
 
-  // r[verify identity.capabilities.oss-default-off+2]
+  // r[verify identity.capabilities.oss-default-off+3]
   // r[verify identity.capabilities.superset-only]
   it("mounts no set-password endpoint under the OSS auth (S48)", async () => {
     expect((await post("/api/auth/set-password", { newPassword: "correct-horse-battery" })).status).toBe(404);
   });
 
-  // r[verify identity.capabilities.oss-default-off+2]
+  // r[verify identity.capabilities.oss-default-off+3]
   // r[verify identity.capabilities.superset-only]
   it("refuses a password-reset request under the OSS auth, which sends no mail (S48)", async () => {
     const res = await post("/api/auth/request-password-reset", { email: "a@example.com", redirectTo: "/?reset-password=1" });

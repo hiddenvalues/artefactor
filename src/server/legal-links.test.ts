@@ -35,7 +35,7 @@ describe("/api/config — legal links (S67)", { timeout: 30_000 }, () => {
       emailPasswordEnabled: true,
       googleEnabled: false,
       signupAllowed: true,
-      capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false },
+      capabilities: { magicLinkSignIn: false, verifiedSignUp: false, passwordReset: false, shareInvitations: false },
     });
   });
 

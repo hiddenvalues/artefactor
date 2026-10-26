@@ -74,6 +74,13 @@ A divider sits above every section after General settings.
 * **Invalid protection:** an inline error ("The password needs at least 8 characters." / "Pick an
   expiry date in the future."); Done is disabled.
 * **Level dropdown open:** a listbox over the sections below it; clicking outside or Esc closes it.
+* **Invite offered** (where the deployment invites, S33b): a query that is a well-formed email no
+  result has ends the results with "Invite \<email>" (mail icon), in place of "No people found." when
+  nothing else matched. An email already in the list or already invited offers nothing.
+* **Pending invitations** (S33b): rows below the members, each with an envelope avatar, the email,
+  "Invited · expires \<date>" (or "Will be invited" before Done) and ×. "People with access · N"
+  counts them. If the invitations can't load, neither the rows nor the Invite option show, and the
+  rest of the dialog works as usual.
 
 ## Behaviour
 
@@ -86,6 +93,8 @@ A divider sits above every section after General settings.
     popover and keeps focus in the field so you can add the next person.
   * Esc or clicking outside closes the popover, but not the dialog.
   * The popover sits above the dialog's scroll area, so the dialog's edge never cuts it off.
+  * Selecting "Invite \<email>" works like adding a person: a "Will be invited" row appears, the
+    field clears and keeps focus. × on an invitation row takes it out of the draft.
 * **Public:** coming from another level starts with protection off; if it's already Public, it keeps
   the saved password and expiry, which can be changed or cleared.
 * **Link:** clicking copies the full URL and shows a "Link copied" toast.
@@ -94,6 +103,12 @@ A divider sits above every section after General settings.
   * One toast with Undo: the access level if it changed, otherwise the viewer count ("2 people can
     now open …"), otherwise "Public link settings saved", otherwise the saved-data choice.
   * With no changes, it just closes.
+  * Invitations go after the sharing save: each new email is sent, then each removed invitation is
+    withdrawn. The same toast reports them after the save's message, keeping its Undo:
+    "Invitation sent to \<email>" or "N invitations sent", and "Invitation removed" or "N
+    invitations removed". A Done that only changes invitations shows just that part, without
+    Undo. An invite or removal that fails turns that toast into an error naming its email, and the
+    others still go out.
 * **Cancel / Esc / clicking outside:** closes and discards the draft.
 * **Failure:** an error toast ("Couldn't make “…” public. Try again."); nothing changes.
 * **Rules from the repo:** password 8–128 characters; expiry presets and custom date as today.
@@ -109,6 +124,8 @@ A divider sits above every section after General settings.
   the results, `aria-activedescendant` for the highlighted row). The results are a `listbox` of
   `option`s; "Searching…" and "No people found." are read as status text. Esc closes the popover
   before the dialog. Each × is labelled "Remove \<name>"; the empty state is read as text.
+* "Invite \<email>" is an `option` in the same listbox. An invitation row's × is labelled "Remove
+  invitation for \<email>".
 * Password and expiry fields are labelled ("Link password", "Link expires"); errors are linked to
   their fields with `aria-describedby`.
 * Saved data is a `radiogroup` with `aria-checked`.
@@ -137,3 +154,10 @@ A divider sits above every section after General settings.
   adopts the dialog.
 * The results popover renders in a portal (e.g. the design system's `Popover`, anchored to the
   field), so the dialog's `overflow-y-auto` body doesn't clip it.
+* Invitations (S33b) show only where `/api/config` reports `capabilities.shareInvitations`. Done
+  sends `PUT …/sharing` first, then `POST /api/artefacts/:id/invitations` per new email and
+  `DELETE …/invitations/:invitationId` per removed one. A `granted` answer (the email already had
+  an Account) refreshes the library, as a save does. A failed `GET …/invitations` hides the
+  invitations and sends none, but leaves Done working. Saved invitations load at every level,
+  Private included, since they are kept like the remembered access list. Only a Specific people
+  draft sends new invitations; a removed one is withdrawn from any level.

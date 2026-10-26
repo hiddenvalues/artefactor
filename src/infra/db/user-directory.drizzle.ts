@@ -7,6 +7,7 @@ import type {
   UserIdentity,
   UserSearchOptions,
 } from "../../server/data/user-directory";
+import type { TenantScope } from "../../domain/artefact/tenant-scope";
 
 type Database = typeof Db;
 
@@ -33,8 +34,10 @@ export class DrizzleUserDirectory implements UserDirectory {
     return new Map(rows.map((r) => [r.id, { name: r.name, email: r.email }]));
   }
 
+  // The scope is ignored: single tenant, so every registered user is in scope.
   async search(
     query: string,
+    _scope: TenantScope,
     options?: UserSearchOptions,
   ): Promise<DirectoryUser[]> {
     const q = query.trim();

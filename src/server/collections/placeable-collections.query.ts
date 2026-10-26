@@ -2,6 +2,7 @@ import type { Collection } from "../../domain/collection/collection";
 import type { CollectionRepository } from "../../domain/collection/collection-repository";
 import type { TenantScope } from "../../domain/artefact/tenant-scope";
 import type { Visibility } from "../../domain/artefact/visibility";
+import type { AccessPolicy } from "../../domain/artefact/access";
 import { listOwnCollections } from "./collections.command";
 import { listSharedCollections } from "./shared-collections.query";
 
@@ -23,7 +24,8 @@ export interface PlaceableCollection {
 export async function listPlaceableCollections(
   requesterId: string,
   scope: TenantScope,
-  deps: { collectionRepo: CollectionRepository },
+  // No passes: an agent carries no link pass, so a gated root its policy refuses is never placeable.
+  deps: { collectionRepo: CollectionRepository; accessPolicy?: AccessPolicy },
 ): Promise<PlaceableCollection[]> {
   const [own, shared] = await Promise.all([
     listOwnCollections({ requesterId, scope }, deps),

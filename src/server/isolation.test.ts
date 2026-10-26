@@ -189,7 +189,7 @@ describe("isolated artefact serving (S36)", () => {
     });
 
     // S81 — the frame reports what it was seeded with, so the shell pins to it.
-    // r[verify data.shell.writes-pinned+2]
+    // r[verify data.shell.writes-pinned+3]
     it("an own-context frame is seeded with its entry's updatedAt, or null with no entry", async () => {
       const a = await makeArtefact("authenticated");
       const empty = await (await app.request((await mint(a.publicSlug!, otherCookie)).frameUrl)).text();

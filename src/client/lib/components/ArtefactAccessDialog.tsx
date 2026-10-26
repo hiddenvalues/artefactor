@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { RemoveScroll } from "react-remove-scroll";
-import { Check, CircleAlert, Database, Link as LinkIcon, Lock, Plus, Users, X } from "lucide-react";
-import type { ArtefactSummary, UserRef } from "../../../shared/contracts";
+import { Check, CircleAlert, Database, Link as LinkIcon, Lock, Mail, Plus, Users, X } from "lucide-react";
+import type { ArtefactSummary, ShareInvitation, UserRef } from "../../../shared/contracts";
 import { shareLinkPath } from "../../../shared/share-link";
 import { Avatar, AvatarFallback } from "$lib/components/ui/avatar";
 import { Button } from "$lib/components/ui/button";
@@ -18,15 +18,24 @@ import { Popover, PopoverAnchor, PopoverContent } from "$lib/components/ui/popov
 import { Select, SelectContent, SelectItem, SelectTrigger } from "$lib/components/ui/select";
 import { Separator } from "$lib/components/ui/separator";
 import {
+  addInvitation,
+  addMember,
   chooseLevel,
   draftGateOf,
   draftOf,
+  invitationChangesOf,
+  doneToastOf,
+  inviteOfferOf,
+  pendingInvitationsOf,
   protectionError,
+  removeInvitation,
   saveToastOf,
   sectionsOf,
   sharingRequestOf,
+  withLoadedInvitations,
   withLoadedMembers,
   type AccessDraft,
+  type PendingInvitation,
 } from "../access-dialog";
 import { api } from "../api";
 import { DATA_VIS, DATA_VIS_ORDER, initials, VIS, VIS_ORDER, type Visibility } from "../format";
@@ -43,6 +52,8 @@ const DATA_CHOICES = DATA_VIS_ORDER.map((v) => ({ value: v, ...DATA_VIS[v] }));
 export interface AccessDialogInitial {
   // The saved access list, instead of loading it (null = still loading).
   members?: UserRef[] | null;
+  // S33b — the saved pending invitations, instead of loading them.
+  invitations?: ShareInvitation[];
   draft?: (saved: AccessDraft) => AccessDraft;
   query?: string;
   levelsOpen?: boolean;
@@ -52,11 +63,12 @@ const SectionLabel = ({ children }: { children: ReactNode }) => (
   <div className="mb-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">{children}</div>
 );
 
-function Person({ u, action }: { u: UserRef; action?: ReactNode }) {
+// `avatar` replaces the initials, e.g. an invitation's envelope.
+function Person({ u, action, avatar }: { u: UserRef; action?: ReactNode; avatar?: ReactNode }) {
   return (
     <>
       <Avatar className="size-8">
-        <AvatarFallback className="text-xs font-semibold">{initials(u.name || u.email)}</AvatarFallback>
+        <AvatarFallback className="text-xs font-semibold">{avatar ?? initials(u.name || u.email)}</AvatarFallback>
       </Avatar>
       <span className="min-w-0 flex-1 text-left">
         <span className="block truncate text-sm font-medium">{u.name || u.email}</span>
@@ -123,6 +135,18 @@ function LevelPicker({
   );
 }
 
+// S33b — what Viewers needs to invite an email with no Account; absent where
+// the deployment offers no invitations.
+interface ViewerInvitations {
+  pending: PendingInvitation[];
+  // The email a query offers to invite, given the search results, or null.
+  offerOf: (query: string, results: UserRef[]) => string | null;
+  onInvite: (email: string) => void;
+  onRemove: (pending: PendingInvitation) => void;
+}
+
+const expiryDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { dateStyle: "medium" });
+
 // The Viewers section: the directory search and the draft's people.
 function Viewers({
   members,
@@ -130,6 +154,7 @@ function Viewers({
   loadFailed = false,
   onAdd,
   onRemove,
+  invitations,
   initialQuery = "",
   searchOpen,
 }: {
@@ -138,6 +163,7 @@ function Viewers({
   loadFailed?: boolean;
   onAdd: (u: UserRef) => void;
   onRemove: (u: UserRef) => void;
+  invitations?: ViewerInvitations;
   initialQuery?: string;
   /** Mirrors whether the results popover is open, for the dialog's outside-click handler. */
   searchOpen?: { current: boolean };
@@ -151,6 +177,10 @@ function Viewers({
   const inputRef = useRef<HTMLInputElement>(null);
   const memberIds = new Set(members.map((m) => m.id));
   const candidates = results.filter((u) => !memberIds.has(u.id));
+  // r[impl hosting.invitations.invite-affordance+3]
+  const offer = invitations && !searching ? invitations.offerOf(query, results) : null;
+  const pending = invitations?.pending ?? [];
+  const withAccess = members.length + pending.length;
 
   // Debounced directory search as the owner types.
   useEffect(() => {
@@ -219,6 +249,12 @@ function Viewers({
     inputRef.current?.focus();
   }
 
+  function invite(email: string) {
+    invitations?.onInvite(email);
+    search("");
+    inputRef.current?.focus();
+  }
+
   return (
     <div className="flex flex-col gap-3">
       {/* r[impl hosting.access-dialog.search-popover] */}
@@ -279,6 +315,12 @@ function Viewers({
                       <Person u={u} action={<Plus className="size-4 shrink-0" />} />
                     </CommandItem>
                   ))}
+                {offer && (
+                  <CommandItem value={`invite:${offer}`} onSelect={() => invite(offer)} className="gap-2.5 p-1.5">
+                    <Mail className="mx-2 size-4 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate text-left text-sm">Invite {offer}</span>
+                  </CommandItem>
+                )}
               </CommandList>
             </RemoveScroll>
           </PopoverContent>
@@ -286,13 +328,13 @@ function Viewers({
       </Popover>
       <div>
         <div className="mb-2 text-xs font-medium text-muted-foreground">
-          People with access{!loading && !loadFailed && members.length ? ` · ${members.length}` : ""}
+          People with access{!loading && !loadFailed && withAccess ? ` · ${withAccess}` : ""}
         </div>
         {loading ? (
           <div className="py-3 text-sm text-muted-foreground">Loading…</div>
         ) : loadFailed ? (
           <FieldError>Couldn't load who has access.</FieldError>
-        ) : members.length === 0 ? (
+        ) : withAccess === 0 ? (
           <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
             No one yet — search above to add people. Until then, only you can open it.
           </div>
@@ -317,6 +359,30 @@ function Viewers({
                 />
               </div>
             ))}
+            {pending.map((p) => (
+              <div key={p.email} className="flex items-center gap-2.5 rounded-lg border bg-muted/40 p-1.5">
+                <Person
+                  u={{
+                    id: p.saved?.id ?? p.email,
+                    name: p.email,
+                    email: p.saved ? `Invited · expires ${expiryDate(p.saved.expiresAt)}` : "Will be invited",
+                  }}
+                  avatar={<Mail className="size-4" />}
+                  action={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 text-muted-foreground"
+                      onClick={() => invitations?.onRemove(p)}
+                      title="Remove invitation"
+                      aria-label={`Remove invitation for ${p.email}`}
+                    >
+                      <X />
+                    </Button>
+                  }
+                />
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -328,27 +394,49 @@ function Viewers({
 // of a top-level artefact, kept as a draft and sent as one request on Done
 // (`docs/design/components/manage-access-dialog.md`). `onSaved` refreshes the
 // library after a save or an Undo.
+//
+// S33b — with `shareInvitations` (the deployment's capability), Viewers also
+// invites emails with no Account, and Done sends those invitations after the
+// sharing save.
 export function ArtefactAccessDialog({
   artefact,
   onClose,
   onSaved,
+  shareInvitations = false,
+  ownerEmail,
   initial,
 }: {
   artefact: ArtefactSummary;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
+  shareInvitations?: boolean;
+  // The signed-in owner's email, which Viewers never offers to invite.
+  ownerEmail?: string;
   initial?: AccessDialogInitial;
 }) {
   const [savedMembers, setSavedMembers] = useState<UserRef[] | null>(
     initial?.members !== undefined ? initial.members : null,
   );
-  const saved = useMemo(() => draftOf(artefact, savedMembers ?? []), [artefact, savedMembers]);
+  // At every level, private included: pending invitations are kept like the
+  // retained access list, and Specific people shows them again.
+  const loadsInvitations = shareInvitations && initial?.invitations === undefined;
+  const [savedInvitations, setSavedInvitations] = useState<ShareInvitation[] | null>(
+    loadsInvitations ? null : (initial?.invitations ?? []),
+  );
+  const saved = useMemo(
+    () => draftOf(artefact, savedMembers ?? [], savedInvitations ?? []),
+    [artefact, savedMembers, savedInvitations],
+  );
   const [draft, setDraft] = useState<AccessDraft>(() => (initial?.draft ? initial.draft(saved) : saved));
   const [busy, setBusy] = useState(false);
   // A list that failed to load is unknown, not empty: Done stays off, since a save could
   // otherwise replace the real list with a partial one (hosting.sharing.members-replace).
   const [loadFailed, setLoadFailed] = useState(false);
-  const loading = savedMembers === null && !loadFailed;
+  // S33b — the saved invitations failed to load: they stay hidden, and Done
+  // sends no invitation request.
+  const [invitationsFailed, setInvitationsFailed] = useState(false);
+  const offersInvitations = shareInvitations && !invitationsFailed;
+  const loading = (savedMembers === null || savedInvitations === null) && !loadFailed;
 
   // The saved access list loads once on open; the draft takes it, keeping any
   // edit made meanwhile.
@@ -371,6 +459,33 @@ export function ArtefactAccessDialog({
       cancelled = true;
     };
   }, [artefact.id, artefact.title, initial?.members]);
+
+  // The saved invitations load beside it, and a failed load is treated alike.
+  useEffect(() => {
+    if (!loadsInvitations) return;
+    // The capability can turn on after the dialog opened (AppShell's config read
+    // resolves late): it is loading from then on, so Done waits for the list.
+    setSavedInvitations(null);
+    let cancelled = false;
+    api
+      .getArtefactInvitations(artefact.id)
+      .then((invitations) => {
+        if (cancelled) return;
+        setSavedInvitations(invitations);
+        setDraft((d) => withLoadedInvitations(d, invitations));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Invitations are sent one by one, never as a replacing list, so a
+        // failed load hides them rather than blocking Done.
+        setInvitationsFailed(true);
+        setSavedInvitations([]);
+        notify(`Couldn't load the pending invitations for “${artefact.title}”.`, CircleAlert);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [artefact.id, artefact.title, loadsInvitations]);
 
   const now = new Date();
   const sections = sectionsOf(draft, artefact.usesStorage);
@@ -396,30 +511,73 @@ export function ArtefactAccessDialog({
 
   // While a save is in flight the buttons ignore clicks rather than disabling:
   // a disabled Done would drop focus out of the dialog, and with it Esc.
+  // S33b — after the sharing save, each new invite and then each revoke, one at
+  // a time; a failure is named and the rest still go out. A `granted` invite
+  // added a member, which the library refresh after Done picks up.
+  async function sendInvitations(changes: ReturnType<typeof invitationChangesOf>) {
+    const sent: string[] = [];
+    const failed: string[] = [];
+    let removed = 0;
+    let granted = false;
+    for (const email of changes.invite) {
+      try {
+        granted = (await api.inviteToArtefact(artefact.id, email)).status === "granted" || granted;
+        sent.push(email);
+      } catch {
+        failed.push(`Couldn't send the invitation to ${email}.`);
+      }
+    }
+    for (const invitation of changes.revoke) {
+      try {
+        await api.revokeArtefactInvitation(artefact.id, invitation.id);
+        removed += 1;
+      } catch {
+        failed.push(`Couldn't remove the invitation for ${invitation.email}.`);
+      }
+    }
+    return { sent, removed, failed, granted };
+  }
+
   async function done() {
     if (busy) return;
     const request = sharingRequestOf(saved, draft, new Date());
-    if (request === null) return onClose();
+    const changes = invitationsFailed ? { invite: [], revoke: [] } : invitationChangesOf(saved, draft);
+    if (request === null && changes.invite.length + changes.revoke.length === 0) return onClose();
     const toast = saveToastOf(saved, draft, title);
     setBusy(true);
-    try {
-      await api.setSharing(artefact.id, request);
-    } catch {
-      setBusy(false);
-      notify(
-        draft.level !== saved.level && draft.level === "public"
-          ? `Couldn't make “${title}” public. Try again.`
-          : `Couldn't save access for “${title}”. Try again.`,
-        CircleAlert,
-      );
-      return;
+    if (request) {
+      try {
+        await api.setSharing(artefact.id, request);
+      } catch {
+        setBusy(false);
+        notify(
+          draft.level !== saved.level && draft.level === "public"
+            ? `Couldn't make “${title}” public. Try again.`
+            : `Couldn't save access for “${title}”. Try again.`,
+          CircleAlert,
+        );
+        return;
+      }
     }
+    const invited = await sendInvitations(changes);
     onClose();
-    await onSaved();
-    const icon =
-      draft.level !== saved.level ? VIS[draft.level].icon : request.members ? Users : request.linkGate ? Lock : Database;
-    const undoRequest = toast.undo;
-    notify(toast.message, icon, undoRequest ? { label: "Undo", onClick: () => void undo(undoRequest) } : undefined);
+    if (request || invited.granted) await onSaved();
+    // One toast for the whole Done: the save's, keeping its Undo, then the invitations.
+    const shown = doneToastOf(request ? toast : null, invited);
+    if (!shown) return;
+    const icon = shown.error
+      ? CircleAlert
+      : !request
+        ? Mail
+        : draft.level !== saved.level
+          ? VIS[draft.level].icon
+          : request.members
+            ? Users
+            : request.linkGate
+              ? Lock
+              : Database;
+    const undoRequest = shown.undo;
+    notify(shown.message, icon, undoRequest ? { label: "Undo", onClick: () => void undo(undoRequest) } : undefined);
   }
 
   const divider = <Separator className="my-1" />;
@@ -484,8 +642,18 @@ export function ArtefactAccessDialog({
                   loadFailed={loadFailed}
                   initialQuery={initial?.query}
                   searchOpen={searchOpen}
-                  onAdd={(u) => setDraft({ ...draft, members: [...draft.members, u] })}
+                  onAdd={(u) => setDraft(addMember(draft, u))}
                   onRemove={(u) => setDraft({ ...draft, members: draft.members.filter((m) => m.id !== u.id) })}
+                  invitations={
+                    offersInvitations
+                      ? {
+                          pending: pendingInvitationsOf(draft),
+                          offerOf: (query, results) => inviteOfferOf(query, results, draft, ownerEmail),
+                          onInvite: (email) => setDraft(addInvitation(draft, email)),
+                          onRemove: (pending) => setDraft(removeInvitation(draft, pending)),
+                        }
+                      : undefined
+                  }
                 />
               </section>
             </>

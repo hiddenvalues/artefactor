@@ -78,7 +78,6 @@ export interface ArtefactRepository {
   // **Top-level artefacts only** (`collectionId = null`): an artefact inside a collection has its
   // own tier dormant (hosting.access.effective-from-tree-root, collections.access.contained-own-tier-dormant) — the effectively-shared
   // composition adds those via `listByCollectionIds` + the shared roots.
-  // r[impl hosting.shared.others-viewable]
   listShared(viewerId: string, scope: TenantScope): Promise<Artefact[]>;
   // Artefacts whose `collectionId` is in the given set, within the tenant scope.
   // Active-only by default; the cascade commands pass `includeArchived` (collections.lifecycle.archive-cascades, collections.lifecycle.delete-cascades).
